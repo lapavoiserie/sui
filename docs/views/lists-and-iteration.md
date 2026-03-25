@@ -25,7 +25,7 @@ Commonly combined with `ForEach` for dynamic content and `Section` for grouping.
 Iterates over a `@State` array to render a view for each element.
 
 ```haxe
-new ForEach("todos", "i",
+new ForEach(todos, "i",
     new HStack([
         Text.withState("{todos[i].title}"),
         new Spacer(),
@@ -39,17 +39,17 @@ new ForEach("todos", "i",
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `arrayName` | `String` | Name of the `@State` array variable |
+| `array` | `State` reference | The `@State` array variable |
 | `itemName` | `String` | Iteration index variable name in generated Swift |
 | `itemView` | `View` | View rendered for each element |
 
-Access element properties with `Text.withState("{arrayName[itemName].property}")`.
+Access element properties with `Text.withState("{array[itemName].property}")`.
 
 ### List + ForEach Pattern
 
 ```haxe
 new List([
-    new ForEach("items", "i",
+    new ForEach(items, "i",
         new Text("Item")  // rendered for each element
     )
 ])

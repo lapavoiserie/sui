@@ -43,7 +43,7 @@ class TodoApp extends App {
 
     override function body():View {
         return new List([
-            new ForEach("todos", "i",
+            new ForEach(todos, "i",
                 new HStack([
                     Text.withState("{todos[i].title}"),
                     new Spacer(),

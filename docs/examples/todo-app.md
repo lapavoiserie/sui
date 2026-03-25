@@ -46,7 +46,7 @@ class TodoApp extends App {
                             'if !newItemText.isEmpty { todos.append(TodoItem(title: newItemText, completed: false)); newItemText = "" }'))
                 ]).padding(),
                 new List([
-                    new ForEach("todos", "i",
+                    new ForEach(todos, "i",
                         new HStack([
                             Text.withState("{todos[i].title}")
                                 .font(FontStyle.Body),
@@ -99,7 +99,7 @@ The TextField binds to `newItemText` state. The button uses `CustomSwift` to app
 ### ForEach Iteration
 
 ```haxe
-new ForEach("todos", "i",
+new ForEach(todos, "i",
     new HStack([
         Text.withState("{todos[i].title}"),
         // ...
@@ -107,7 +107,7 @@ new ForEach("todos", "i",
 )
 ```
 
-`ForEach` iterates the `todos` array. The index variable `i` is used in `Text.withState` to access each item's properties.
+`ForEach` takes a typed `State` reference to the `todos` array. The index variable `i` is used in `Text.withState` to access each item's properties.
 
 ### Inline State Mutation
 
