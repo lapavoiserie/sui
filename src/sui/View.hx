@@ -74,6 +74,19 @@ class View {
         return this;
     }
 
+    /** Pin this view to its **intrinsic** size on either axis. Compiles
+        to `.fixedSize(horizontal:, vertical:)`. Crucial for views like
+        `List` and `ScrollView` whose default size is "fill available" —
+        in some layout contexts (notably `.sheet` content on macOS,
+        where the container sizes to its children's intrinsic heights)
+        their default behaviour resolves to zero. Pinning to intrinsic
+        size makes them report the sum of their content heights
+        instead. **/
+    public function fixedSize(horizontal:Bool = false, vertical:Bool = true):View {
+        modifierChain.push(ViewModifier.FixedSize(horizontal, vertical));
+        return this;
+    }
+
     public function background(color:ColorValue):View {
         modifierChain.push(ViewModifier.Background(color));
         return this;

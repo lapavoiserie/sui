@@ -1819,7 +1819,7 @@ class SwiftGenerator {
     static function isModifier(name:String):Bool {
         return switch (name) {
             case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
-                 "frame" | "fillWidth" | "fillHeight" | "fillBoth" |
+                 "frame" | "fillWidth" | "fillHeight" | "fillBoth" | "fixedSize" |
                  "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "toggleStyle" | "pickerStyle" | "scrollIndicators" |
@@ -1876,6 +1876,13 @@ class SwiftGenerator {
                 'frame(maxHeight: .infinity)';
             case "fillBoth":
                 'frame(maxWidth: .infinity, maxHeight: .infinity)';
+            case "fixedSize":
+                // Defaults match Haxe-side: horizontal=false, vertical=true.
+                var h = if (args.length > 0) extractConstant(args[0]) else "false";
+                var v = if (args.length > 1) extractConstant(args[1]) else "true";
+                if (h == null) h = "false";
+                if (v == null) v = "true";
+                'fixedSize(horizontal: $h, vertical: $v)';
             case "disabled":
                 var v = if (args.length > 0) extractConstant(args[0]) else "true";
                 'disabled($v)';
