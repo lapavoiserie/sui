@@ -120,6 +120,22 @@ class View {
         return this;
     }
 
+    /** Set the Inspector column's `min` / `ideal` / `max` widths.
+        SwiftUI defaults the Inspector column to a narrow ~250pt
+        track that can shrink further when the window resizes —
+        too tight for anything beyond simple key/value detail
+        lists. Apply this directly after `.inspector(...)`:
+        ```haxe
+        myView
+            .inspector("editorOpen", buildEditor())
+            .inspectorColumnWidth(360, 480, 720);
+        ```
+        Maps to `.inspectorColumnWidth(min:ideal:max:)`. **/
+    public function inspectorColumnWidth(min:Float, ideal:Float, max:Float):View {
+        modifierChain.push(ViewModifier.InspectorColumnWidth(min, ideal, max));
+        return this;
+    }
+
     public function alert(title:String, isPresentedBinding:Dynamic, ?message:String):View {
         modifierChain.push(ViewModifier.Alert(title, isPresentedBinding, message));
         return this;

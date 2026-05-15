@@ -140,6 +140,7 @@ new Image("photo").blur(blurAmount)
 | `.confirmationDialog(title, binding, content)` | `title: String`, `binding: State<Bool>`, `content: View` | Action sheet |
 | `.contextMenu(content)` | `content: View` | Long-press context menu |
 | `.inspector(binding, content)` | `binding: State<Bool>`, `content: View` | macOS trailing inspector pane — slides out from the right edge when the binding is `true`. Standard pattern for "details about the current selection". |
+| `.inspectorColumnWidth(min, ideal, max)` | `min: Float`, `ideal: Float`, `max: Float` | Width hint for the Inspector column. SwiftUI defaults to a narrow track that can shrink further on window resize — set explicit bounds here whenever the inspector content has its own intrinsic width (forms, multi-column lists, etc.). Apply on the same view that owns `.inspector(...)`. |
 
 ```haxe
 @:state var showInspector:Bool = false;
@@ -149,9 +150,12 @@ new VStack([...])
         new Text("Details"),
         Text.withState("Selected: {selectedItem}"),
     ]))
+    .inspectorColumnWidth(360, 480, 720)
 ```
 
 The Inspector is the macOS-native alternative to a sheet for showing supplementary info — Pages, Numbers, Xcode, Final Cut all use this pattern. On iOS it falls back to a popover.
+
+`.inspectorColumnWidth(min, ideal, max)` is almost always wanted alongside `.inspector(...)` — without it the column lands at SwiftUI's default (~250pt) and can shrink further when the user resizes the window, which is too tight for anything other than a key/value detail list.
 
 ```haxe
 new VStack([...])
