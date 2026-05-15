@@ -203,11 +203,14 @@ class Build {
             copyHotReloadFiles(buildDir);
         }
 
-        // Copy user-provided Swift files from swift/ directory
+        // Copy user-provided Swift files (and headers) from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
 
+        // Compile native C/C++ library sources declared in sui.json
+        compileNativeLibraries(cwd, buildDir, config, platform, forDevice);
+
         // Generate project.yml
-        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, isBridgeApp));
+        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, isBridgeApp, cwd));
 
         if (xcodeOnly) {
             runXcodegen(buildDir);
@@ -403,10 +406,65 @@ class Build {
         var swiftDir = '$cwd/swift';
         if (FileSystem.exists(swiftDir)) {
             for (file in FileSystem.readDirectory(swiftDir)) {
-                if (file.endsWith(".swift")) {
+                if (file.endsWith(".swift") || file.endsWith(".h")) {
                     File.copy('$swiftDir/$file', '$buildDir/Sources/$file');
                 }
             }
+        }
+    }
+
+    static function compileNativeLibraries(cwd:String, buildDir:String, config:ProjectConfig,
+                                              platform:String, forDevice:Bool):Void {
+        if (config.nativeLibraries == null) return;
+
+        for (lib in config.nativeLibraries) {
+            if (lib.sources == null || lib.sources.length == 0) continue;
+
+            Sys.println('  Compiling native library: ${lib.name}...');
+            ensureDirectory('$buildDir/lib');
+
+            var isSimulator = !forDevice && (platform == "ios" || platform == "visionos");
+            var arch = isSimulator ? "x86_64" : "arm64";
+            var objFiles:Array<String> = [];
+
+            for (src in lib.sources) {
+                var baseName = haxe.io.Path.withoutDirectory(haxe.io.Path.withoutExtension(src.file));
+                var objFile = '$buildDir/lib/$baseName.o';
+                objFiles.push(objFile);
+
+                var args:Array<String> = ["-c"];
+                if (src.flags != null) for (f in src.flags) args.push(f);
+                args.push("-arch");
+                args.push(arch);
+                if (src.includePaths != null) {
+                    for (inc in src.includePaths) {
+                        args.push("-I");
+                        args.push('$cwd/$inc');
+                    }
+                }
+                if (platform != "macos") {
+                    var sdk = switch (platform) {
+                        case "ios": forDevice ? "iphoneos" : "iphonesimulator";
+                        case "visionos": forDevice ? "xros" : "xrsimulator";
+                        default: "macosx";
+                    };
+                    args.push("-isysroot");
+                    args.push(getSdkPath(sdk));
+                }
+                args.push('$cwd/${src.file}');
+                args.push("-o");
+                args.push(objFile);
+
+                if (Sys.command("clang++", args) != 0) {
+                    Sys.println('Error: Failed to compile ${src.file}');
+                    Sys.exit(1);
+                }
+            }
+
+            // Archive into static library
+            var arArgs = ["rcs", '$buildDir/lib/lib${lib.name}_native.a'];
+            for (o in objFiles) arArgs.push(o);
+            Sys.command("ar", arArgs);
         }
     }
 
@@ -423,12 +481,38 @@ class Build {
                     packages.push({url: pkg.url, from: pkg.from, product: pkg.product});
                 }
             }
+            var nativeLibs:Array<NativeLibrary> = null;
+            if (json.nativeLibraries != null) {
+                nativeLibs = [];
+                var arr:Array<Dynamic> = json.nativeLibraries;
+                for (lib in arr) {
+                    var sources:Array<NativeSource> = null;
+                    if (lib.sources != null) {
+                        sources = [];
+                        var srcArr:Array<Dynamic> = lib.sources;
+                        for (s in srcArr) {
+                            sources.push({file: s.file, flags: s.flags, includePaths: s.includePaths});
+                        }
+                    }
+                    nativeLibs.push({
+                        name: lib.name,
+                        headerSearchPaths: lib.headerSearchPaths,
+                        librarySearchPaths: lib.librarySearchPaths,
+                        libraries: lib.libraries,
+                        frameworks: lib.frameworks,
+                        sources: sources,
+                        cxxInterop: lib.cxxInterop,
+                    });
+                }
+            }
+
             return {
                 appName: json.appName,
                 bundleIdentifier: json.bundleIdentifier,
                 bundleIdPrefix: json.bundleIdPrefix != null ? json.bundleIdPrefix : "com.example",
                 teamId: json.teamId,
                 swiftPackages: packages,
+                nativeLibraries: nativeLibs,
             };
         }
 
@@ -627,7 +711,7 @@ class Build {
         };
     }
 
-    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, isBridgeApp:Bool = false):String {
+    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, isBridgeApp:Bool = false, ?cwd:String):String {
         var pk = platformKey(platform);
         var dt = deploymentTarget(platform);
 
@@ -648,6 +732,80 @@ class Build {
         - "-lhaxe"
         - "-lc++"
 ';
+        }
+
+        // Native library build settings
+        var nativeBlock = "";
+        if (config.nativeLibraries != null && config.nativeLibraries.length > 0) {
+            var headerPaths:Array<String> = [];
+            var libPaths:Array<String> = [];
+            var ldFlags:Array<String> = [];
+            var needsCxx = false;
+
+            for (lib in config.nativeLibraries) {
+                if (lib.cxxInterop == true) needsCxx = true;
+
+                if (lib.headerSearchPaths != null) {
+                    for (hp in lib.headerSearchPaths)
+                        headerPaths.push('"$$(PROJECT_DIR)/../../$hp"');
+                }
+                if (lib.librarySearchPaths != null) {
+                    for (lp in lib.librarySearchPaths)
+                        libPaths.push('"$$(PROJECT_DIR)/../../$lp"');
+                }
+                if (lib.sources != null && lib.sources.length > 0)
+                    libPaths.push('"$$(PROJECT_DIR)/lib"');
+
+                if (lib.libraries != null) {
+                    for (l in lib.libraries) ldFlags.push('"-l$l"');
+                }
+                if (lib.sources != null && lib.sources.length > 0) {
+                    ldFlags.push('"-l${lib.name}_native"');
+                }
+                if (lib.frameworks != null) {
+                    for (f in lib.frameworks) {
+                        ldFlags.push('"-framework"');
+                        ldFlags.push('"$f"');
+                    }
+                }
+            }
+
+            ldFlags.push('"-lc++"');
+
+            var buf = new StringBuf();
+
+            // Auto-detect bridging header from swift/ directory
+            var swiftDir = cwd != null ? '$cwd/swift' : 'swift';
+            if (!isBridgeApp && sys.FileSystem.exists(swiftDir)) {
+                for (f in sys.FileSystem.readDirectory(swiftDir)) {
+                    if (StringTools.endsWith(f, ".h")) {
+                        buf.add('      SWIFT_OBJC_BRIDGING_HEADER: Sources/$f\n');
+                        break; // Use first .h found
+                    }
+                }
+            }
+
+            if (headerPaths.length > 0) {
+                buf.add("      HEADER_SEARCH_PATHS:\n");
+                for (hp in headerPaths) buf.add('        - $hp\n');
+            }
+            if (libPaths.length > 0) {
+                // Merge with bridge LIBRARY_SEARCH_PATHS if present
+                if (!isBridgeApp) {
+                    buf.add("      LIBRARY_SEARCH_PATHS:\n");
+                }
+                for (lp in libPaths) buf.add('        - $lp\n');
+            }
+            if (ldFlags.length > 0) {
+                if (!isBridgeApp) {
+                    buf.add("      OTHER_LDFLAGS:\n");
+                }
+                for (lf in ldFlags) buf.add('        - $lf\n');
+            }
+            if (needsCxx) {
+                buf.add('      CLANG_CXX_LANGUAGE_STANDARD: "c++17"\n');
+            }
+            nativeBlock = buf.toString();
         }
 
         var packagesBlock = "";
@@ -682,7 +840,7 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-$signing$bridge$depsBlock';
+$signing$bridge$nativeBlock$depsBlock';
     }
 }
 
@@ -692,10 +850,27 @@ typedef ProjectConfig = {
     bundleIdPrefix:String,
     ?teamId:String,
     ?swiftPackages:Array<SwiftPackage>,
+    ?nativeLibraries:Array<NativeLibrary>,
 }
 
 typedef SwiftPackage = {
     url:String,
     from:String,
     product:String,
+}
+
+typedef NativeLibrary = {
+    name:String,
+    ?headerSearchPaths:Array<String>,
+    ?librarySearchPaths:Array<String>,
+    ?libraries:Array<String>,
+    ?frameworks:Array<String>,
+    ?sources:Array<NativeSource>,
+    ?cxxInterop:Bool,
+}
+
+typedef NativeSource = {
+    file:String,
+    ?flags:Array<String>,
+    ?includePaths:Array<String>,
 }
