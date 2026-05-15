@@ -1819,7 +1819,8 @@ class SwiftGenerator {
     static function isModifier(name:String):Bool {
         return switch (name) {
             case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
-                 "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
+                 "frame" | "fillWidth" | "fillHeight" | "fillBoth" |
+                 "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
@@ -1866,6 +1867,15 @@ class SwiftGenerator {
                 if (args.length > 0) { var w = extractConstant(args[0]); if (w != null) parts.push('width: $w'); }
                 if (args.length > 1) { var h = extractConstant(args[1]); if (h != null) parts.push('height: $h'); }
                 'frame(${parts.join(", ")})';
+            // Stretch helpers — workarounds for SwiftUI containers that
+            // collapse to zero in layout contexts without a definite
+            // intrinsic size (notably `List` inside `.sheet` content).
+            case "fillWidth":
+                'frame(maxWidth: .infinity)';
+            case "fillHeight":
+                'frame(maxHeight: .infinity)';
+            case "fillBoth":
+                'frame(maxWidth: .infinity, maxHeight: .infinity)';
             case "disabled":
                 var v = if (args.length > 0) extractConstant(args[0]) else "true";
                 'disabled($v)';

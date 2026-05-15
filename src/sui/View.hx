@@ -50,6 +50,30 @@ class View {
         return this;
     }
 
+    /** Stretch the view horizontally to fill its parent. Compiles to
+        `.frame(maxWidth: .infinity)`. Useful for views that don't have
+        an intrinsic preferred width (e.g. Lists inside sheets). **/
+    public function fillWidth():View {
+        modifierChain.push(ViewModifier.FillWidth);
+        return this;
+    }
+
+    /** Stretch the view vertically to fill its parent. Compiles to
+        `.frame(maxHeight: .infinity)`. The canonical use case is
+        `List`-inside-`.sheet`: SwiftUI's `List` collapses to zero
+        height inside a sheet's content closure because its parent's
+        intrinsic height doesn't reserve room for a scrollable list. **/
+    public function fillHeight():View {
+        modifierChain.push(ViewModifier.FillHeight);
+        return this;
+    }
+
+    /** Shorthand for `.fillWidth().fillHeight()`. **/
+    public function fillBoth():View {
+        modifierChain.push(ViewModifier.FillBoth);
+        return this;
+    }
+
     public function background(color:ColorValue):View {
         modifierChain.push(ViewModifier.Background(color));
         return this;
