@@ -230,6 +230,14 @@ class SwiftGenerator {
                 // longer identifiers, and so we leave existing
                 // "\(__APPSTATE__name[" alone (placeholder already in).
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "(" + n + "[", "(" + placeholder + n + "[");
+                // Replace "!name[" (logical-not subscript) and " name["
+                // (statement-leading bare reference inside CustomSwift
+                // bodies). Two narrow lookbehinds rather than a generic
+                // `name[` to avoid false-positives where the state name
+                // appears as a suffix of another identifier.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "!" + n + "[", "!" + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, " " + n + "[", " " + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "=" + n + "[", "=" + placeholder + n + "[");
             }
             // Now resolve all placeholders to "appState."
             bodyWithAppState = StringTools.replace(bodyWithAppState, placeholder, "appState.");
