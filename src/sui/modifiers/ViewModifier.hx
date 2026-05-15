@@ -38,6 +38,7 @@ enum ViewModifier {
 
     // Styles
     TextFieldStyle(style:sui.View.TextFieldStyleValue);
+    ButtonStyle(style:sui.View.ButtonStyleValue);
 
     // Presentation
     Sheet(isPresentedBinding:Dynamic, content:sui.View);

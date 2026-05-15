@@ -1801,7 +1801,7 @@ class SwiftGenerator {
             case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
                  "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
-                 "toggleStyle" | "pickerStyle" | "scrollIndicators" |
+                 "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
@@ -1860,6 +1860,9 @@ class SwiftGenerator {
             case "textFieldStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'textFieldStyle(.${e != null ? camel(e) : "automatic"})';
+            case "buttonStyle":
+                var e = if (args.length > 0) extractEnumName(args[0]) else null;
+                'buttonStyle(.${e != null ? camel(e) : "automatic"})';
             case "toggleStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'toggleStyle(.${e != null ? camel(e) : "automatic"})';

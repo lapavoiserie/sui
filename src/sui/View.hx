@@ -100,6 +100,15 @@ class View {
         return this;
     }
 
+    /** Apply a SwiftUI ButtonStyle. The most useful values for visual
+        hierarchy are `BorderedProminent` (the "filled" CTA look) and
+        `Bordered` (a thin outline). Use `Plain` to strip the default
+        chrome — handy inside Lists, sidebars and tappable cells. **/
+    public function buttonStyle(style:ButtonStyleValue):View {
+        modifierChain.push(ViewModifier.ButtonStyle(style));
+        return this;
+    }
+
     public function searchable(textBinding:String, ?prompt:String):View {
         modifierChain.push(ViewModifier.Searchable(textBinding, prompt));
         return this;
@@ -382,4 +391,13 @@ enum TextFieldStyleValue {
     Automatic;
     RoundedBorder;
     Plain;
+}
+
+enum ButtonStyleValue {
+    Automatic;
+    Plain;
+    Borderless;
+    Bordered;
+    BorderedProminent;
+    Link;
 }
