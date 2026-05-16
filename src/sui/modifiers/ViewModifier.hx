@@ -12,6 +12,9 @@ enum ViewModifier {
     Padding(value:Float);
     PaddingEdges(edges:Edge, value:Float);
     Frame(width:Null<Float>, height:Null<Float>, alignment:Null<Alignment>);
+    FillWidth;
+    FillHeight;
+    FillBoth;
 
     // Typography
     Font(style:FontStyle);
