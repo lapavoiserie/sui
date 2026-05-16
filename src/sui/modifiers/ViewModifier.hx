@@ -25,6 +25,8 @@ enum ViewModifier {
     // Colors & Appearance
     ForegroundColor(color:ColorValue);
     Background(color:ColorValue);
+    ForegroundHex(expr:String);
+    BackgroundHex(expr:String);
     Opacity(value:Float);
 
     // Shape

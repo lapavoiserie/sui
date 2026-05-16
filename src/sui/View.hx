@@ -45,6 +45,25 @@ class View {
         return this;
     }
 
+    /** Set the foreground colour from a hex string held in a state
+        variable. `expr` is emitted verbatim in the generated Swift body
+        and therefore picked up by the macro's state-prefix pass —
+        plain names like `calendarColor` resolve to
+        `appState.calendarColor`, and subscripted forms like
+        `calendarColors[i]` resolve to `appState.calendarColors[i]`
+        (the per-iteration case for ForEach). Invalid hex falls back to
+        `.primary` via the nil-coalescing operator on `Color(suiHex:)`. **/
+    public function foregroundHex(expr:String):View {
+        modifierChain.push(ViewModifier.ForegroundHex(expr));
+        return this;
+    }
+
+    /** Same as `foregroundHex` but for the background fill. **/
+    public function backgroundHex(expr:String):View {
+        modifierChain.push(ViewModifier.BackgroundHex(expr));
+        return this;
+    }
+
     public function frame(?width:Float, ?height:Float, ?alignment:Alignment):View {
         modifierChain.push(ViewModifier.Frame(width, height, alignment));
         return this;

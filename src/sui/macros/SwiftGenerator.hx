@@ -1818,7 +1818,8 @@ class SwiftGenerator {
 
     static function isModifier(name:String):Bool {
         return switch (name) {
-            case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
+            case "padding" | "font" | "foregroundColor" | "background" |
+                 "foregroundHex" | "backgroundHex" | "bold" | "italic" |
                  "frame" | "fillWidth" | "fillHeight" | "fillBoth" | "fixedSize" |
                  "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
@@ -1851,6 +1852,18 @@ class SwiftGenerator {
             case "background":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'background(.${e != null ? camel(e) : "clear"})';
+            case "foregroundHex":
+                // The expression is embedded verbatim and run through the
+                // body's appState-prefix pass — so bare names like
+                // `calendarColor` or subscripted names like
+                // `calendarColors[i]` resolve correctly at the call site.
+                var expr = if (args.length > 0) extractString(args[0]) else null;
+                if (expr == null) expr = "\"\"";
+                'foregroundStyle(Color(suiHex: ${expr}) ?? Color.primary)';
+            case "backgroundHex":
+                var expr = if (args.length > 0) extractString(args[0]) else null;
+                if (expr == null) expr = "\"\"";
+                'background(Color(suiHex: ${expr}) ?? Color.clear)';
             case "bold": "bold()";
             case "italic": "italic()";
             case "opacity":
