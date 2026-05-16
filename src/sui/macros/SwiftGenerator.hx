@@ -218,6 +218,26 @@ class SwiftGenerator {
                 // Replace "if name" (ConditionalView boolean) with "if __APPSTATE__name"
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + " ", "if " + placeholder + n + " ");
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + "\n", "if " + placeholder + n + "\n");
+                // Replace "0..<name.count" — the ForEach iteration header
+                // emits the bare state name, which would otherwise resolve
+                // to an unbound identifier inside ContentView's body when
+                // the state lives on the separate AppState object that the
+                // bridge codepath generates.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "0..<" + n + ".count", "0..<" + placeholder + n + ".count");
+                // Replace "(name[" (subscript access from inside string
+                // interpolation: "\(name[i])"). Matched with the leading
+                // paren so we don't accidentally rewrite suffix matches in
+                // longer identifiers, and so we leave existing
+                // "\(__APPSTATE__name[" alone (placeholder already in).
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "(" + n + "[", "(" + placeholder + n + "[");
+                // Replace "!name[" (logical-not subscript) and " name["
+                // (statement-leading bare reference inside CustomSwift
+                // bodies). Two narrow lookbehinds rather than a generic
+                // `name[` to avoid false-positives where the state name
+                // appears as a suffix of another identifier.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "!" + n + "[", "!" + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, " " + n + "[", " " + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "=" + n + "[", "=" + placeholder + n + "[");
             }
             // Now resolve all placeholders to "appState."
             bodyWithAppState = StringTools.replace(bodyWithAppState, placeholder, "appState.");
@@ -1884,10 +1904,12 @@ class SwiftGenerator {
 
     static function isModifier(name:String):Bool {
         return switch (name) {
-            case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
-                 "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
+            case "padding" | "font" | "foregroundColor" | "background" |
+                 "foregroundHex" | "backgroundHex" | "bold" | "italic" |
+                 "frame" | "fillWidth" | "fillHeight" | "fillBoth" | "fixedSize" |
+                 "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
-                 "toggleStyle" | "pickerStyle" | "scrollIndicators" |
+                 "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
@@ -1916,6 +1938,18 @@ class SwiftGenerator {
             case "background":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'background(.${e != null ? camel(e) : "clear"})';
+            case "foregroundHex":
+                // The expression is embedded verbatim and run through the
+                // body's appState-prefix pass — so bare names like
+                // `calendarColor` or subscripted names like
+                // `calendarColors[i]` resolve correctly at the call site.
+                var expr = if (args.length > 0) extractString(args[0]) else null;
+                if (expr == null) expr = "\"\"";
+                'foregroundStyle(Color(suiHex: ${expr}) ?? Color.primary)';
+            case "backgroundHex":
+                var expr = if (args.length > 0) extractString(args[0]) else null;
+                if (expr == null) expr = "\"\"";
+                'background(Color(suiHex: ${expr}) ?? Color.clear)';
             case "bold": "bold()";
             case "italic": "italic()";
             case "opacity":
@@ -1932,6 +1966,22 @@ class SwiftGenerator {
                 if (args.length > 0) { var w = extractConstant(args[0]); if (w != null) parts.push('width: $w'); }
                 if (args.length > 1) { var h = extractConstant(args[1]); if (h != null) parts.push('height: $h'); }
                 'frame(${parts.join(", ")})';
+            // Stretch helpers — workarounds for SwiftUI containers that
+            // collapse to zero in layout contexts without a definite
+            // intrinsic size (notably `List` inside `.sheet` content).
+            case "fillWidth":
+                'frame(maxWidth: .infinity)';
+            case "fillHeight":
+                'frame(maxHeight: .infinity)';
+            case "fillBoth":
+                'frame(maxWidth: .infinity, maxHeight: .infinity)';
+            case "fixedSize":
+                // Defaults match Haxe-side: horizontal=false, vertical=true.
+                var h = if (args.length > 0) extractConstant(args[0]) else "false";
+                var v = if (args.length > 1) extractConstant(args[1]) else "true";
+                if (h == null) h = "false";
+                if (v == null) v = "true";
+                'fixedSize(horizontal: $h, vertical: $v)';
             case "disabled":
                 var v = if (args.length > 0) extractConstant(args[0]) else "true";
                 'disabled($v)';
@@ -1946,6 +1996,9 @@ class SwiftGenerator {
             case "textFieldStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'textFieldStyle(.${e != null ? camel(e) : "automatic"})';
+            case "buttonStyle":
+                var e = if (args.length > 0) extractEnumName(args[0]) else null;
+                'buttonStyle(.${e != null ? camel(e) : "automatic"})';
             case "toggleStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'toggleStyle(.${e != null ? camel(e) : "automatic"})';

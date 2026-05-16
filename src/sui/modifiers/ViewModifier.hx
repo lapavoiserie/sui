@@ -12,6 +12,9 @@ enum ViewModifier {
     Padding(value:Float);
     PaddingEdges(edges:Edge, value:Float);
     Frame(width:Null<Float>, height:Null<Float>, alignment:Null<Alignment>);
+    FillWidth;
+    FillHeight;
+    FillBoth;
 
     // Typography
     Font(style:FontStyle);
@@ -22,6 +25,8 @@ enum ViewModifier {
     // Colors & Appearance
     ForegroundColor(color:ColorValue);
     Background(color:ColorValue);
+    ForegroundHex(expr:String);
+    BackgroundHex(expr:String);
     Opacity(value:Float);
 
     // Shape
@@ -38,6 +43,7 @@ enum ViewModifier {
 
     // Styles
     TextFieldStyle(style:sui.View.TextFieldStyleValue);
+    ButtonStyle(style:sui.View.ButtonStyleValue);
 
     // Presentation
     Sheet(isPresentedBinding:Dynamic, content:sui.View);

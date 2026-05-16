@@ -45,8 +45,64 @@ class View {
         return this;
     }
 
+    /** Set the foreground colour from a hex string held in a state
+        variable. `expr` is emitted verbatim in the generated Swift body
+        and therefore picked up by the macro's state-prefix pass —
+        plain names like `calendarColor` resolve to
+        `appState.calendarColor`, and subscripted forms like
+        `calendarColors[i]` resolve to `appState.calendarColors[i]`
+        (the per-iteration case for ForEach). Invalid hex falls back to
+        `.primary` via the nil-coalescing operator on `Color(suiHex:)`. **/
+    public function foregroundHex(expr:String):View {
+        modifierChain.push(ViewModifier.ForegroundHex(expr));
+        return this;
+    }
+
+    /** Same as `foregroundHex` but for the background fill. **/
+    public function backgroundHex(expr:String):View {
+        modifierChain.push(ViewModifier.BackgroundHex(expr));
+        return this;
+    }
+
     public function frame(?width:Float, ?height:Float, ?alignment:Alignment):View {
         modifierChain.push(ViewModifier.Frame(width, height, alignment));
+        return this;
+    }
+
+    /** Stretch the view horizontally to fill its parent. Compiles to
+        `.frame(maxWidth: .infinity)`. Useful for views that don't have
+        an intrinsic preferred width (e.g. Lists inside sheets). **/
+    public function fillWidth():View {
+        modifierChain.push(ViewModifier.FillWidth);
+        return this;
+    }
+
+    /** Stretch the view vertically to fill its parent. Compiles to
+        `.frame(maxHeight: .infinity)`. The canonical use case is
+        `List`-inside-`.sheet`: SwiftUI's `List` collapses to zero
+        height inside a sheet's content closure because its parent's
+        intrinsic height doesn't reserve room for a scrollable list. **/
+    public function fillHeight():View {
+        modifierChain.push(ViewModifier.FillHeight);
+        return this;
+    }
+
+    /** Shorthand for `.fillWidth().fillHeight()`. **/
+    public function fillBoth():View {
+        modifierChain.push(ViewModifier.FillBoth);
+        return this;
+    }
+
+    /** Pin this view to its **intrinsic** size on either axis. Compiles
+        to `.fixedSize(horizontal:, vertical:)`. Crucial for views like
+        `List` and `ScrollView` whose default size is "fill available" —
+        in some layout contexts (notably `.sheet` content on macOS,
+        where the container sizes to its children's intrinsic heights)
+        their default behaviour resolves to zero. Pinning to intrinsic
+        size makes them report the sum of their content heights
+        instead. **/
+    public function fixedSize(horizontal:Bool = false, vertical:Bool = true):View {
+        modifierChain.push(ViewModifier.FixedSize(horizontal, vertical));
         return this;
     }
 
@@ -97,6 +153,15 @@ class View {
 
     public function textFieldStyle(style:TextFieldStyleValue):View {
         modifierChain.push(ViewModifier.TextFieldStyle(style));
+        return this;
+    }
+
+    /** Apply a SwiftUI ButtonStyle. The most useful values for visual
+        hierarchy are `BorderedProminent` (the "filled" CTA look) and
+        `Bordered` (a thin outline). Use `Plain` to strip the default
+        chrome — handy inside Lists, sidebars and tappable cells. **/
+    public function buttonStyle(style:ButtonStyleValue):View {
+        modifierChain.push(ViewModifier.ButtonStyle(style));
         return this;
     }
 
@@ -382,4 +447,13 @@ enum TextFieldStyleValue {
     Automatic;
     RoundedBorder;
     Plain;
+}
+
+enum ButtonStyleValue {
+    Automatic;
+    Plain;
+    Borderless;
+    Bordered;
+    BorderedProminent;
+    Link;
 }
