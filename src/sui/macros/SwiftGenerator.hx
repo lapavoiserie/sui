@@ -218,6 +218,11 @@ class SwiftGenerator {
                 // Replace "if name" (ConditionalView boolean) with "if __APPSTATE__name"
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + " ", "if " + placeholder + n + " ");
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + "\n", "if " + placeholder + n + "\n");
+                // Replace "ForEach(name," — the closure form of ForEach
+                // iterates directly over a state array; without this,
+                // the bare array name would be unbound inside the body
+                // when state lives on the appState bridge object.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "ForEach(" + n + ",", "ForEach(" + placeholder + n + ",");
             }
             // Now resolve all placeholders to "appState."
             bodyWithAppState = StringTools.replace(bodyWithAppState, placeholder, "appState.");
