@@ -224,6 +224,11 @@ class SwiftGenerator {
                 // the state lives on the separate AppState object that the
                 // bridge codepath generates.
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "0..<" + n + ".count", "0..<" + placeholder + n + ".count");
+                // Replace "ForEach(name," — the closure form of ForEach
+                // iterates directly over a state array; without this,
+                // the bare array name would be unbound inside the body
+                // when state lives on the appState bridge object.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "ForEach(" + n + ",", "ForEach(" + placeholder + n + ",");
                 // Replace "(name[" (subscript access from inside string
                 // interpolation: "\(name[i])"). Matched with the leading
                 // paren so we don't accidentally rewrite suffix matches in
