@@ -979,6 +979,11 @@ class SwiftGenerator {
 
             case "Text":
                 if (args.length > 0) {
+                    // Lambda item reference inside ForEach(state, item -> …):
+                    // render as a string-interpolated Text so the live
+                    // array element shows up.
+                    var itemExpr = extractItemExpr(args[0]);
+                    if (itemExpr != null) return '${pad}Text("\\(${itemExpr})")\n';
                     var text = extractString(args[0]);
                     if (text != null) return '${pad}Text("${esc(text)}")\n';
                     // Check for property reference: this.fieldName → emit as expression
@@ -1482,19 +1487,100 @@ class SwiftGenerator {
     **/
     static function forEachToSwift(args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
         var pad = ind(indent);
-        // args[0] = array state name (String) or State<Array> field ref, args[1] = item var name (String), args[2] = child view
+        // Two call shapes:
+        //   * legacy 3-arg: (arrayName, itemVarName, childView) — keep working
+        //   * lambda 2-arg: (arrayName, item -> childView) — closure form
+        //     where `item` references inside the body resolve to the
+        //     per-iteration element via `currentItemBinding`. Modifiers
+        //     and Text codegen check the binding before falling back to
+        //     constant-string extraction.
         var arrayName = if (args.length > 0) resolveStateName(args[0]) else "items";
-        var itemName = if (args.length > 1) extractString(args[1]) else "item";
 
+        var lambda = (args.length >= 2) ? unwrapLambda(args[1]) : null;
+        if (lambda != null) {
+            var itemName = lambda.paramName != null && lambda.paramName != "" ? lambda.paramName : "item";
+            var prev = currentItemBinding;
+            // Closure form: iterate directly over the array's elements
+            // so the Haxe-typed lambda parameter and the Swift binding
+            // refer to the same value (`color: String`, not the index).
+            // SwiftUI's `ForEach(_:id:_:)` requires the element type to
+            // be Hashable — `id: \.self` is the standard escape hatch.
+            currentItemBinding = {
+                paramId: lambda.paramId,
+                swiftExpr: itemName,
+            };
+            var buf = new StringBuf();
+            buf.add('${pad}ForEach(${arrayName}, id: \\.self) { ${itemName} in\n');
+            buf.add(viewToSwift(lambda.body, indent + 1));
+            buf.add('${pad}}\n');
+            currentItemBinding = prev;
+            return buf.toString();
+        }
+
+        // Legacy form
+        var itemName = if (args.length > 1) extractString(args[1]) else "item";
         var buf = new StringBuf();
         buf.add('${pad}ForEach(0..<${arrayName}.count, id: \\.self) { ${itemName} in\n');
-
         if (args.length > 2) {
             buf.add(viewToSwift(args[2], indent + 1));
         }
-
         buf.add('${pad}}\n');
         return buf.toString();
+    }
+
+    /** State tracking for the closure form of ForEach: when the macro
+        is mid-traversal of a lambda body, this points to the iteration
+        parameter and the matching Swift expression. **/
+    static var currentItemBinding:Null<{paramId:Int, swiftExpr:String}> = null;
+
+    /** Unwrap (cast/paren/etc.) and check if the expression is a
+        unary-arg lambda — used by the closure form of ForEach. The
+        lambda body is also unwrapped: arrow-syntax bodies arrive as a
+        TBlock wrapping a single TReturn, which would otherwise fall
+        through `viewToSwift` and emit "unhandled expression: TBlock". **/
+    static function unwrapLambda(expr:haxe.macro.Type.TypedExpr):Null<{paramId:Int, paramName:String, body:haxe.macro.Type.TypedExpr}> {
+        if (expr == null) return null;
+        var e = unwrap(expr);
+        return switch (e.expr) {
+            case TFunction(fn):
+                if (fn.args.length != 1) null;
+                else {
+                    paramId: fn.args[0].v.id,
+                    paramName: fn.args[0].v.name,
+                    body: unwrapLambdaBody(fn.expr),
+                };
+            default: null;
+        }
+    }
+
+    /** Peel TBlock/TReturn/TMeta layers Haxe adds around the actual
+        expression returned by an arrow-syntax lambda. **/
+    static function unwrapLambdaBody(expr:haxe.macro.Type.TypedExpr):haxe.macro.Type.TypedExpr {
+        if (expr == null) return expr;
+        return switch (expr.expr) {
+            case TBlock(stmts):
+                if (stmts.length == 1) unwrapLambdaBody(stmts[0]) else expr;
+            case TReturn(e):
+                e != null ? unwrapLambdaBody(e) : expr;
+            case TMeta(_, e): unwrapLambdaBody(e);
+            case TParenthesis(e): unwrapLambdaBody(e);
+            case TCast(e, _): unwrapLambdaBody(e);
+            default: expr;
+        }
+    }
+
+    /** Return the Swift expression for the currently-bound lambda item
+        if the given typed expression is a reference to it. Used by
+        modifier codegens that want to accept either a literal string
+        or a typed item reference. **/
+    static function extractItemExpr(expr:haxe.macro.Type.TypedExpr):Null<String> {
+        if (currentItemBinding == null || expr == null) return null;
+        var e = unwrap(expr);
+        return switch (e.expr) {
+            case TLocal(v):
+                v.id == currentItemBinding.paramId ? currentItemBinding.swiftExpr : null;
+            default: null;
+        }
     }
 
     /**
@@ -1965,8 +2051,16 @@ class SwiftGenerator {
                     s != null ? 'badge(${s})' : "badge(0)";
                 }
             case "tag":
-                var s = if (args.length > 0) extractString(args[0]) else null;
-                s != null ? 'tag("${esc(s)}")' : 'tag("")';
+                // A typed lambda item ref inside a closure-form ForEach
+                // is emitted as a raw Swift expression (no quotes) so
+                // `.tag(item)` binds to the iterated value. Constant
+                // string args remain literal-quoted as before.
+                var rawExpr = if (args.length > 0) extractItemExpr(args[0]) else null;
+                if (rawExpr != null) 'tag(${rawExpr})';
+                else {
+                    var s = if (args.length > 0) extractString(args[0]) else null;
+                    s != null ? 'tag("${esc(s)}")' : 'tag("")';
+                }
 
             // --- Visual effects (accept constants or state variable names) ---
             case "blur":
