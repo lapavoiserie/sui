@@ -32,12 +32,21 @@ class StateMacro {
     ];
 
     static var synthesisedExprs:Map<String, SynthesisedExpr>;
+    /** Map state field name → inner type T of `State<T>`. The
+        Swift binding lives on `appState.<name>`; for value-typed
+        bindings (String / Int / Float / Bool) the walker passes
+        the Swift value into the synthesised wrapper as a parameter
+        so reads see the current SwiftUI binding rather than the
+        possibly-stale Haxe mirror. Array / object state stays on
+        the Haxe side (`App.instance.<name>.value`). **/
+    static var stateFieldTypes:Map<String, ComplexType>;
     static var stateFieldNames:Map<String, Bool>;
     static var className:String;
 
     public static function build():Array<Field> {
         synthesisedExprs = new Map();
         stateFieldNames = new Map();
+        stateFieldTypes = new Map();
         className = {
             var cls = Context.getLocalClass();
             cls != null ? cls.get().name : "";
@@ -47,17 +56,28 @@ class StateMacro {
         var stateInits:Array<Expr> = [];
         var newFields:Array<Field> = [];
 
-        // First pass: collect every state-typed field name (both
-        // `@:state var x:T` and manual `var x:State<T>`). The
-        // walker uses this list to qualify bare references inside
-        // bridged expressions.
+        // First pass: collect every state-typed field name and its
+        // inner type T (both `@:state var x:T` and manual `var
+        // x:State<T>`).
         for (field in fields) {
             switch (field.kind) {
                 case FVar(t, _):
-                    if (isStateType(t)) stateFieldNames.set(field.name, true);
+                    var inner = stateInnerType(t);
+                    if (inner != null) {
+                        stateFieldNames.set(field.name, true);
+                        stateFieldTypes.set(field.name, inner);
+                    }
+                case FProp(_, _, t, _):
+                    var inner = stateInnerType(t);
+                    if (inner != null) {
+                        stateFieldNames.set(field.name, true);
+                        stateFieldTypes.set(field.name, inner);
+                    }
                 default:
             }
         }
+        // Also `@:state` fields use their raw T — collect later as
+        // we process them (loop below).
 
         for (field in fields) {
             var isState = false;
@@ -158,15 +178,18 @@ class StateMacro {
             }
         }
 
-        // Append the synthesised wrapper functions.
+        // Append the synthesised wrapper functions. Parameter
+        // order: lambda params (Int) first, then primitive state
+        // reads. If neither is present, fall back to the legacy
+        // single-String "_unused" slot so the bridge generator
+        // emits a stable signature.
         for (entry in synthesisedExprs.keyValueIterator()) {
             var funcName = entry.key;
             var s = entry.value;
             var args:Array<FunctionArg> = [for (p in s.params) {name: p, type: macro :Int}];
-            // ABI convention: always at least one parameter (the
-            // String "_unused"), so the existing bridge generator
-            // keeps emitting a `(_unused: String): String` shape
-            // even when the expression has no lambda params.
+            if (s.primReads != null) {
+                for (p in s.primReads) args.push({name: p.name, type: p.type});
+            }
             if (args.length == 0) {
                 args.push({name: "_unused", type: macro :String});
             }
@@ -187,10 +210,16 @@ class StateMacro {
     }
 
     /** Walk an Expr tree, tracking lambda-param scope (from
-        ForEach legacy `"i"` form and closure form), and rewrite
-        every bridged-modifier call with a complex argument. **/
+        ForEach legacy `"i"` form and closure form), and rewrite:
+        - bridged-modifier calls with a complex argument
+        - `StateAction.RunExpr(expr)` invocations
+        Both flows synthesise an `@:expose static` wrapper on the
+        App class and replace the call site with a sentinel string. **/
     static function walk(e:Expr, scope:Map<String, Bool>):Expr {
         return switch (e.expr) {
+            // StateAction.RunExpr(expr) → synthesise + sentinel.
+            case ECall({expr: EField({expr: EConst(CIdent("StateAction"))}, "RunExpr")}, [innerExpr]):
+                synthesiseRunExpr(innerExpr, scope, e.pos);
             // ForEach legacy form: ENew("ForEach", [arr, "i", body])
             case ENew(t, args) if (t.name == "ForEach" && args.length == 3):
                 switch (args[1].expr) {
@@ -253,6 +282,91 @@ class StateMacro {
             default:
                 defaultRecurse(e, scope);
         };
+    }
+
+    /** Synthesise a wrapper for a `StateAction.RunExpr(...)` and
+        return the rewritten `StateAction.CustomSwift(<sentinel>)`
+        node. The sentinel uses the `SUIACTION` prefix so the Swift
+        code generator emits a `Task.detached { _ = HaxeBridgeC.X(args) }`
+        instead of a value-returning expression. **/
+    static function synthesiseRunExpr(innerExpr:Expr, scope:Map<String, Bool>, pos:Position):Expr {
+        var lambdaParams = collectLambdaParams(innerExpr, scope);
+        var primReads = collectPrimitiveStateReads(innerExpr, scope);
+        var qualified = qualifyAndLiftStateRefs(innerExpr, scope, primReads);
+        var hash = hashExpr(innerExpr);
+        var funcName = '_sui_action_$hash';
+        if (!synthesisedExprs.exists(funcName)) {
+            synthesisedExprs.set(funcName, {
+                expr: macro {
+                    $e{qualified};
+                    "";
+                },
+                pos: pos,
+                params: lambdaParams,
+                primReads: primReads,
+            });
+        }
+        // sentinel: SUIACTION<funcName><stateRefs (arrays/objects)><lambdaParams><primReadsCSV>
+        var arrayStateRefs = collectStateRefs(innerExpr, scope).filter(n -> !arrContains(primReads, n));
+        var stateList = arrayStateRefs.join(",");
+        var paramList = lambdaParams.join(",");
+        var primList = [for (p in primReads) p.name].join(",");
+        var sentinel = "\u{0001}SUIACTION\u{0001}" + funcName + "\u{0001}" + stateList + "\u{0001}" + paramList + "\u{0001}" + primList;
+        return macro StateAction.CustomSwift($v{sentinel});
+    }
+
+    /** Find every `<stateName>.value` read in `e` where `stateName`
+        is a primitive State field. These get lifted into function
+        parameters of the synthesised wrapper so the value comes
+        from the Swift-side `appState.<name>` (fresh, post-binding)
+        rather than the Haxe mirror (potentially stale when Swift
+        UI bindings own the write). **/
+    static function collectPrimitiveStateReads(e:Expr, scope:Map<String, Bool>):Array<{name:String, type:ComplexType}> {
+        var found:Array<{name:String, type:ComplexType}> = [];
+        function visit(node:Expr) {
+            switch (node.expr) {
+                case EField({expr: EConst(CIdent(name))}, "value")
+                    if (stateFieldNames.exists(name)
+                        && !scope.exists(name)
+                        && isPrimitiveStateInner(stateFieldTypes.get(name))
+                        && !arrContains(found, name)):
+                    found.push({name: name, type: stateFieldTypes.get(name)});
+                case EFunction(_, _): return;
+                default:
+            }
+            ExprTools.iter(node, visit);
+        }
+        visit(e);
+        return found;
+    }
+
+    /** Like `qualifyStateRefs`, but ALSO lifts `<stateName>.value`
+        reads (for primitive states in `primReads`) into bare
+        parameter references — the synthesised wrapper carries the
+        Swift-side current value as `<stateName>` parameter. **/
+    static function qualifyAndLiftStateRefs(e:Expr, scope:Map<String, Bool>, primReads:Array<{name:String, type:ComplexType}>):Expr {
+        function isLifted(name:String):Bool {
+            return arrContains(primReads, name);
+        }
+        function rewrite(node:Expr):Expr {
+            return switch (node.expr) {
+                // Lift `state.value` → bare ident `state`.
+                case EField({expr: EConst(CIdent(name)), pos: ip}, "value")
+                    if (stateFieldNames.exists(name) && !scope.exists(name) && isLifted(name)):
+                    {expr: EConst(CIdent(name)), pos: node.pos};
+                // Qualify bare state ref (non-lifted) → ClassName.instance.X.
+                case EConst(CIdent(name))
+                    if (stateFieldNames.exists(name) && !scope.exists(name) && !isLifted(name)):
+                    var clsExpr:Expr = {expr: EConst(CIdent(className)), pos: node.pos};
+                    var instExpr:Expr = {expr: EField(clsExpr, "instance"), pos: node.pos};
+                    {expr: EField(instExpr, name), pos: node.pos};
+                // Don't descend into nested closures.
+                case EFunction(_, _): node;
+                default:
+                    ExprTools.map(node, rewrite);
+            };
+        }
+        return rewrite(e);
     }
 
     /** Recurse into immediate children with the same scope. **/
@@ -358,13 +472,45 @@ class StateMacro {
     /** True if the ComplexType is `sui.state.State<…>` (or
         unqualified `State<…>`). **/
     static function isStateType(t:Null<ComplexType>):Bool {
+        return stateInnerType(t) != null;
+    }
+
+    /** Returns the inner type T of a `sui.state.State<T>` ComplexType,
+        or null if `t` isn't a State field. **/
+    static function stateInnerType(t:Null<ComplexType>):Null<ComplexType> {
+        if (t == null) return null;
+        return switch (t) {
+            case TPath(p) if (p.name == "State"
+                && (p.pack.length == 0
+                    || (p.pack.length == 2 && p.pack[0] == "sui" && p.pack[1] == "state"))
+                && p.params != null && p.params.length == 1):
+                switch (p.params[0]) {
+                    case TPType(inner): inner;
+                    default: null;
+                }
+            default: null;
+        };
+    }
+
+    /** Is `t` a value-typed primitive that the SwiftUI binding
+        carries as a Swift property? Those get passed as parameters
+        into the synthesised wrapper; everything else (Array, object,
+        custom enum, …) stays on the Haxe side. **/
+    static function isPrimitiveStateInner(t:Null<ComplexType>):Bool {
         if (t == null) return false;
         return switch (t) {
-            case TPath(p):
-                p.name == "State" && (p.pack.length == 0
-                    || (p.pack.length == 2 && p.pack[0] == "sui" && p.pack[1] == "state"));
+            case TPath(p) if (p.pack.length == 0):
+                switch (p.name) {
+                    case "String" | "Int" | "Float" | "Bool": true;
+                    default: false;
+                }
             default: false;
         };
+    }
+
+    static function arrContains(arr:Array<{name:String, type:ComplexType}>, name:String):Bool {
+        for (p in arr) if (p.name == name) return true;
+        return false;
     }
 
     static function copyScope(s:Map<String, Bool>):Map<String, Bool> {
@@ -390,5 +536,6 @@ typedef SynthesisedExpr = {
     expr:Expr,
     pos:Position,
     params:Array<String>,
+    ?primReads:Array<{name:String, type:ComplexType}>,
 };
 #end

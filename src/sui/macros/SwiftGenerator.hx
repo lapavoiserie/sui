@@ -2326,7 +2326,14 @@ class SwiftGenerator {
                                     case "Toggle": '${p0}.toggle()';
                                     case "CustomSwift":
                                         var code = if (args.length > 0) extractString(args[0]) else null;
-                                        code != null ? code : "// custom";
+                                        if (code != null && StringTools.startsWith(code, SUI_ACTION_PREFIX)) {
+                                            // Bridged RunExpr — dispatch into a
+                                            // Task.detached invocation of the
+                                            // synthesised wrapper.
+                                            emitActionInvocation(code);
+                                        } else {
+                                            code != null ? code : "// custom";
+                                        }
                                     case "BridgeCall":
                                         var fnName = if (args.length > 1) extractString(args[1]) else "unknown";
                                         var argStr = if (args.length > 2) extractBridgeArgs(args[2]) else "";
@@ -2932,6 +2939,11 @@ class SwiftGenerator {
         bridged expressions. **/
     public static inline var SUI_BRIDGE_PREFIX = "\u{0001}SUIBRIDGE\u{0001}";
 
+    /** Prefix used when bridging a `StateAction.RunExpr(...)` — the
+        Swift codegen wraps the wrapper call in `Task.detached { … }`
+        instead of inlining the result. **/
+    public static inline var SUI_ACTION_PREFIX = "\u{0001}SUIACTION\u{0001}";
+
     /** Turn a sentinel-prefixed string into a Swift expression
         that invokes the bridged Haxe function. The sentinel
         encodes:
@@ -2964,6 +2976,29 @@ class SwiftGenerator {
         var subs = "";
         for (n in stateList) subs += '_ = appState.$n; ';
         return '{ ${subs}return ${bare} }()';
+    }
+
+    /** Turn an action sentinel into a Swift snippet that runs the
+        bridged wrapper inside a `Task.detached`. Sentinel format:
+            SUIACTION<funcName><stateRefs><lambdaParams><primReads>
+        - lambdaParams pass straight through (Int from ForEach);
+        - primReads come from `appState.<name>` so the synthesised
+          wrapper sees the live SwiftUI binding value rather than
+          the (possibly stale) Haxe mirror.
+        Side effects written by the wrapper still travel back to
+        Swift via the existing `swiftStateCallback →
+        DispatchQueue.main.async` pipeline. **/
+    static function emitActionInvocation(sentinel:String):String {
+        var rest = sentinel.substr(SUI_ACTION_PREFIX.length);
+        var parts = rest.split("\u{0001}");
+        var funcName = parts[0];
+        var lambdaList = parts.length > 2 && parts[2] != "" ? parts[2].split(",") : [];
+        var primList = parts.length > 3 && parts[3] != "" ? parts[3].split(",") : [];
+        var args:Array<String> = [];
+        for (p in lambdaList) args.push(p);
+        for (p in primList) args.push('appState.${p}');
+        var callArgs = args.length > 0 ? args.join(", ") : '""';
+        return 'Task.detached { _ = HaxeBridgeC.${funcName}(${callArgs}) }';
     }
 
     static function extractBridgeArgs(expr:haxe.macro.Type.TypedExpr):String {

@@ -30,6 +30,30 @@ enum StateAction {
     CustomSwift(code:String);
 
     /**
+        Run a Haxe expression for its side effects. The macro
+        captures the expression at build time, synthesises an
+        `@:expose static` wrapper on the App class, and the Swift
+        codegen routes the action into
+        `Task.detached { _ = HaxeBridgeC.<wrapper>(args) }`.
+
+        Lambda parameters in scope (e.g. `i` from an enclosing
+        `ForEach`) are passed through automatically. State refs
+        are qualified to `App.instance.<name>` so the static
+        wrapper can read them.
+
+        ```haxe
+        view.onTapGesture(StateAction.RunExpr(
+            App.toggleCalendar(Std.string(i))
+        ));
+        ```
+
+        Strictly preferable to `CustomSwift` whenever the action
+        is pure Haxe — type-checked, refactor-safe, and no Swift
+        mixed into a string.
+    **/
+    RunExpr(expr:Dynamic);
+
+    /**
         Call a @:expose function asynchronously and assign the result to a state variable.
 
         ```haxe
