@@ -165,10 +165,19 @@ class SwiftGenerator {
         appSwift.add("@main\n");
         appSwift.add('struct ${className}App: App {\n');
         appSwift.add("    init() {\n");
-        appSwift.add("        HaxeRuntime.initialize()\n");
         if (needsRuntimeBridge) {
+            // Register the swift-side state callback BEFORE the
+            // runtime boots. `HaxeRuntime.initialize()` calls
+            // `haxe_bridge_init`, which itself constructs the
+            // application class — any `State.setByName` (or
+            // `State<T>(initialValue, ...)` push) issued during the
+            // constructor only reaches AppState if the swift
+            // callback is already wired up. With the previous order
+            // those updates were dropped silently and AppState
+            // stayed on its literal defaults until the next mutation.
             appSwift.add("        HaxeBridgeC.registerCallbacks()\n");
         }
+        appSwift.add("        HaxeRuntime.initialize()\n");
         appSwift.add("    }\n\n");
         appSwift.add("    var body: some Scene {\n");
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
