@@ -128,7 +128,9 @@ class View {
         return this;
     }
 
-    public function opacity(value:Float):View {
+    /** Set the view's opacity (`0…1`). Accepts a literal `Float`
+        or a `State<Float>` for reactive fade in/out. **/
+    public function opacity(value:sui.state.StateOr<Float>):View {
         modifierChain.push(ViewModifier.Opacity(value));
         return this;
     }
@@ -317,6 +319,29 @@ class View {
     /** Offset the view position. Pass Floats or State<Float>s. **/
     public function offset(x:sui.state.StateOr<Float>, y:sui.state.StateOr<Float>):View {
         modifierChain.push(ViewModifier.Offset(x, y));
+        return this;
+    }
+
+    /** Offset by a *fraction* of the parent's measured size. Only
+        valid inside a `GeometryReader` — the codegen expression
+        references the `proxy` variable that container provides.
+        GeometryReader anchors its content at top-leading, so
+        `(0, 0)` leaves the view at the parent's top-leading edge,
+        `(0.5, 0.5)` lands it at the centre, and `(1, 1)` at
+        bottom-trailing. Accepts either a literal `Float` or a
+        `State<Float>` per axis. **/
+    public function proportionalOffset(xFraction:sui.state.StateOr<Float>, yFraction:sui.state.StateOr<Float>):View {
+        modifierChain.push(ViewModifier.ProportionalOffset(xFraction, yFraction));
+        return this;
+    }
+
+    /** Constrain the frame to a *fraction* of the parent's measured
+        size. Like `proportionalOffset`, only valid inside a
+        `GeometryReader`. Pass `null` (or any negative literal) on
+        an axis to leave that dimension intrinsic. Typical use is
+        timeline event blocks whose height = duration / day-length. **/
+    public function proportionalFrame(widthFraction:sui.state.StateOr<Float>, heightFraction:sui.state.StateOr<Float>):View {
+        modifierChain.push(ViewModifier.ProportionalFrame(widthFraction, heightFraction));
         return this;
     }
 

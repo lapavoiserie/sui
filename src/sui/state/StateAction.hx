@@ -49,6 +49,18 @@ enum StateAction {
     BridgeCallLoading(state:Dynamic, loadingValue:String, functionName:String, args:Dynamic);
 
     /**
+        Call a `@:expose` function asynchronously and discard the
+        result. Use this for periodic ticks and other fire-and-forget
+        bridge calls where you don't want the return value to clobber
+        a state field.
+
+        ```haxe
+        BridgeCallVoid("tickNowLine", "")
+        ```
+    **/
+    BridgeCallVoid(functionName:String, args:Dynamic);
+
+    /**
         Wrap any StateAction in a SwiftUI `withAnimation` block.
 
         ```haxe
@@ -61,4 +73,21 @@ enum StateAction {
         ```
     **/
     Animated(action:StateAction, curve:AnimationCurve);
+
+    /**
+        Run `action` every `seconds` for as long as the view stays
+        attached. Used with `.taskAction(...)` for periodic refreshes
+        that don't depend on a user gesture (e.g. a clock indicator,
+        live data polling).
+
+        ```haxe
+        myView.taskAction(
+            StateAction.IntervalLoop(60, StateAction.BridgeCall(_, "tick", ""))
+        )
+        ```
+
+        Generates a `Task.sleep(_:)` loop guarded by `Task.isCancelled`
+        so the loop terminates when the view disappears.
+    **/
+    IntervalLoop(seconds:Float, action:StateAction);
 }

@@ -397,6 +397,15 @@ class SwiftGenerator {
             s = StringTools.replace(s, "!" + n + "[", "!" + placeholder + n + "[");
             s = StringTools.replace(s, " " + n + "[", " " + placeholder + n + "[");
             s = StringTools.replace(s, "=" + n + "[", "=" + placeholder + n + "[");
+            // `name == X` / `name != X` — equality comparisons inside
+            // CustomSwift / foregroundHex / etc. (whitespace around the
+            // operator is required to avoid matching inside longer
+            // identifiers).
+            s = StringTools.replace(s, "(" + n + " ==", "(" + placeholder + n + " ==");
+            s = StringTools.replace(s, "(" + n + " !=", "(" + placeholder + n + " !=");
+            s = StringTools.replace(s, " " + n + " ==", " " + placeholder + n + " ==");
+            s = StringTools.replace(s, " " + n + " !=", " " + placeholder + n + " !=");
+            s = StringTools.replace(s, ":" + n + " ==", ":" + placeholder + n + " ==");
         }
         return StringTools.replace(s, placeholder, "appState.");
     }
@@ -1224,6 +1233,7 @@ class SwiftGenerator {
         switch (name) {
             case "VStack" | "HStack" | "ZStack" | "LazyVStack" | "LazyHStack":
                 var spacing:String = null;
+                var alignment:String = null;
                 var children:Array<haxe.macro.Type.TypedExpr> = [];
                 for (arg in args) {
                     var uArg = unwrap(arg);
@@ -1235,12 +1245,23 @@ class SwiftGenerator {
                                 case TInt(v): spacing = Std.string(v);
                                 default:
                             }
+                        // Alignment is passed as an enum value
+                        // (`Alignment.TopLeading`, `HorizontalAlignment.Leading`,
+                        // `VerticalAlignment.Top`, …). The macro-side
+                        // emission was previously dropping it on the
+                        // floor; pick it up and forward to the SwiftUI
+                        // initializer.
                         default:
+                            var e = extractEnumName(uArg);
+                            if (e != null) alignment = camel(e);
                     }
                 }
                 var buf = new StringBuf();
-                if (spacing != null)
-                    buf.add('${pad}${name}(spacing: ${spacing}) {\n');
+                var initParts:Array<String> = [];
+                if (alignment != null) initParts.push('alignment: .${alignment}');
+                if (spacing != null) initParts.push('spacing: ${spacing}');
+                if (initParts.length > 0)
+                    buf.add('${pad}${name}(${initParts.join(", ")}) {\n');
                 else
                     buf.add('${pad}${name} {\n');
                 for (child in children)
@@ -1317,6 +1338,22 @@ class SwiftGenerator {
             case "Circle": return '${pad}Circle()\n';
             case "Capsule": return '${pad}Capsule()\n';
             case "Ellipse": return '${pad}Ellipse()\n';
+
+            case "GeometryReader":
+                // The single child is rendered inside SwiftUI's
+                // GeometryReader closure. The proxy is bound to a
+                // fixed name (`proxy`) that the `.proportionalOffset`
+                // modifier emits expressions against.
+                var buf = new StringBuf();
+                buf.add('${pad}GeometryReader { proxy in\n');
+                for (arg in args) {
+                    switch (arg.expr) {
+                        case TConst(TNull):
+                        default: buf.add(viewToSwift(arg, indent + 1));
+                    }
+                }
+                buf.add('${pad}}\n');
+                return buf.toString();
 
             case "LinearGradient":
                 // args[0] = TArrayDecl<ColorValue>, args[1] = startPoint String,
@@ -2299,11 +2336,30 @@ class SwiftGenerator {
                                         var fnName = if (args.length > 2) extractString(args[2]) else "unknown";
                                         var argStr = if (args.length > 3) extractBridgeArgs(args[3]) else "";
                                         '${p0} = "${esc(loadingVal)}"; Task.detached { let r = HaxeBridgeC.${fnName}(${argStr}); await MainActor.run { ${p0} = r } }';
+                                    case "BridgeCallVoid":
+                                        // No state to write — the return value is
+                                        // intentionally dropped. Used by periodic ticks
+                                        // and other fire-and-forget bridge calls.
+                                        var fnName = if (args.length > 0) extractString(args[0]) else "unknown";
+                                        var argStr = if (args.length > 1) extractBridgeArgs(args[1]) else "";
+                                        'Task.detached { _ = HaxeBridgeC.${fnName}(${argStr}) }';
                                     case "Animated":
                                         var innerAction = if (args.length > 0) stateActionToSwift(args[0]) else null;
                                         var curve = if (args.length > 1) resolveAnimationCurve(args[1]) else "default";
                                         if (innerAction != null)
                                             'withAnimation(.${curve}) { ${innerAction} }';
+                                        else
+                                            null;
+                                    case "IntervalLoop":
+                                        // `seconds * 1_000_000_000` keeps the call site
+                                        // expressed in seconds (`60`, `0.5`) instead of
+                                        // raw nanoseconds — Task.sleep takes nanos so we
+                                        // convert at codegen time.
+                                        var secs = if (args.length > 0) extractConstant(args[0]) else "60";
+                                        if (secs == null) secs = "60";
+                                        var innerAction = if (args.length > 1) stateActionToSwift(args[1]) else null;
+                                        if (innerAction != null)
+                                            'while !Task.isCancelled { try? await Task.sleep(nanoseconds: UInt64((${secs}) * 1_000_000_000)); ${innerAction} }';
                                         else
                                             null;
                                     default: null;
@@ -2333,7 +2389,7 @@ class SwiftGenerator {
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
-                 "blur" | "scaleEffect" | "rotationEffect" | "offset" |
+                 "blur" | "scaleEffect" | "rotationEffect" | "offset" | "proportionalOffset" | "proportionalFrame" |
                  "brightness" | "contrast" | "saturation" | "grayscale" |
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" | "help" |
@@ -2377,7 +2433,10 @@ class SwiftGenerator {
             case "bold": "bold()";
             case "italic": "italic()";
             case "opacity":
-                var v = if (args.length > 0) extractConstant(args[0]) else "1.0";
+                // Accept Float literal or State<Float> via the
+                // shared resolveModifierValue helper (same path as
+                // `.scaleEffect`, `.offset`, …).
+                var v = resolveModifierValue(args, 0, "1.0");
                 'opacity(${v})';
             case "navigationTitle":
                 var s = if (args.length > 0) extractString(args[0]) else "";
@@ -2389,6 +2448,10 @@ class SwiftGenerator {
                 var parts:Array<String> = [];
                 if (args.length > 0) { var w = extractConstant(args[0]); if (w != null) parts.push('width: $w'); }
                 if (args.length > 1) { var h = extractConstant(args[1]); if (h != null) parts.push('height: $h'); }
+                if (args.length > 2) {
+                    var a = extractEnumName(args[2]);
+                    if (a != null) parts.push('alignment: .${camel(a)}');
+                }
                 'frame(${parts.join(", ")})';
             // Stretch helpers — workarounds for SwiftUI containers that
             // collapse to zero in layout contexts without a definite
@@ -2575,6 +2638,33 @@ class SwiftGenerator {
                 var x = resolveModifierValue(args, 0, "0");
                 var y = resolveModifierValue(args, 1, "0");
                 'offset(x: $x, y: $y)';
+            case "proportionalOffset":
+                // Reads `proxy.size.{width,height}` — must live
+                // inside a `GeometryReader`. GeometryReader anchors
+                // its content at `.topLeading`, so a fraction of
+                // 0 = top/leading edge, 0.5 = centre, 1 = bottom/
+                // trailing edge (offset directly maps fraction →
+                // pixels-from-top-leading, no centre correction).
+                var xf = resolveModifierValue(args, 0, "0");
+                var yf = resolveModifierValue(args, 1, "0");
+                'offset(x: proxy.size.width * (${xf}), y: proxy.size.height * (${yf}))';
+            case "proportionalFrame":
+                // Same constraint as `proportionalOffset` — must
+                // live inside a `GeometryReader`. Pass a literal
+                // negative constant on an axis (e.g. `-1.0`) to
+                // drop that argument and leave the dimension at
+                // its intrinsic value.
+                function isNegativeLiteral(s:String):Bool {
+                    return s != null && s.charAt(0) == "-"
+                        && Std.parseFloat(s) != null && Std.parseFloat(s) < 0;
+                }
+                var wf = resolveModifierValue(args, 0, "-1");
+                var hf = resolveModifierValue(args, 1, "-1");
+                var parts:Array<String> = [];
+                if (!isNegativeLiteral(wf)) parts.push('width: proxy.size.width * (${wf})');
+                if (!isNegativeLiteral(hf)) parts.push('height: proxy.size.height * (${hf})');
+                if (parts.length == 0) "frame()";
+                else 'frame(${parts.join(", ")}, alignment: .topLeading)';
 
             // --- Image effects ---
             case "brightness":
@@ -2763,20 +2853,32 @@ class SwiftGenerator {
                     case TInt(v): return Std.string(v);
                     case TFloat(v): return v;
                     case TBool(b): return b ? "true" : "false";
-                    case TString(s): return s; // backward compat: string as state name
+                    case TString(s):
+                        // Legacy: stringly-typed state name. Wrap in
+                        // the AppState placeholder so the body pass
+                        // picks it up reliably regardless of where it
+                        // sits syntactically — `y: foo)`, `blur(foo)`,
+                        // etc., wouldn't match the pattern-based pass
+                        // otherwise.
+                        return "__APPSTATE__" + s;
                     default:
                 }
             case TField(_, fa):
-                // State<T> field reference — extract field name
+                // Typed State<T> field reference — same reasoning:
+                // emit the placeholder so the final `__APPSTATE__` →
+                // `appState.` substitution catches the identifier in
+                // every Swift syntactic context, including
+                // `offset(x: 0, y: NAME)` where the pattern pass
+                // doesn't try to match.
                 switch (fa) {
-                    case FInstance(_, _, fieldRef): return fieldRef.get().name;
-                    case FStatic(_, fieldRef): return fieldRef.get().name;
+                    case FInstance(_, _, fieldRef): return "__APPSTATE__" + fieldRef.get().name;
+                    case FStatic(_, fieldRef): return "__APPSTATE__" + fieldRef.get().name;
                     default:
                 }
             default:
-                // Check for TLocal referencing a field (common with @:state)
+                // TLocal referencing a `@:state` field — same path.
                 var fieldName = extractThisField(e);
-                if (fieldName != null) return fieldName;
+                if (fieldName != null) return "__APPSTATE__" + fieldName;
         }
         return defaultVal;
     }

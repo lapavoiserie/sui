@@ -31,7 +31,7 @@ enum ViewModifier {
         content behind it. Standard in macOS sidebars, popovers, and
         toolbars. **/
     BackgroundMaterial(style:sui.View.MaterialStyle);
-    Opacity(value:Float);
+    Opacity(value:Dynamic);
 
     // Shape
     CornerRadius(radius:Float);
@@ -92,6 +92,13 @@ enum ViewModifier {
     ScaleEffect(scale:Dynamic);
     RotationEffect(degrees:Dynamic);
     Offset(x:Dynamic, y:Dynamic);
+    /** Fraction-of-parent-size offset. Valid only inside a
+        `GeometryReader`; reads `proxy.size.{width,height}` from
+        the enclosing reader. **/
+    ProportionalOffset(xFraction:Dynamic, yFraction:Dynamic);
+    /** Fraction-of-parent-size frame. Like `ProportionalOffset`,
+        only valid inside a `GeometryReader`. **/
+    ProportionalFrame(widthFraction:Dynamic, heightFraction:Dynamic);
 
     // Image effects (accept Float for static or String for state-bound)
     Brightness(amount:Dynamic);
