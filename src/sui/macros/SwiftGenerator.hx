@@ -1574,18 +1574,68 @@ class SwiftGenerator {
         }
     }
 
-    /** Return the Swift expression for the currently-bound lambda item
-        if the given typed expression is a reference to it. Used by
-        modifier codegens that want to accept either a literal string
-        or a typed item reference. **/
+    /** Return the Swift expression for the currently-bound lambda
+        item if the given typed expression is a reference to it.
+        Used by modifier codegens that want to accept either a literal
+        string or a typed item reference.
+
+        Recognises two shapes:
+          1. **Bare lambda param** (`item`) — the closure parameter
+             itself. Resolves to `currentItemBinding.swiftExpr`.
+          2. **Indexed parallel-array access** (`other.value[item]`,
+             where `other` is a `State<Array<T>>` field and `item` is
+             the closure param). Resolves to
+             `appState.<other-state-name>[<swiftExpr>]`, so a
+             closure-form ForEach iterating one array can subscript
+             any number of parallel arrays by typed Haxe code instead
+             of stringly `"otherArrayName[i]"` patterns. **/
     static function extractItemExpr(expr:haxe.macro.Type.TypedExpr):Null<String> {
         if (currentItemBinding == null || expr == null) return null;
         var e = unwrap(expr);
-        return switch (e.expr) {
+        switch (e.expr) {
             case TLocal(v):
-                v.id == currentItemBinding.paramId ? currentItemBinding.swiftExpr : null;
-            default: null;
+                return v.id == currentItemBinding.paramId
+                    ? currentItemBinding.swiftExpr
+                    : null;
+            case TArray(arr, idx):
+                // Check whether the index is the bound lambda param.
+                var idxU = unwrap(idx);
+                var idxRef = switch (idxU.expr) {
+                    case TLocal(v) if (v.id == currentItemBinding.paramId):
+                        currentItemBinding.swiftExpr;
+                    default: null;
+                };
+                if (idxRef == null) return null;
+                // Resolve the array's underlying state-field name.
+                // `state.value` shows up as either a direct TField
+                // (Haxe property) or as a TCall to its getter.
+                var stateName = resolveValueAccessStateName(arr);
+                if (stateName == null) return null;
+                return '${stateName}[${idxRef}]';
+            default:
+                return null;
         }
+    }
+
+    /** Walk `someState.value` (or its getter form) and recover the
+        receiver's state-field name. Returns null for anything that
+        doesn't look like a `.value` access on a State<T> field. **/
+    static function resolveValueAccessStateName(expr:haxe.macro.Type.TypedExpr):Null<String> {
+        if (expr == null) return null;
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TField(receiver, _):
+                return resolveStateName(receiver);
+            case TCall(callee, _):
+                var calU = unwrap(callee);
+                switch (calU.expr) {
+                    case TField(receiver, _):
+                        return resolveStateName(receiver);
+                    default:
+                }
+            default:
+        }
+        return null;
     }
 
     /**
@@ -1923,17 +1973,13 @@ class SwiftGenerator {
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'background(.${e != null ? camel(e) : "clear"})';
             case "foregroundHex":
-                // The expression is embedded verbatim and run through the
-                // body's appState-prefix pass — so bare names like
-                // `calendarColor` or subscripted names like
-                // `calendarColors[i]` resolve correctly at the call site.
-                var expr = if (args.length > 0) extractString(args[0]) else null;
-                if (expr == null) expr = "\"\"";
-                'foregroundStyle(Color(suiHex: ${expr}) ?? Color.primary)';
+                // Closure-form ForEach typed item refs and indexed
+                // accesses (`item`, `other.value[i]`) take priority;
+                // legacy string-name args fall through to the verbatim
+                // embed + appState-prefix pass.
+                'foregroundStyle(Color(suiHex: ${resolveHexExpr(args)}) ?? Color.primary)';
             case "backgroundHex":
-                var expr = if (args.length > 0) extractString(args[0]) else null;
-                if (expr == null) expr = "\"\"";
-                'background(Color(suiHex: ${expr}) ?? Color.clear)';
+                'background(Color(suiHex: ${resolveHexExpr(args)}) ?? Color.clear)';
             case "bold": "bold()";
             case "italic": "italic()";
             case "opacity":
@@ -2229,6 +2275,10 @@ class SwiftGenerator {
     /** Resolve a modifier argument: number (literal) or string (state variable name, emitted bare). **/
     static function resolveModifierValue(args:Array<haxe.macro.Type.TypedExpr>, index:Int, defaultVal:String):String {
         if (index >= args.length) return defaultVal;
+        // Closure-form ForEach item refs (`item`, `other.value[i]`)
+        // take priority over the legacy string/field paths.
+        var itemExpr = extractItemExpr(args[index]);
+        if (itemExpr != null) return itemExpr;
         var e = unwrap(args[index]);
         switch (e.expr) {
             case TConst(c):
@@ -2252,6 +2302,19 @@ class SwiftGenerator {
                 if (fieldName != null) return fieldName;
         }
         return defaultVal;
+    }
+
+    /** Resolve the hex/colour expression for `foregroundHex` /
+        `backgroundHex`. Tries the typed closure-form item ref first
+        (so the body can pass a lambda param or `other.value[i]`),
+        then falls back to the legacy string literal which the
+        appState-prefix pass rewrites bare names in. **/
+    static function resolveHexExpr(args:Array<haxe.macro.Type.TypedExpr>):String {
+        if (args.length == 0) return "\"\"";
+        var itemExpr = extractItemExpr(args[0]);
+        if (itemExpr != null) return itemExpr;
+        var s = extractString(args[0]);
+        return s != null ? s : "\"\"";
     }
 
     static function extractBridgeArgs(expr:haxe.macro.Type.TypedExpr):String {
