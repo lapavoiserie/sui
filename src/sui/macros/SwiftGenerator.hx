@@ -2052,10 +2052,10 @@ class SwiftGenerator {
                 'font(.${e != null ? camel(e) : "body"})';
             case "foregroundColor":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'foregroundStyle(.${e != null ? camel(e) : "primary"})';
+                'foregroundStyle(${colorEnumToSwift(e, "primary")})';
             case "background":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'background(.${e != null ? camel(e) : "clear"})';
+                'background(${colorEnumToSwift(e, "clear")})';
             case "foregroundHex":
                 // The expression is embedded verbatim and run through the
                 // body's appState-prefix pass — so bare names like
@@ -2108,7 +2108,7 @@ class SwiftGenerator {
                 'lineLimit($v)';
             case "shadow":
                 var parts:Array<String> = [];
-                if (args.length > 0) { var e = extractEnumName(args[0]); if (e != null) parts.push('color: .${camel(e)}'); }
+                if (args.length > 0) { var e = extractEnumName(args[0]); if (e != null) parts.push('color: ${colorEnumToSwift(e, "primary")}'); }
                 if (args.length > 1) { var r = extractConstant(args[1]); if (r != null) parts.push('radius: $r'); }
                 'shadow(${parts.join(", ")})';
             case "textFieldStyle":
@@ -2212,7 +2212,7 @@ class SwiftGenerator {
                 'overlay {\n${contentSwift}${pad}}';
             case "tint":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'tint(.${e != null ? camel(e) : "accentColor"})';
+                'tint(${colorEnumToSwift(e, "accentColor")})';
             case "badge":
                 var v = if (args.length > 0) extractConstant(args[0]) else null;
                 if (v != null)
@@ -2500,6 +2500,23 @@ class SwiftGenerator {
     static function camel(s:String):String {
         if (s == null || s.length == 0) return s;
         return s.charAt(0).toLowerCase() + s.substr(1);
+    }
+
+    /** Translate a `ColorValue` enum-name into the Swift expression to
+        pass to a colour-consuming modifier (`foregroundStyle`,
+        `background`, `shadow`, `tint`, etc.). Most values map to the
+        dotted shorthand (`.red`, `.blue`, `.primary`, …) because
+        SwiftUI exposes them on every relevant `ShapeStyle`/`Color`
+        type. `Accent` is the exception: there is no `.accent`
+        `ShapeStyle` member, so we emit the explicit static
+        `Color.accentColor` instead, which is universally available
+        and works as both a `Color` and a `ShapeStyle`. **/
+    static function colorEnumToSwift(name:Null<String>, fallback:String):String {
+        if (name == null) return '.${fallback}';
+        return switch (name) {
+            case "Accent": "Color.accentColor";
+            default: '.${camel(name)}';
+        };
     }
 
     static function templateToSwift(template:String):String {
