@@ -2849,6 +2849,14 @@ class SwiftGenerator {
     /** Resolve a modifier argument: number (literal) or string (state variable name, emitted bare). **/
     static function resolveModifierValue(args:Array<haxe.macro.Type.TypedExpr>, index:Int, defaultVal:String):String {
         if (index >= args.length) return defaultVal;
+        // Bridge sentinel — same dispatch as `resolveHexExpr`.
+        // The bridge call returns Float (or whatever the synthesised
+        // wrapper's return type is); the modifier site embeds the
+        // call straight into its arithmetic.
+        var sLit = extractString(args[index]);
+        if (sLit != null && StringTools.startsWith(sLit, SUI_BRIDGE_PREFIX)) {
+            return emitBridgeInvocation(sLit);
+        }
         // Closure-form ForEach item refs (`item`, `other.value[i]`)
         // take priority over the legacy string/field paths.
         var itemExpr = extractItemExpr(args[index]);

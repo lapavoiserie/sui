@@ -24,11 +24,30 @@ import haxe.macro.ExprTools;
     The user writes plain Haxe; the macro takes care of everything.
 **/
 class StateMacro {
-    /** Modifiers whose single argument is bridged when complex.
-        Mirror in `SwiftGenerator.SUI_BRIDGE_PREFIX` dispatcher. **/
+    /** Modifiers whose argument(s) are bridged when complex,
+        mapped to the synthesised wrapper's return type. String
+        for hex-coloured modifiers, Float for numeric ones (offsets,
+        opacity, scale, …). Mirror keys in
+        `SwiftGenerator.SUI_BRIDGE_PREFIX` dispatcher. **/
     static final BRIDGED_MODIFIERS = [
-        "foregroundHex" => true,
-        "backgroundHex" => true,
+        "foregroundHex" => "String",
+        "backgroundHex" => "String",
+        "opacity" => "Float",
+        "scaleEffect" => "Float",
+        "rotationEffect" => "Float",
+        "blur" => "Float",
+        "brightness" => "Float",
+        "contrast" => "Float",
+        "saturation" => "Float",
+        "grayscale" => "Float",
+    ];
+
+    /** Multi-arg modifiers — every argument is independently bridged
+        when complex. Values map to return type per axis. **/
+    static final BRIDGED_MODIFIERS_MULTI = [
+        "offset" => "Float",
+        "proportionalOffset" => "Float",
+        "proportionalFrame" => "Float",
     ];
 
     static var synthesisedExprs:Map<String, SynthesisedExpr>;
@@ -193,13 +212,14 @@ class StateMacro {
             if (args.length == 0) {
                 args.push({name: "_unused", type: macro :String});
             }
+            var ret:ComplexType = s.returnType != null ? s.returnType : macro :String;
             newFields.push({
                 name: funcName,
                 access: [APublic, AStatic],
                 meta: [{name: ":expose", pos: s.pos}],
                 kind: FFun({
                     args: args,
-                    ret: macro :String,
+                    ret: ret,
                     expr: macro return $e{s.expr},
                 }),
                 pos: s.pos,
@@ -245,34 +265,19 @@ class StateMacro {
                     default:
                         defaultRecurse(e, scope);
                 }
-            // Bridged modifier: <view>.foregroundHex(<arg>)
-            case ECall(callee, args) if (args.length == 1 && isBridgedModifierCallee(callee)):
+            // Bridged single-arg modifier: <view>.foregroundHex(<arg>)
+            case ECall(callee, args) if (args.length == 1 && isBridgedModifierCallee(callee, BRIDGED_MODIFIERS)):
                 var arg = args[0];
                 var newReceiver = walkCallee(callee, scope);
-                if (isSimpleExpr(arg, scope)) {
-                    // Existing typed/stringly codepath handles it.
-                    var newArg = walk(arg, scope);
-                    {expr: ECall(newReceiver, [newArg]), pos: e.pos};
-                } else {
-                    // Capture for bridging.
-                    var lambdaParams = collectLambdaParams(arg, scope);
-                    var stateRefs = collectStateRefs(arg, scope);
-                    var qualified = qualifyStateRefs(arg, scope);
-                    var hash = hashExpr(arg);
-                    var funcName = '_sui_expr_$hash';
-                    if (!synthesisedExprs.exists(funcName)) {
-                        synthesisedExprs.set(funcName, {
-                            expr: qualified,
-                            pos: arg.pos,
-                            params: lambdaParams,
-                        });
-                    }
-                    var stateList = stateRefs.join(",");
-                    var paramList = lambdaParams.join(",");
-                    var sentinel = "\u{0001}SUIBRIDGE\u{0001}" + funcName + "\u{0001}" + stateList + "\u{0001}" + paramList;
-                    var sentinelExpr:Expr = {expr: EConst(CString(sentinel)), pos: arg.pos};
-                    {expr: ECall(newReceiver, [sentinelExpr]), pos: e.pos};
-                }
+                var retType = lookupReturnType(callee, BRIDGED_MODIFIERS);
+                var newArg = maybeBridge(arg, scope, retType);
+                {expr: ECall(newReceiver, [newArg]), pos: e.pos};
+            // Bridged multi-arg modifier: <view>.proportionalOffset(<x>, <y>)
+            case ECall(callee, args) if (isBridgedModifierCallee(callee, BRIDGED_MODIFIERS_MULTI)):
+                var newReceiver = walkCallee(callee, scope);
+                var retType = lookupReturnType(callee, BRIDGED_MODIFIERS_MULTI);
+                var newArgs = [for (a in args) maybeBridge(a, scope, retType)];
+                {expr: ECall(newReceiver, newArgs), pos: e.pos};
             // Generic recursion with scope-aware EFunction handling.
             case EFunction(kind, fn):
                 var newScope = copyScope(scope);
@@ -385,10 +390,55 @@ class StateMacro {
         };
     }
 
-    static function isBridgedModifierCallee(callee:Expr):Bool {
+    static function isBridgedModifierCallee(callee:Expr, modifierMap:Map<String, String>):Bool {
         return switch (callee.expr) {
-            case EField(_, fieldName): BRIDGED_MODIFIERS.exists(fieldName);
+            case EField(_, fieldName): modifierMap.exists(fieldName);
             default: false;
+        };
+    }
+
+    static function lookupReturnType(callee:Expr, modifierMap:Map<String, String>):String {
+        return switch (callee.expr) {
+            case EField(_, fieldName) if (modifierMap.exists(fieldName)): modifierMap.get(fieldName);
+            default: "String";
+        };
+    }
+
+    /** If the argument is simple, leave it for the existing typed
+        codepath; otherwise capture it for bridging with the given
+        return type. **/
+    static function maybeBridge(arg:Expr, scope:Map<String, Bool>, retType:String):Expr {
+        if (isSimpleExpr(arg, scope)) return walk(arg, scope);
+        var lambdaParams = collectLambdaParams(arg, scope);
+        var primReads = collectPrimitiveStateReads(arg, scope);
+        var stateRefs = collectStateRefs(arg, scope);
+        var arrayStateRefs = stateRefs.filter(n -> !arrContains(primReads, n));
+        var qualified = qualifyAndLiftStateRefs(arg, scope, primReads);
+        var hash = hashExpr(arg);
+        var funcName = '_sui_expr_$hash';
+        if (!synthesisedExprs.exists(funcName)) {
+            synthesisedExprs.set(funcName, {
+                expr: qualified,
+                pos: arg.pos,
+                params: lambdaParams,
+                primReads: primReads,
+                returnType: complexFromName(retType),
+                isAction: false,
+            });
+        }
+        var stateList = arrayStateRefs.join(",");
+        var paramList = lambdaParams.join(",");
+        var primList = [for (p in primReads) p.name].join(",");
+        var sentinel = "\u{0001}SUIBRIDGE\u{0001}" + funcName + "\u{0001}" + stateList + "\u{0001}" + paramList + "\u{0001}" + primList;
+        return {expr: EConst(CString(sentinel)), pos: arg.pos};
+    }
+
+    static function complexFromName(name:String):ComplexType {
+        return switch (name) {
+            case "Float": macro :Float;
+            case "Int": macro :Int;
+            case "Bool": macro :Bool;
+            default: macro :String;
         };
     }
 
@@ -397,9 +447,10 @@ class StateMacro {
         narrow set gets bridged. **/
     static function isSimpleExpr(e:Expr, scope:Map<String, Bool>):Bool {
         return switch (e.expr) {
-            case EConst(CString(_)): true;
+            case EConst(CString(_) | CInt(_) | CFloat(_)): true;
             case EConst(CIdent(name)):
-                stateFieldNames.exists(name) || scope.exists(name);
+                name == "true" || name == "false" || name == "null"
+                    || stateFieldNames.exists(name) || scope.exists(name);
             case EField(inner, "value"):
                 isSimpleStateRef(inner);
             case EArray(arr, idx):
@@ -537,5 +588,7 @@ typedef SynthesisedExpr = {
     pos:Position,
     params:Array<String>,
     ?primReads:Array<{name:String, type:ComplexType}>,
+    ?returnType:ComplexType,
+    ?isAction:Bool,
 };
 #end
