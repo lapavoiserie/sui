@@ -2890,10 +2890,21 @@ class SwiftGenerator {
         appState-prefix pass rewrites bare names in. **/
     static function resolveHexExpr(args:Array<haxe.macro.Type.TypedExpr>):String {
         if (args.length == 0) return "\"\"";
-        // 1. Closure-form lambda item ref ("item", "other.value[i]")
+        // 1. Bridge sentinel — string literal that encodes a call
+        //    into a synthesised `@:expose` Haxe function (full Haxe
+        //    expression executed at runtime via the bridge, not
+        //    transpiled to Swift). Format:
+        //      "SUIBRIDGE<funcName><state1>,<state2>..."
+        //    Returns a closure-wrapped expression so SwiftUI keeps
+        //    its subscription on each touched state.
+        var sLit = extractString(args[0]);
+        if (sLit != null && StringTools.startsWith(sLit, SUI_BRIDGE_PREFIX)) {
+            return emitBridgeInvocation(sLit);
+        }
+        // 2. Closure-form lambda item ref ("item", "other.value[i]")
         var itemExpr = extractItemExpr(args[0]);
         if (itemExpr != null) return itemExpr;
-        // 2. Direct State<String> field reference (`.foregroundHex(myColorState)`).
+        // 3. Direct State<String> field reference (`.foregroundHex(myColorState)`).
         //    Emit `appState.<name>` straight away — the
         //    body-wide appState-prefix pass keys on bracket /
         //    interpolation / assignment patterns and doesn't match
@@ -2911,9 +2922,48 @@ class SwiftGenerator {
                 var fieldName = extractThisField(e);
                 if (fieldName != null) return 'appState.${fieldName}';
         }
-        // 3. Legacy: string literal embedded verbatim.
-        var s = extractString(args[0]);
-        return s != null ? s : "\"\"";
+        // 4. Legacy: string literal embedded verbatim.
+        return sLit != null ? sLit : "\"\"";
+    }
+
+    /** Prefix that marks a string argument as a bridge invocation.
+        Synthesised by `SwiftExprBridge.register` (or hand-written
+        for POC), recognised by every modifier codegen that supports
+        bridged expressions. **/
+    public static inline var SUI_BRIDGE_PREFIX = "\u{0001}SUIBRIDGE\u{0001}";
+
+    /** Turn a sentinel-prefixed string into a Swift expression
+        that invokes the bridged Haxe function. The sentinel
+        encodes:
+            SUIBRIDGE<funcName><statesCSV><lambdaParamsCSV>
+        Both `<statesCSV>` and `<lambdaParamsCSV>` may be empty.
+        Lambda params are passed as `Int32(<name>)` so the existing
+        `@:expose` bridge ABI sees the SwiftUI ForEach index
+        directly. When there are no lambda params we fall back to
+        the legacy single-String slot. When the expression touches
+        observable state, we wrap in a `{ _ = appState.X; … }()`
+        closure so SwiftUI keeps its subscription — but only then;
+        the bare call form keeps the ViewBuilder type-checker
+        happy on macOS 26 where the closure form trips the
+        `cannot type-check in reasonable time` heuristic. **/
+    static function emitBridgeInvocation(sentinel:String):String {
+        var rest = sentinel.substr(SUI_BRIDGE_PREFIX.length);
+        var parts = rest.split("\u{0001}");
+        var funcName = parts[0];
+        var stateList = parts.length > 1 && parts[1] != "" ? parts[1].split(",") : [];
+        var lambdaList = parts.length > 2 && parts[2] != "" ? parts[2].split(",") : [];
+        // ForEach in the generated SwiftUI gives us `Int` iteration
+        // params, and the bridge wrapper takes `Int` too — pass
+        // the param straight through (no `Int32(…)` cast which
+        // would build the wrong type).
+        var callArgs = lambdaList.length > 0
+            ? lambdaList.join(", ")
+            : '""';
+        var bare = 'HaxeBridgeC.${funcName}(${callArgs})';
+        if (stateList.length == 0) return bare;
+        var subs = "";
+        for (n in stateList) subs += '_ = appState.$n; ';
+        return '{ ${subs}return ${bare} }()';
     }
 
     static function extractBridgeArgs(expr:haxe.macro.Type.TypedExpr):String {
