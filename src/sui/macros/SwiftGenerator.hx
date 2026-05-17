@@ -1794,6 +1794,16 @@ class SwiftGenerator {
     /** Try to inline a view-returning function call. Returns null if not resolvable. **/
     static function tryInlineViewCall(field:haxe.macro.Type.ClassField, args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
         if (!returnsView(field)) return null;
+        // Static factories that carry @:swiftName have their own Swift
+        // emission (`generateSwiftCall` reads :swiftLabel-tagged params
+        // and builds the matching initializer call) — inlining them
+        // would walk the Haxe body and ignore those annotations,
+        // emitting whatever stub the factory uses internally. The
+        // canonical case is `Image.systemImage(...)` whose body builds
+        // `new Image("")` as a placeholder, so without this guard the
+        // generated Swift came out as `Image("")` instead of
+        // `Image(systemName: "...")`.
+        if (getMetaString(field.meta, ":swiftName") != null) return null;
         var funcExpr = field.expr();
         if (funcExpr == null) return null;
 
