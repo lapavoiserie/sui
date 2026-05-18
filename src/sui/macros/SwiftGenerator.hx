@@ -2310,7 +2310,7 @@ class SwiftGenerator {
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" | "help" |
                  "onSubmit" | "onLongPressGesture" | "transition" |
-                 "onChange" | "keyboardShortcut":
+                 "onChange" | "keyboardShortcut" | "onKeyPress":
                 true;
             default: false;
         }
@@ -2630,6 +2630,16 @@ class SwiftGenerator {
                     'keyboardShortcut(${keyExpr}, modifiers: [${mods.join(", ")}])';
                 else
                     'keyboardShortcut(${keyExpr})';
+            case "onKeyPress":
+                // args[0]: key name (String). args[1]: StateAction.
+                // Emits `.onKeyPress(<keyEquivalent>) { <action>; return .handled }`
+                // — `.handled` stops SwiftUI bubbling the event up the
+                // focus chain, the right default for an explicit handler.
+                var key = if (args.length > 0) extractString(args[0]) else "";
+                if (key == null) key = "";
+                var keyExpr = keyEquivalentToSwift(key);
+                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else "";
+                'onKeyPress(${keyExpr}) { ${actionCode}; return .handled }';
 
             default:
                 // Generic: try to pass through args
@@ -2872,10 +2882,11 @@ class SwiftGenerator {
         };
     }
 
-    /** Map a sui `keyboardShortcut` key string to the matching
-        SwiftUI `KeyEquivalent`. Named keys (return, escape, …)
-        resolve to their static properties; anything else is wrapped
-        in `KeyEquivalent("<char>")`. **/
+    /** Map a sui key-name string to the matching SwiftUI
+        `KeyEquivalent`. Used by both `.keyboardShortcut` and
+        `.onKeyPress`. Named keys (return, escape, …) resolve to
+        their static properties; anything else is wrapped in
+        `KeyEquivalent("<char>")`. **/
     static function keyEquivalentToSwift(key:String):String {
         return switch (key.toLowerCase()) {
             case "return": ".return";

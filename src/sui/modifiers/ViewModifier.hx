@@ -125,6 +125,14 @@ enum ViewModifier {
         "left", "right", "up", "down". `modifiers` is any
         combination of "command" / "option" / "control" / "shift". **/
     KeyboardShortcut(key:String, modifiers:Array<String>);
+    /** SwiftUI `.onKeyPress(_:action:)` — runs a `StateAction` when
+        a key is pressed while this view (or a descendant) has
+        focus. The `key` follows the same naming convention as
+        `.keyboardShortcut` (single char or named special key:
+        `return`, `escape`, `delete`, `tab`, `space`,
+        `left` / `right` / `up` / `down`, `home`, `end`,
+        `pageup` / `pagedown`). **/
+    OnKeyPress(key:String, action:sui.state.StateAction);
 
     // Picker
     PickerStyle(style:sui.View.PickerStyleValue);

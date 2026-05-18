@@ -166,6 +166,7 @@ new VStack([...])
 |----------|-----------|-------------|
 | `.onTapGesture(action)` | `action: StateAction` | Runs a StateAction when tapped |
 | `.onLongPressGesture(action)` | `action: StateAction` | Runs a StateAction on long press |
+| `.onKeyPress(key, action)` | `key: String`, `action: StateAction` | Runs a StateAction when the named key is pressed while the view (or a descendant) has focus. |
 
 ```haxe
 new Text("Tap me")
@@ -173,8 +174,14 @@ new Text("Tap me")
 
 new Text("Hold me")
     .onLongPressGesture(showMenu.tog())
+
+// Key press handlers — same key-naming as keyboardShortcut
+new VStack([...])
+    .onKeyPress("escape", dismissAction)
+    .onKeyPress("right", nextAction)
 ```
 
+<<<<<<< HEAD
 ## Keyboard
 
 | Modifier | Parameters | Description |
@@ -225,6 +232,9 @@ new Button("Next", null, nextAction)
 new Button("Save As…", null, saveAsAction)
     .keyboardShortcut("s", ["command", "shift"]); // ⇧⌘S
 ```
+=======
+`onKeyPress` uses the same `key` strings as `.keyboardShortcut` — single chars or named special keys: `"return"`, `"escape"`, `"delete"`, `"tab"`, `"space"`, `"left"` / `"right"` / `"up"` / `"down"`, `"home"`, `"end"`, `"pageup"` / `"pagedown"`. The action runs only when the view (or a descendant) has keyboard focus; the handler returns `.handled` so SwiftUI stops bubbling the event up the focus chain.
+>>>>>>> feat/on-key-press
 
 ## Lifecycle
 

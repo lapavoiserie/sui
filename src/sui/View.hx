@@ -416,6 +416,16 @@ class View {
         return this;
     }
 
+    /** Run a `StateAction` when the given key is pressed while
+        this view (or a descendant) has focus. Maps to SwiftUI's
+        `.onKeyPress(_:action:)`. Use the same key-naming scheme
+        as `.keyboardShortcut` — single chars or named special
+        keys (`"return"`, `"escape"`, `"left"`, …). **/
+    public function onKeyPress(key:String, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnKeyPress(key, action));
+        return this;
+    }
+
     /** Run a StateAction when the view appears. **/
     public function onAppearAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.OnAppearAction(action));
