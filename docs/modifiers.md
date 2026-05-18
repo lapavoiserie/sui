@@ -139,6 +139,19 @@ new Image("photo").blur(blurAmount)
 | `.alert(title, binding, message)` | `title: String`, `binding: State<Bool>`, `message: String` | Alert dialog |
 | `.confirmationDialog(title, binding, content)` | `title: String`, `binding: State<Bool>`, `content: View` | Action sheet |
 | `.contextMenu(content)` | `content: View` | Long-press context menu |
+| `.inspector(binding, content)` | `binding: State<Bool>`, `content: View` | macOS trailing inspector pane — slides out from the right edge when the binding is `true`. Standard pattern for "details about the current selection". |
+
+```haxe
+@:state var showInspector:Bool = false;
+
+new VStack([...])
+    .inspector(showInspector, new VStack([
+        new Text("Details"),
+        Text.withState("Selected: {selectedItem}"),
+    ]))
+```
+
+The Inspector is the macOS-native alternative to a sheet for showing supplementary info — Pages, Numbers, Xcode, Final Cut all use this pattern. On iOS it falls back to a popover.
 
 ```haxe
 new VStack([...])

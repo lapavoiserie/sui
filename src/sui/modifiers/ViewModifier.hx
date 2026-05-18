@@ -41,6 +41,11 @@ enum ViewModifier {
 
     // Presentation
     Sheet(isPresentedBinding:Dynamic, content:sui.View);
+    /** macOS-style trailing inspector pane — slides out from the
+        right edge of the window when its bound Bool is true.
+        Standard pattern in Mac apps for "details about the current
+        selection" (Pages, Numbers, Xcode). **/
+    Inspector(isPresentedBinding:Dynamic, content:sui.View);
     Alert(title:String, isPresentedBinding:Dynamic, message:Null<String>);
     ConfirmationDialog(title:String, isPresentedBinding:Dynamic, content:sui.View);
 
