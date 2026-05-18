@@ -1203,6 +1203,17 @@ class SwiftGenerator {
                 var url = if (args.length > 1) extractString(args[1]) else "";
                 return '${pad}Link("${esc(label != null ? label : "")}", destination: URL(string: "${esc(url != null ? url : "")}")!)\n';
 
+            case "ShareLink":
+                // args[0]: item (String). args[1]: optional label
+                // String — without it, SwiftUI shows the default
+                // share-arrow icon.
+                var item = if (args.length > 0) extractString(args[0]) else "";
+                var label = if (args.length > 1) extractString(args[1]) else null;
+                if (label != null && label != "")
+                    return '${pad}ShareLink(item: "${esc(item != null ? item : "")}") {\n${pad}    Text("${esc(label)}")\n${pad}}\n';
+                else
+                    return '${pad}ShareLink(item: "${esc(item != null ? item : "")}")\n';
+
             case "Image":
                 if (args.length > 0) {
                     var n = extractString(args[0]);
