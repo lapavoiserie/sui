@@ -53,13 +53,17 @@ class View {
         `calendarColors[i]` resolve to `appState.calendarColors[i]`
         (the per-iteration case for ForEach). Invalid hex falls back to
         `.primary` via the nil-coalescing operator on `Color(suiHex:)`. **/
-    public function foregroundHex(expr:String):View {
+    /** Accepts either a string literal (legacy stringly expr) or a
+        typed `State<String>` field reference — the macro extracts
+        the right Swift expression in both cases, no `.value`
+        ceremony at the call site. **/
+    public function foregroundHex(expr:Dynamic):View {
         modifierChain.push(ViewModifier.ForegroundHex(expr));
         return this;
     }
 
     /** Same as `foregroundHex` but for the background fill. **/
-    public function backgroundHex(expr:String):View {
+    public function backgroundHex(expr:Dynamic):View {
         modifierChain.push(ViewModifier.BackgroundHex(expr));
         return this;
     }

@@ -1696,7 +1696,32 @@ class SwiftGenerator {
         if (expr == null) return expr;
         return switch (expr.expr) {
             case TBlock(stmts):
-                if (stmts.length == 1) unwrapLambdaBody(stmts[0]) else expr;
+                // Single-stmt blocks are the common shape (the typer
+                // wraps `arg -> expr` into `function(arg){ return expr; }`),
+                // but the typer also synthesizes intermediate locals
+                // for sub-expressions when the body references types
+                // it can't inline — e.g. `arr.value[i]` for a Haxe
+                // property — landing here as multi-statement blocks
+                // of TVar declarations followed by a final TReturn.
+                // Register the TVars in `localBindings` so the rest
+                // of the view-tree pass can dereference them, then
+                // unwrap the final TReturn.
+                if (stmts.length == 0) expr;
+                else if (stmts.length == 1) unwrapLambdaBody(stmts[0]);
+                else {
+                    for (s in stmts) {
+                        switch (s.expr) {
+                            case TVar(v, initExpr) if (initExpr != null):
+                                localBindings.set(v.id, initExpr);
+                            default:
+                        }
+                    }
+                    var last = stmts[stmts.length - 1];
+                    switch (last.expr) {
+                        case TReturn(_): unwrapLambdaBody(last);
+                        default: expr;
+                    }
+                }
             case TReturn(e):
                 e != null ? unwrapLambdaBody(e) : expr;
             case TMeta(_, e): unwrapLambdaBody(e);
@@ -2473,8 +2498,28 @@ class SwiftGenerator {
         appState-prefix pass rewrites bare names in. **/
     static function resolveHexExpr(args:Array<haxe.macro.Type.TypedExpr>):String {
         if (args.length == 0) return "\"\"";
+        // 1. Closure-form lambda item ref ("item", "other.value[i]")
         var itemExpr = extractItemExpr(args[0]);
         if (itemExpr != null) return itemExpr;
+        // 2. Direct State<String> field reference (`.foregroundHex(myColorState)`).
+        //    Emit `appState.<name>` straight away — the
+        //    body-wide appState-prefix pass keys on bracket /
+        //    interpolation / assignment patterns and doesn't match
+        //    bare names inside `Color(suiHex: …)`, so we have to
+        //    insert the prefix here ourselves.
+        var e = unwrap(args[0]);
+        switch (e.expr) {
+            case TField(_, fa):
+                switch (fa) {
+                    case FInstance(_, _, fieldRef): return 'appState.${fieldRef.get().name}';
+                    case FStatic(_, fieldRef): return 'appState.${fieldRef.get().name}';
+                    default:
+                }
+            default:
+                var fieldName = extractThisField(e);
+                if (fieldName != null) return 'appState.${fieldName}';
+        }
+        // 3. Legacy: string literal embedded verbatim.
         var s = extractString(args[0]);
         return s != null ? s : "\"\"";
     }
