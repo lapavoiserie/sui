@@ -1798,7 +1798,7 @@ class SwiftGenerator {
 
     static function isModifier(name:String):Bool {
         return switch (name) {
-            case "padding" | "font" | "foregroundColor" | "background" | "bold" | "italic" |
+            case "padding" | "font" | "foregroundColor" | "background" | "backgroundMaterial" | "bold" | "italic" |
                  "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "toggleStyle" | "pickerStyle" | "scrollIndicators" |
@@ -1830,6 +1830,14 @@ class SwiftGenerator {
             case "background":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'background(.${e != null ? camel(e) : "clear"})';
+            case "backgroundMaterial":
+                // MaterialStyle enum → SwiftUI Material constant.
+                // Regular → .regularMaterial, Bar → .bar, etc.
+                var e = if (args.length > 0) extractEnumName(args[0]) else null;
+                var swift = if (e == "Bar") ".bar"
+                    else if (e == null) ".regularMaterial"
+                    else '.${camel(e)}Material';
+                'background(${swift})';
             case "bold": "bold()";
             case "italic": "italic()";
             case "opacity":

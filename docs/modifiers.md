@@ -56,8 +56,21 @@ new Text("Styled")
 |----------|-----------|-------------|
 | `.foregroundColor(color)` | `color: ColorValue` | Text/icon color |
 | `.background(color)` | `color: ColorValue` | Background color |
+| `.backgroundMaterial(style)` | `style: MaterialStyle` | Translucent frosted-glass background (`.regularMaterial`, etc.) — adapts to dark/light, picks up content behind. |
 | `.opacity(value)` | `value: Float` | Opacity (0.0 to 1.0) |
 | `.tint(color)` | `color: ColorValue` | Accent/tint color |
+
+**MaterialStyle values:** `Regular`, `Thin`, `UltraThin`, `Thick`, `UltraThick`, `Bar`
+
+The `.backgroundMaterial` modifier gives you the translucent frosted-glass treatment that macOS uses on sidebars, popovers and toolbars. Each style is a different thickness — `Thin` lets more of the underlying content through, `Thick` is more opaque. `Bar` is the toolbar-specific variant.
+
+```haxe
+new VStack([...])
+    .backgroundMaterial(MaterialStyle.Regular)
+
+new VStack([...])
+    .backgroundMaterial(MaterialStyle.Bar)
+```
 
 **ColorValue values:** `Primary`, `Secondary`, `Accent`, `Red`, `Orange`, `Yellow`, `Green`, `Blue`, `Purple`, `Pink`, `White`, `Black`, `Gray`, `Clear`, `Custom(hex)`
 

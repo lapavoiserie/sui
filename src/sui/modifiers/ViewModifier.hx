@@ -22,6 +22,10 @@ enum ViewModifier {
     // Colors & Appearance
     ForegroundColor(color:ColorValue);
     Background(color:ColorValue);
+    /** Translucent SwiftUI Material as a background fill — picks up
+        content behind it. Standard in macOS sidebars, popovers, and
+        toolbars. **/
+    BackgroundMaterial(style:sui.View.MaterialStyle);
     Opacity(value:Float);
 
     // Shape
