@@ -53,19 +53,60 @@ class View {
         `calendarColors[i]` resolve to `appState.calendarColors[i]`
         (the per-iteration case for ForEach). Invalid hex falls back to
         `.primary` via the nil-coalescing operator on `Color(suiHex:)`. **/
-    public function foregroundHex(expr:String):View {
+    /** Accepts either a string literal (legacy stringly expr) or a
+        typed `State<String>` field reference — the macro extracts
+        the right Swift expression in both cases, no `.value`
+        ceremony at the call site. **/
+    public function foregroundHex(expr:Dynamic):View {
         modifierChain.push(ViewModifier.ForegroundHex(expr));
         return this;
     }
 
     /** Same as `foregroundHex` but for the background fill. **/
-    public function backgroundHex(expr:String):View {
+    public function backgroundHex(expr:Dynamic):View {
         modifierChain.push(ViewModifier.BackgroundHex(expr));
         return this;
     }
 
     public function frame(?width:Float, ?height:Float, ?alignment:Alignment):View {
         modifierChain.push(ViewModifier.Frame(width, height, alignment));
+        return this;
+    }
+
+    /** Stretch the view horizontally to fill its parent. Compiles to
+        `.frame(maxWidth: .infinity)`. Useful for views that don't have
+        an intrinsic preferred width (e.g. Lists inside sheets). **/
+    public function fillWidth():View {
+        modifierChain.push(ViewModifier.FillWidth);
+        return this;
+    }
+
+    /** Stretch the view vertically to fill its parent. Compiles to
+        `.frame(maxHeight: .infinity)`. The canonical use case is
+        `List`-inside-`.sheet`: SwiftUI's `List` collapses to zero
+        height inside a sheet's content closure because its parent's
+        intrinsic height doesn't reserve room for a scrollable list. **/
+    public function fillHeight():View {
+        modifierChain.push(ViewModifier.FillHeight);
+        return this;
+    }
+
+    /** Shorthand for `.fillWidth().fillHeight()`. **/
+    public function fillBoth():View {
+        modifierChain.push(ViewModifier.FillBoth);
+        return this;
+    }
+
+    /** Pin this view to its **intrinsic** size on either axis. Compiles
+        to `.fixedSize(horizontal:, vertical:)`. Crucial for views like
+        `List` and `ScrollView` whose default size is "fill available" —
+        in some layout contexts (notably `.sheet` content on macOS,
+        where the container sizes to its children's intrinsic heights)
+        their default behaviour resolves to zero. Pinning to intrinsic
+        size makes them report the sum of their content heights
+        instead. **/
+    public function fixedSize(horizontal:Bool = false, vertical:Bool = true):View {
+        modifierChain.push(ViewModifier.FixedSize(horizontal, vertical));
         return this;
     }
 
@@ -116,6 +157,30 @@ class View {
 
     public function textFieldStyle(style:TextFieldStyleValue):View {
         modifierChain.push(ViewModifier.TextFieldStyle(style));
+        return this;
+    }
+
+    /** Apply a SwiftUI ButtonStyle. The most useful values for visual
+        hierarchy are `BorderedProminent` (the "filled" CTA look) and
+        `Bordered` (a thin outline). Use `Plain` to strip the default
+        chrome — handy inside Lists, sidebars and tappable cells. **/
+    /** Apply a SwiftUI PickerStyle. Most useful: `Segmented` for the
+        native macOS switcher control. **/
+    public function pickerStyle(style:PickerStyleValue):View {
+        modifierChain.push(ViewModifier.PickerStyle(style));
+        return this;
+    }
+
+    /** Run a `StateAction` whenever the named state changes (e.g.
+        when a `Picker` writes its new selection). Maps to SwiftUI's
+        `.onChange(of:_:)`. **/
+    public function onChange(stateName:String, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnChange(stateName, action));
+        return this;
+    }
+
+    public function buttonStyle(style:ButtonStyleValue):View {
+        modifierChain.push(ViewModifier.ButtonStyle(style));
         return this;
     }
 
@@ -401,4 +466,25 @@ enum TextFieldStyleValue {
     Automatic;
     RoundedBorder;
     Plain;
+}
+
+enum ButtonStyleValue {
+    Automatic;
+    Plain;
+    Borderless;
+    Bordered;
+    BorderedProminent;
+    Link;
+}
+
+enum PickerStyleValue {
+    Automatic;
+    Inline;
+    Menu;
+    Palette;
+    /** macOS / iOS / iPadOS — the segmented "switcher" control,
+        typical for view-mode toolbars. **/
+    Segmented;
+    /** iOS only. **/
+    Wheel;
 }

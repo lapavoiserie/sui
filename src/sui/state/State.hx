@@ -54,6 +54,25 @@ class State<T> {
         this.name = name != null ? name : "";
         if (this.name != "")
             _registry.set(this.name, this);
+        // Push the initial value across the bridge so AppState's
+        // Swift-side property — which the macro currently emits with a
+        // literal default (`""`, `false`, `0`, …) — picks up what Haxe
+        // intends. Without this, a `new State<Bool>(true, "isLoggedIn")`
+        // in the App constructor leaves Swift's `isLoggedIn` at `false`
+        // until the next mutation, which routinely causes the wrong
+        // initial view to render (re-login screen for an
+        // already-authenticated user, empty grids, …).
+        //
+        // Arrays go through the shared-memory bridge, so we still send
+        // an empty string — that bumps the version counter on the
+        // Swift side and triggers a fresh read.
+        #if cpp
+        if (this.name != "") {
+            var k = this.name;
+            var v = if (Std.isOfType(initialValue, Array)) "" else Std.string(initialValue);
+            untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
+        }
+        #end
     }
 
     function get_value():T {

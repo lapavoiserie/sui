@@ -165,10 +165,19 @@ class SwiftGenerator {
         appSwift.add("@main\n");
         appSwift.add('struct ${className}App: App {\n');
         appSwift.add("    init() {\n");
-        appSwift.add("        HaxeRuntime.initialize()\n");
         if (needsRuntimeBridge) {
+            // Register the swift-side state callback BEFORE the
+            // runtime boots. `HaxeRuntime.initialize()` calls
+            // `haxe_bridge_init`, which itself constructs the
+            // application class — any `State.setByName` (or
+            // `State<T>(initialValue, ...)` push) issued during the
+            // constructor only reaches AppState if the swift
+            // callback is already wired up. With the previous order
+            // those updates were dropped silently and AppState
+            // stayed on its literal defaults until the next mutation.
             appSwift.add("        HaxeBridgeC.registerCallbacks()\n");
         }
+        appSwift.add("        HaxeRuntime.initialize()\n");
         appSwift.add("    }\n\n");
         appSwift.add("    var body: some Scene {\n");
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
@@ -218,11 +227,31 @@ class SwiftGenerator {
                 // Replace "if name" (ConditionalView boolean) with "if __APPSTATE__name"
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + " ", "if " + placeholder + n + " ");
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + "\n", "if " + placeholder + n + "\n");
+                // Replace "0..<name.count" — the ForEach iteration header
+                // emits the bare state name, which would otherwise resolve
+                // to an unbound identifier inside ContentView's body when
+                // the state lives on the separate AppState object that the
+                // bridge codepath generates.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "0..<" + n + ".count", "0..<" + placeholder + n + ".count");
                 // Replace "ForEach(name," — the closure form of ForEach
                 // iterates directly over a state array; without this,
                 // the bare array name would be unbound inside the body
                 // when state lives on the appState bridge object.
                 bodyWithAppState = StringTools.replace(bodyWithAppState, "ForEach(" + n + ",", "ForEach(" + placeholder + n + ",");
+                // Replace "(name[" (subscript access from inside string
+                // interpolation: "\(name[i])"). Matched with the leading
+                // paren so we don't accidentally rewrite suffix matches in
+                // longer identifiers, and so we leave existing
+                // "\(__APPSTATE__name[" alone (placeholder already in).
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "(" + n + "[", "(" + placeholder + n + "[");
+                // Replace "!name[" (logical-not subscript) and " name["
+                // (statement-leading bare reference inside CustomSwift
+                // bodies). Two narrow lookbehinds rather than a generic
+                // `name[` to avoid false-positives where the state name
+                // appears as a suffix of another identifier.
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "!" + n + "[", "!" + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, " " + n + "[", " " + placeholder + n + "[");
+                bodyWithAppState = StringTools.replace(bodyWithAppState, "=" + n + "[", "=" + placeholder + n + "[");
             }
             // Now resolve all placeholders to "appState."
             bodyWithAppState = StringTools.replace(bodyWithAppState, placeholder, "appState.");
@@ -476,7 +505,9 @@ class SwiftGenerator {
             buf.add('#include "sui/ui/Button.h"\n');
         }
         buf.add('#include "sui/state/State.h"\n');
-        buf.add("#include <string.h>\n\n");
+        buf.add("#include <string.h>\n");
+        buf.add("#include <mutex>\n");
+        buf.add("#include <cstdio>\n\n");
         buf.add("// Auto-generated bridge: calls into hxcpp-compiled Haxe code.\n\n");
 
         buf.add("extern \"C\" void __hxcpp_lib_main() {}\n");
@@ -486,6 +517,43 @@ class SwiftGenerator {
             buf.add("extern \"C\" void haxe_bridge_register_state_fn(void (*)(const char*, const char*));\n");
         }
         buf.add("\n");
+
+        // ── Bridge safety scaffold ────────────────────────────────
+        //
+        // Every entry into this file ends up running hxcpp-compiled
+        // Haxe code, which:
+        //   1) requires the calling thread's stack to be registered as
+        //      a GC root via hx::SetTopOfStack, and
+        //   2) is *not* internally synchronized — two threads running
+        //      Haxe at once is undefined behaviour.
+        //
+        // SwiftUI clients hit case 2 the moment they mix
+        //   - computed properties that query state on every body re-eval
+        //     (the closure form of ForEach lands here), and
+        //   - `Task.detached { HaxeBridgeC.foo(...) }` for any user
+        //     `@:expose`d function.
+        //
+        // We serialize both with a single global recursive_mutex.
+        // Recursive is necessary because Haxe→Swift callbacks
+        // (`_bridge_state_forwarder`) can in turn invoke other bridge
+        // entrypoints, all on the same thread.
+        //
+        // Each entrypoint also wraps the call in try/catch — an
+        // uncaught Haxe `throw` walks past `__cxa_throw` and aborts
+        // the process; without the catch we have no way to surface
+        // the error to Swift.
+        buf.add("static std::recursive_mutex _haxe_runtime_mutex;\n\n");
+
+        buf.add("struct HaxeBridgeScope {\n");
+        buf.add("    std::lock_guard<std::recursive_mutex> _lock;\n");
+        buf.add("    int _gc_dummy;\n");
+        buf.add("    HaxeBridgeScope() : _lock(_haxe_runtime_mutex), _gc_dummy(0) {\n");
+        buf.add("        hx::SetTopOfStack(&_gc_dummy, true);\n");
+        buf.add("    }\n");
+        buf.add("    ~HaxeBridgeScope() {\n");
+        buf.add("        hx::SetTopOfStack((int*)0, true);\n");
+        buf.add("    }\n");
+        buf.add("};\n\n");
 
         if (hasRuntimeActions) {
             // State callback: Swift → C → Haxe State.set() → C → Swift AppState
@@ -500,125 +568,113 @@ class SwiftGenerator {
             buf.add("}\n\n");
         }
 
-        // haxe_bridge_init: boots hxcpp runtime, registers callbacks, builds view tree
+        // haxe_bridge_init: boots hxcpp runtime, registers callbacks, builds view tree.
+        // Boot itself isn't reentrant, so we hold the lock for the whole init body.
         buf.add("void haxe_bridge_init(void) {\n");
+        buf.add("    std::lock_guard<std::recursive_mutex> _lock(_haxe_runtime_mutex);\n");
         buf.add("    int dummy = 0;\n");
         buf.add("    hx::SetTopOfStack(&dummy, true);\n");
-        buf.add("    hx::Boot();\n");
-        buf.add("    __boot_all();\n");
-
+        buf.add("    try {\n");
+        buf.add("        hx::Boot();\n");
+        buf.add("        __boot_all();\n");
         if (hasRuntimeActions) {
-            buf.add("\n    // Register state change forwarder (State.set() → Swift AppState)\n");
-            buf.add("    haxe_bridge_register_state_fn(_bridge_state_forwarder);\n");
-            buf.add("\n    // Build view tree to register button actions\n");
-            buf.add('    auto app = ::${appClassName}_obj::__new();\n');
-            buf.add("    app->body();\n");
+            buf.add("        // Register state change forwarder (State.set() → Swift AppState)\n");
+            buf.add("        haxe_bridge_register_state_fn(_bridge_state_forwarder);\n");
+            buf.add("        // Build view tree to register button actions\n");
+            buf.add('        auto app = ::${appClassName}_obj::__new();\n');
+            buf.add("        app->body();\n");
         }
-
+        buf.add("    } catch (::Dynamic _e) {\n");
+        buf.add('        fprintf(stderr, "[sui] haxe_bridge_init: Haxe exception during boot\\n");\n');
+        buf.add("    } catch (...) {\n");
+        buf.add('        fprintf(stderr, "[sui] haxe_bridge_init: C++ exception during boot\\n");\n');
+        buf.add("    }\n");
         buf.add("}\n\n");
 
         if (hasRuntimeActions) {
             // invoke_action: calls into Haxe Button action registry
             buf.add("void haxe_bridge_invoke_action(int32_t actionId) {\n");
-            buf.add("    // Set up hxcpp thread-local storage for this thread\n");
-            buf.add("    // (needed when called from Swift Task.detached background threads)\n");
-            buf.add("    int dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
-            buf.add("    ::sui::ui::Button_obj::_invokeAction(actionId);\n");
-            buf.add("    hx::SetTopOfStack((int*)0, true);\n");
+            buf.add("    HaxeBridgeScope _scope;\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::ui::Button_obj::_invokeAction(actionId);\n");
+            buf.add("    } catch (::Dynamic _e) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_action: Haxe exception\\n");\n');
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_action: C++ exception\\n");\n');
+            buf.add("    }\n");
             buf.add("}\n\n");
         }
 
-        // Shared-memory query functions — typed accessors avoid serialization
-        // Helper macro pattern: GC setup, call, GC teardown
-        buf.add("// Array length\n");
-        buf.add("int32_t haxe_bridge_array_length(const char* stateName) {\n");
-        buf.add("    if (!stateName) return -1;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    int32_t r = (int32_t)::sui::state::State_obj::_getArrayLength(::String(stateName));\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        // ── Shared-memory query functions ─────────────────────────
+        emitSharedMemoryReader(buf, "haxe_bridge_array_length",
+            "int32_t", "0",
+            "if (!stateName) return -1;\n",
+            "(int32_t)::sui::state::State_obj::_getArrayLength(::String(stateName))",
+            "stateName.c_str", null,
+            "int32_t");
 
-        // String element
-        buf.add("const char* haxe_bridge_array_string_element(const char* stateName, int32_t index) {\n");
-        buf.add("    if (!stateName) return \"\";\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    ::String r = ::sui::state::State_obj::_getArrayStringElement(::String(stateName), (int)index);\n");
-        buf.add("    static thread_local char _buf[4096];\n");
-        buf.add("    strncpy(_buf, r.__CStr(), sizeof(_buf) - 1); _buf[sizeof(_buf) - 1] = 0;\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return _buf;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_array_string_element",
+            "const char*", "\"\"",
+            "if (!stateName) return \"\";\n",
+            "::sui::state::State_obj::_getArrayStringElement(::String(stateName), (int)index)",
+            "stateName.c_str + index", "haxe_string_to_buf",
+            "::String");
 
-        // Int element — no string conversion
-        buf.add("int32_t haxe_bridge_array_int_element(const char* stateName, int32_t index) {\n");
-        buf.add("    if (!stateName) return 0;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    int32_t r = (int32_t)::sui::state::State_obj::_getArrayIntElement(::String(stateName), (int)index);\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_array_int_element",
+            "int32_t", "0",
+            "if (!stateName) return 0;\n",
+            "(int32_t)::sui::state::State_obj::_getArrayIntElement(::String(stateName), (int)index)",
+            "stateName.c_str + index", null,
+            "int32_t");
 
-        // Float element — no string conversion
-        buf.add("double haxe_bridge_array_float_element(const char* stateName, int32_t index) {\n");
-        buf.add("    if (!stateName) return 0.0;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    double r = (double)::sui::state::State_obj::_getArrayFloatElement(::String(stateName), (int)index);\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_array_float_element",
+            "double", "0.0",
+            "if (!stateName) return 0.0;\n",
+            "(double)::sui::state::State_obj::_getArrayFloatElement(::String(stateName), (int)index)",
+            "stateName.c_str + index", null,
+            "double");
 
-        // Bool element — no string conversion
-        buf.add("bool haxe_bridge_array_bool_element(const char* stateName, int32_t index) {\n");
-        buf.add("    if (!stateName) return false;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    bool r = (bool)::sui::state::State_obj::_getArrayBoolElement(::String(stateName), (int)index);\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_array_bool_element",
+            "bool", "false",
+            "if (!stateName) return false;\n",
+            "(bool)::sui::state::State_obj::_getArrayBoolElement(::String(stateName), (int)index)",
+            "stateName.c_str + index", null,
+            "bool");
 
-        // Object field accessors
-        buf.add("const char* haxe_bridge_object_field(const char* stateName, int32_t index, const char* fieldName) {\n");
-        buf.add("    if (!stateName || !fieldName) return \"\";\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    ::String r = ::sui::state::State_obj::_getObjectField(::String(stateName), (int)index, ::String(fieldName));\n");
-        buf.add("    static thread_local char _buf[4096];\n");
-        buf.add("    strncpy(_buf, r.__CStr(), sizeof(_buf) - 1); _buf[sizeof(_buf) - 1] = 0;\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return _buf;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_object_field",
+            "const char*", "\"\"",
+            "if (!stateName || !fieldName) return \"\";\n",
+            "::sui::state::State_obj::_getObjectField(::String(stateName), (int)index, ::String(fieldName))",
+            "stateName.c_str + index + fieldName.c_str", "haxe_string_to_buf",
+            "::String");
 
-        buf.add("int32_t haxe_bridge_object_int_field(const char* stateName, int32_t index, const char* fieldName) {\n");
-        buf.add("    if (!stateName || !fieldName) return 0;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    int32_t r = (int32_t)::sui::state::State_obj::_getObjectIntField(::String(stateName), (int)index, ::String(fieldName));\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_object_int_field",
+            "int32_t", "0",
+            "if (!stateName || !fieldName) return 0;\n",
+            "(int32_t)::sui::state::State_obj::_getObjectIntField(::String(stateName), (int)index, ::String(fieldName))",
+            "stateName.c_str + index + fieldName.c_str", null,
+            "int32_t");
 
-        buf.add("double haxe_bridge_object_float_field(const char* stateName, int32_t index, const char* fieldName) {\n");
-        buf.add("    if (!stateName || !fieldName) return 0.0;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    double r = (double)::sui::state::State_obj::_getObjectFloatField(::String(stateName), (int)index, ::String(fieldName));\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_object_float_field",
+            "double", "0.0",
+            "if (!stateName || !fieldName) return 0.0;\n",
+            "(double)::sui::state::State_obj::_getObjectFloatField(::String(stateName), (int)index, ::String(fieldName))",
+            "stateName.c_str + index + fieldName.c_str", null,
+            "double");
 
-        buf.add("bool haxe_bridge_object_bool_field(const char* stateName, int32_t index, const char* fieldName) {\n");
-        buf.add("    if (!stateName || !fieldName) return false;\n");
-        buf.add("    int _gc = 0; hx::SetTopOfStack(&_gc, true);\n");
-        buf.add("    bool r = (bool)::sui::state::State_obj::_getObjectBoolField(::String(stateName), (int)index, ::String(fieldName));\n");
-        buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-        buf.add("    return r;\n");
-        buf.add("}\n\n");
+        emitSharedMemoryReader(buf, "haxe_bridge_object_bool_field",
+            "bool", "false",
+            "if (!stateName || !fieldName) return false;\n",
+            "(bool)::sui::state::State_obj::_getObjectBoolField(::String(stateName), (int)index, ::String(fieldName))",
+            "stateName.c_str + index + fieldName.c_str", null,
+            "bool");
 
+        // ── User-defined @:expose functions ───────────────────────
         for (fn in fns) {
             var cParams = [for (p in fn.params) '${swiftTypeToCType(p.swiftType)} ${p.name}'];
             if (cParams.length == 0) cParams.push("void");
-            buf.add('${swiftTypeToCType(fn.returnType)} haxe_bridge_${fn.name}(${cParams.join(", ")}) {\n');
-            buf.add("    int _gc_dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&_gc_dummy, true);\n");
+            var cReturnType = swiftTypeToCType(fn.returnType);
+            buf.add('$cReturnType haxe_bridge_${fn.name}(${cParams.join(", ")}) {\n');
 
             // Build hxcpp call arguments
             var hxArgs:Array<String> = [];
@@ -633,36 +689,112 @@ class SwiftGenerator {
             }
 
             var call = '::${appClassName}_obj::${fn.name}(${hxArgs.join(", ")})';
+            var fnName = fn.name;
 
             switch (fn.returnType) {
                 case "String":
-                    buf.add('    ::String _hx_result = $call;\n');
-                    buf.add("    static thread_local char _buf[4096];\n");
-                    buf.add("    const char* _cstr = _hx_result.__CStr();\n");
-                    buf.add("    strncpy(_buf, _cstr, sizeof(_buf) - 1);\n");
-                    buf.add("    _buf[sizeof(_buf) - 1] = 0;\n");
-                    buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-                    buf.add("    return _buf;\n");
+                    buf.add('    static thread_local char _buf[4096];\n');
+                    buf.add('    _buf[0] = 0;\n');
+                    buf.add('    {\n');
+                    buf.add('        HaxeBridgeScope _scope;\n');
+                    buf.add('        try {\n');
+                    buf.add('            ::String _hx_result = $call;\n');
+                    buf.add('            const char* _cstr = _hx_result.__CStr();\n');
+                    buf.add('            strncpy(_buf, _cstr, sizeof(_buf) - 1);\n');
+                    buf.add('            _buf[sizeof(_buf) - 1] = 0;\n');
+                    buf.add('        } catch (::Dynamic _e) {\n');
+                    buf.add('            fprintf(stderr, "[sui] haxe_bridge_$fnName: Haxe exception\\n");\n');
+                    buf.add('        } catch (...) {\n');
+                    buf.add('            fprintf(stderr, "[sui] haxe_bridge_$fnName: C++ exception\\n");\n');
+                    buf.add('        }\n');
+                    buf.add('    }\n');
+                    buf.add('    return _buf;\n');
                 case "Int":
-                    buf.add('    int32_t _ret = (int32_t)$call;\n');
-                    buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-                    buf.add("    return _ret;\n");
+                    buf.add('    int32_t _ret = 0;\n');
+                    buf.add('    {\n');
+                    buf.add('        HaxeBridgeScope _scope;\n');
+                    buf.add('        try { _ret = (int32_t)$call; }\n');
+                    buf.add('        catch (::Dynamic _e) { fprintf(stderr, "[sui] haxe_bridge_$fnName: Haxe exception\\n"); }\n');
+                    buf.add('        catch (...) { fprintf(stderr, "[sui] haxe_bridge_$fnName: C++ exception\\n"); }\n');
+                    buf.add('    }\n');
+                    buf.add('    return _ret;\n');
                 case "Double" | "Float":
-                    buf.add('    double _ret = (double)$call;\n');
-                    buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-                    buf.add("    return _ret;\n");
+                    buf.add('    double _ret = 0.0;\n');
+                    buf.add('    {\n');
+                    buf.add('        HaxeBridgeScope _scope;\n');
+                    buf.add('        try { _ret = (double)$call; }\n');
+                    buf.add('        catch (::Dynamic _e) { fprintf(stderr, "[sui] haxe_bridge_$fnName: Haxe exception\\n"); }\n');
+                    buf.add('        catch (...) { fprintf(stderr, "[sui] haxe_bridge_$fnName: C++ exception\\n"); }\n');
+                    buf.add('    }\n');
+                    buf.add('    return _ret;\n');
                 case "Bool":
-                    buf.add('    bool _ret = (bool)$call;\n');
-                    buf.add("    hx::SetTopOfStack((int*)0, true);\n");
-                    buf.add("    return _ret;\n");
+                    buf.add('    bool _ret = false;\n');
+                    buf.add('    {\n');
+                    buf.add('        HaxeBridgeScope _scope;\n');
+                    buf.add('        try { _ret = (bool)$call; }\n');
+                    buf.add('        catch (::Dynamic _e) { fprintf(stderr, "[sui] haxe_bridge_$fnName: Haxe exception\\n"); }\n');
+                    buf.add('        catch (...) { fprintf(stderr, "[sui] haxe_bridge_$fnName: C++ exception\\n"); }\n');
+                    buf.add('    }\n');
+                    buf.add('    return _ret;\n');
                 default:
-                    buf.add('    $call;\n');
-                    buf.add("    hx::SetTopOfStack((int*)0, true);\n");
+                    buf.add('    HaxeBridgeScope _scope;\n');
+                    buf.add('    try { $call; }\n');
+                    buf.add('    catch (::Dynamic _e) { fprintf(stderr, "[sui] haxe_bridge_$fnName: Haxe exception\\n"); }\n');
+                    buf.add('    catch (...) { fprintf(stderr, "[sui] haxe_bridge_$fnName: C++ exception\\n"); }\n');
             }
 
             buf.add("}\n\n");
         }
         return buf.toString();
+    }
+
+    /** Helper for the shared-memory state readers. They all share the
+        same shape: a guard, a HaxeBridgeScope, a try/catch around the
+        Haxe call, and either a numeric return or a thread-local
+        buffer for String returns. The macro-level abstraction keeps
+        the bridge body small and consistent. **/
+    static function emitSharedMemoryReader(buf:StringBuf, fnName:String,
+            cReturnType:String, defaultReturn:String, guard:String,
+            call:String, _:String, stringMode:Null<String>, hxResultType:String):Void {
+        var isString = (stringMode == "haxe_string_to_buf");
+        // Reconstruct the C parameter list from the function name —
+        // the naming convention is enough to discriminate.
+        var params = if (fnName.indexOf("object") >= 0)
+            "const char* stateName, int32_t index, const char* fieldName";
+        else if (fnName.indexOf("element") >= 0)
+            "const char* stateName, int32_t index";
+        else
+            "const char* stateName";
+        buf.add('$cReturnType ${fnName}($params) {\n');
+        buf.add('    $guard');
+        if (isString) {
+            buf.add('    static thread_local char _buf[4096];\n');
+            buf.add('    _buf[0] = 0;\n');
+        } else {
+            buf.add('    $cReturnType _ret = $defaultReturn;\n');
+        }
+        buf.add('    {\n');
+        buf.add('        HaxeBridgeScope _scope;\n');
+        buf.add('        try {\n');
+        if (isString) {
+            buf.add('            ::String r = $call;\n');
+            buf.add('            strncpy(_buf, r.__CStr(), sizeof(_buf) - 1);\n');
+            buf.add('            _buf[sizeof(_buf) - 1] = 0;\n');
+        } else {
+            buf.add('            _ret = $call;\n');
+        }
+        buf.add('        } catch (::Dynamic _e) {\n');
+        buf.add('            fprintf(stderr, "[sui] ${fnName}: Haxe exception\\n");\n');
+        buf.add('        } catch (...) {\n');
+        buf.add('            fprintf(stderr, "[sui] ${fnName}: C++ exception\\n");\n');
+        buf.add('        }\n');
+        buf.add('    }\n');
+        if (isString) {
+            buf.add('    return _buf;\n');
+        } else {
+            buf.add('    return _ret;\n');
+        }
+        buf.add('}\n\n');
     }
 
     static function generateBridgeSwift(appClassName:String, fns:Array<{name:String, params:Array<{name:String, swiftType:String}>, returnType:String}>, hasRuntimeActions:Bool):String {
@@ -1564,7 +1696,32 @@ class SwiftGenerator {
         if (expr == null) return expr;
         return switch (expr.expr) {
             case TBlock(stmts):
-                if (stmts.length == 1) unwrapLambdaBody(stmts[0]) else expr;
+                // Single-stmt blocks are the common shape (the typer
+                // wraps `arg -> expr` into `function(arg){ return expr; }`),
+                // but the typer also synthesizes intermediate locals
+                // for sub-expressions when the body references types
+                // it can't inline — e.g. `arr.value[i]` for a Haxe
+                // property — landing here as multi-statement blocks
+                // of TVar declarations followed by a final TReturn.
+                // Register the TVars in `localBindings` so the rest
+                // of the view-tree pass can dereference them, then
+                // unwrap the final TReturn.
+                if (stmts.length == 0) expr;
+                else if (stmts.length == 1) unwrapLambdaBody(stmts[0]);
+                else {
+                    for (s in stmts) {
+                        switch (s.expr) {
+                            case TVar(v, initExpr) if (initExpr != null):
+                                localBindings.set(v.id, initExpr);
+                            default:
+                        }
+                    }
+                    var last = stmts[stmts.length - 1];
+                    switch (last.expr) {
+                        case TReturn(_): unwrapLambdaBody(last);
+                        default: expr;
+                    }
+                }
             case TReturn(e):
                 e != null ? unwrapLambdaBody(e) : expr;
             case TMeta(_, e): unwrapLambdaBody(e);
@@ -1721,6 +1878,16 @@ class SwiftGenerator {
     /** Try to inline a view-returning function call. Returns null if not resolvable. **/
     static function tryInlineViewCall(field:haxe.macro.Type.ClassField, args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
         if (!returnsView(field)) return null;
+        // Static factories that carry @:swiftName have their own Swift
+        // emission (`generateSwiftCall` reads :swiftLabel-tagged params
+        // and builds the matching initializer call) — inlining them
+        // would walk the Haxe body and ignore those annotations,
+        // emitting whatever stub the factory uses internally. The
+        // canonical case is `Image.systemImage(...)` whose body builds
+        // `new Image("")` as a placeholder, so without this guard the
+        // generated Swift came out as `Image("")` instead of
+        // `Image(systemName: "...")`.
+        if (getMetaString(field.meta, ":swiftName") != null) return null;
         var funcExpr = field.expr();
         if (funcExpr == null) return null;
 
@@ -1941,9 +2108,10 @@ class SwiftGenerator {
         return switch (name) {
             case "padding" | "font" | "foregroundColor" | "background" |
                  "foregroundHex" | "backgroundHex" | "bold" | "italic" |
-                 "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
+                 "frame" | "fillWidth" | "fillHeight" | "fillBoth" | "fixedSize" |
+                 "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
-                 "toggleStyle" | "pickerStyle" | "scrollIndicators" |
+                 "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
@@ -1952,7 +2120,8 @@ class SwiftGenerator {
                  "brightness" | "contrast" | "saturation" | "grayscale" |
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" |
-                 "onSubmit" | "onLongPressGesture" | "transition":
+                 "onSubmit" | "onLongPressGesture" | "transition" |
+                 "onChange":
                 true;
             default: false;
         }
@@ -1968,10 +2137,10 @@ class SwiftGenerator {
                 'font(.${e != null ? camel(e) : "body"})';
             case "foregroundColor":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'foregroundStyle(.${e != null ? camel(e) : "primary"})';
+                'foregroundStyle(${colorEnumToSwift(e, "primary")})';
             case "background":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'background(.${e != null ? camel(e) : "clear"})';
+                'background(${colorEnumToSwift(e, "clear")})';
             case "foregroundHex":
                 // Closure-form ForEach typed item refs and indexed
                 // accesses (`item`, `other.value[i]`) take priority;
@@ -1996,6 +2165,22 @@ class SwiftGenerator {
                 if (args.length > 0) { var w = extractConstant(args[0]); if (w != null) parts.push('width: $w'); }
                 if (args.length > 1) { var h = extractConstant(args[1]); if (h != null) parts.push('height: $h'); }
                 'frame(${parts.join(", ")})';
+            // Stretch helpers — workarounds for SwiftUI containers that
+            // collapse to zero in layout contexts without a definite
+            // intrinsic size (notably `List` inside `.sheet` content).
+            case "fillWidth":
+                'frame(maxWidth: .infinity)';
+            case "fillHeight":
+                'frame(maxHeight: .infinity)';
+            case "fillBoth":
+                'frame(maxWidth: .infinity, maxHeight: .infinity)';
+            case "fixedSize":
+                // Defaults match Haxe-side: horizontal=false, vertical=true.
+                var h = if (args.length > 0) extractConstant(args[0]) else "false";
+                var v = if (args.length > 1) extractConstant(args[1]) else "true";
+                if (h == null) h = "false";
+                if (v == null) v = "true";
+                'fixedSize(horizontal: $h, vertical: $v)';
             case "disabled":
                 var v = if (args.length > 0) extractConstant(args[0]) else "true";
                 'disabled($v)';
@@ -2004,12 +2189,15 @@ class SwiftGenerator {
                 'lineLimit($v)';
             case "shadow":
                 var parts:Array<String> = [];
-                if (args.length > 0) { var e = extractEnumName(args[0]); if (e != null) parts.push('color: .${camel(e)}'); }
+                if (args.length > 0) { var e = extractEnumName(args[0]); if (e != null) parts.push('color: ${colorEnumToSwift(e, "primary")}'); }
                 if (args.length > 1) { var r = extractConstant(args[1]); if (r != null) parts.push('radius: $r'); }
                 'shadow(${parts.join(", ")})';
             case "textFieldStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'textFieldStyle(.${e != null ? camel(e) : "automatic"})';
+            case "buttonStyle":
+                var e = if (args.length > 0) extractEnumName(args[0]) else null;
+                'buttonStyle(.${e != null ? camel(e) : "automatic"})';
             case "toggleStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'toggleStyle(.${e != null ? camel(e) : "automatic"})';
@@ -2039,6 +2227,15 @@ class SwiftGenerator {
                     'onTapGesture { ${actionCode} }';
                 else
                     'onTapGesture { }';
+            case "onChange":
+                // args[0] = state name (String literal), args[1] = StateAction.
+                // Emits `.onChange(of: appState.<name>) { _, _ in <action> }`
+                // — the body-wide appState-prefix pass doesn't reach
+                // through `of:`, so we insert the prefix here.
+                var stateName = if (args.length > 0) extractString(args[0]) else null;
+                if (stateName == null) stateName = "";
+                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else null;
+                'onChange(of: appState.${stateName}) { _, _ in ${actionCode != null ? actionCode : ""} }';
             case "onAppearAction":
                 var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
                 if (actionCode != null)
@@ -2105,7 +2302,7 @@ class SwiftGenerator {
                 'overlay {\n${contentSwift}${pad}}';
             case "tint":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'tint(.${e != null ? camel(e) : "accentColor"})';
+                'tint(${colorEnumToSwift(e, "accentColor")})';
             case "badge":
                 var v = if (args.length > 0) extractConstant(args[0]) else null;
                 if (v != null)
@@ -2311,8 +2508,28 @@ class SwiftGenerator {
         appState-prefix pass rewrites bare names in. **/
     static function resolveHexExpr(args:Array<haxe.macro.Type.TypedExpr>):String {
         if (args.length == 0) return "\"\"";
+        // 1. Closure-form lambda item ref ("item", "other.value[i]")
         var itemExpr = extractItemExpr(args[0]);
         if (itemExpr != null) return itemExpr;
+        // 2. Direct State<String> field reference (`.foregroundHex(myColorState)`).
+        //    Emit `appState.<name>` straight away — the
+        //    body-wide appState-prefix pass keys on bracket /
+        //    interpolation / assignment patterns and doesn't match
+        //    bare names inside `Color(suiHex: …)`, so we have to
+        //    insert the prefix here ourselves.
+        var e = unwrap(args[0]);
+        switch (e.expr) {
+            case TField(_, fa):
+                switch (fa) {
+                    case FInstance(_, _, fieldRef): return 'appState.${fieldRef.get().name}';
+                    case FStatic(_, fieldRef): return 'appState.${fieldRef.get().name}';
+                    default:
+                }
+            default:
+                var fieldName = extractThisField(e);
+                if (fieldName != null) return 'appState.${fieldName}';
+        }
+        // 3. Legacy: string literal embedded verbatim.
         var s = extractString(args[0]);
         return s != null ? s : "\"\"";
     }
@@ -2410,6 +2627,23 @@ class SwiftGenerator {
     static function camel(s:String):String {
         if (s == null || s.length == 0) return s;
         return s.charAt(0).toLowerCase() + s.substr(1);
+    }
+
+    /** Translate a `ColorValue` enum-name into the Swift expression to
+        pass to a colour-consuming modifier (`foregroundStyle`,
+        `background`, `shadow`, `tint`, etc.). Most values map to the
+        dotted shorthand (`.red`, `.blue`, `.primary`, …) because
+        SwiftUI exposes them on every relevant `ShapeStyle`/`Color`
+        type. `Accent` is the exception: there is no `.accent`
+        `ShapeStyle` member, so we emit the explicit static
+        `Color.accentColor` instead, which is universally available
+        and works as both a `Color` and a `ShapeStyle`. **/
+    static function colorEnumToSwift(name:Null<String>, fallback:String):String {
+        if (name == null) return '.${fallback}';
+        return switch (name) {
+            case "Accent": "Color.accentColor";
+            default: '.${camel(name)}';
+        };
     }
 
     static function templateToSwift(template:String):String {
