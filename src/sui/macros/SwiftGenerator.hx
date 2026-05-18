@@ -2290,7 +2290,7 @@ class SwiftGenerator {
                  "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
-                 "sheet" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
+                 "sheet" | "inspector" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
@@ -2433,6 +2433,11 @@ class SwiftGenerator {
                 var pad = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad}    Text("Sheet")\n';
                 'sheet(isPresented: $$${binding}) {\n${contentSwift}${pad}}';
+            case "inspector":
+                var binding = if (args.length > 0) resolveStateName(args[0]) else "isPresented";
+                var pad = ind(indent + 1);
+                var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad}    Text("Inspector")\n';
+                'inspector(isPresented: $$${binding}) {\n${contentSwift}${pad}}';
             case "alert":
                 var title = if (args.length > 0) extractString(args[0]) else "Alert";
                 var binding = if (args.length > 1) resolveStateName(args[1]) else "showAlert";

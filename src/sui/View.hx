@@ -194,6 +194,16 @@ class View {
         return this;
     }
 
+    /** Trailing inspector pane (macOS) — slides out from the right
+        edge when `isPresentedBinding` becomes true. Maps to
+        SwiftUI's `.inspector(isPresented:_:)`. The standard macOS
+        pattern for showing details about the current selection
+        without opening a modal. **/
+    public function inspector(isPresentedBinding:Dynamic, content:View):View {
+        modifierChain.push(ViewModifier.Inspector(isPresentedBinding, content));
+        return this;
+    }
+
     public function alert(title:String, isPresentedBinding:Dynamic, ?message:String):View {
         modifierChain.push(ViewModifier.Alert(title, isPresentedBinding, message));
         return this;
