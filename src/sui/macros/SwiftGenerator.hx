@@ -1037,6 +1037,11 @@ class SwiftGenerator {
                 }
                 return buf.toString();
 
+            case "Rectangle": return '${pad}Rectangle()\n';
+            case "Circle": return '${pad}Circle()\n';
+            case "Capsule": return '${pad}Capsule()\n';
+            case "Ellipse": return '${pad}Ellipse()\n';
+
             case "Spacer":
                 if (args.length > 0) {
                     var v = extractConstant(args[0]);

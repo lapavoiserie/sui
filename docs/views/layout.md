@@ -92,6 +92,30 @@ new VStack([
 |-----------|------|---------|-------------|
 | `minLength` | `Float` | `null` | Minimum size |
 
+## Shape primitives
+
+`Rectangle`, `Circle`, `Capsule`, `Ellipse` are zero-arg shape views that map to their SwiftUI equivalents. Like all SwiftUI shapes, they have no intrinsic size — give them one via `.frame(...)` (or rely on the parent layout to size them). Fill with `.foregroundColor(...)` / `.foregroundHex(...)`.
+
+```haxe
+new Rectangle()
+    .frame(100, 50)
+    .foregroundColor(ColorValue.Blue)
+
+new Circle()
+    .frame(20, 20)
+    .foregroundColor(ColorValue.Red)
+
+new Capsule()
+    .frame(100, 24)
+    .foregroundColor(ColorValue.Accent)
+
+new Ellipse()
+    .frame(100, 50)
+    .foregroundColor(ColorValue.Purple)
+```
+
+Useful as drawing primitives, decoration, overlays, and for chip-style backgrounds where a plain `cornerRadius` isn't enough. For more complex curves use `Path` (not yet wrapped) via `CustomSwift`.
+
 ## ScrollView
 
 Wraps content in a scrollable container.
