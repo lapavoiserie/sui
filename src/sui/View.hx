@@ -164,6 +164,21 @@ class View {
         hierarchy are `BorderedProminent` (the "filled" CTA look) and
         `Bordered` (a thin outline). Use `Plain` to strip the default
         chrome — handy inside Lists, sidebars and tappable cells. **/
+    /** Apply a SwiftUI PickerStyle. Most useful: `Segmented` for the
+        native macOS switcher control. **/
+    public function pickerStyle(style:PickerStyleValue):View {
+        modifierChain.push(ViewModifier.PickerStyle(style));
+        return this;
+    }
+
+    /** Run a `StateAction` whenever the named state changes (e.g.
+        when a `Picker` writes its new selection). Maps to SwiftUI's
+        `.onChange(of:_:)`. **/
+    public function onChange(stateName:String, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnChange(stateName, action));
+        return this;
+    }
+
     public function buttonStyle(style:ButtonStyleValue):View {
         modifierChain.push(ViewModifier.ButtonStyle(style));
         return this;
@@ -460,4 +475,16 @@ enum ButtonStyleValue {
     Bordered;
     BorderedProminent;
     Link;
+}
+
+enum PickerStyleValue {
+    Automatic;
+    Inline;
+    Menu;
+    Palette;
+    /** macOS / iOS / iPadOS — the segmented "switcher" control,
+        typical for view-mode toolbars. **/
+    Segmented;
+    /** iOS only. **/
+    Wheel;
 }

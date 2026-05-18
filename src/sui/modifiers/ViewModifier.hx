@@ -106,6 +106,13 @@ enum ViewModifier {
     // Interaction
     OnSubmit(actionId:Int);
     OnLongPressGesture(action:sui.state.StateAction);
+    /** SwiftUI `.onChange(of:_:)` — fires a StateAction when the
+        named state value changes. Used to react to Picker / TextField
+        / Toggle selection updates without polling. **/
+    OnChange(stateName:String, action:sui.state.StateAction);
+
+    // Picker
+    PickerStyle(style:sui.View.PickerStyleValue);
 
     // Spacing
     FixedSize(horizontal:Bool, vertical:Bool);

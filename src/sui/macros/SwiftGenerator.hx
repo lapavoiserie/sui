@@ -2120,7 +2120,8 @@ class SwiftGenerator {
                  "brightness" | "contrast" | "saturation" | "grayscale" |
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" |
-                 "onSubmit" | "onLongPressGesture" | "transition":
+                 "onSubmit" | "onLongPressGesture" | "transition" |
+                 "onChange":
                 true;
             default: false;
         }
@@ -2226,6 +2227,15 @@ class SwiftGenerator {
                     'onTapGesture { ${actionCode} }';
                 else
                     'onTapGesture { }';
+            case "onChange":
+                // args[0] = state name (String literal), args[1] = StateAction.
+                // Emits `.onChange(of: appState.<name>) { _, _ in <action> }`
+                // — the body-wide appState-prefix pass doesn't reach
+                // through `of:`, so we insert the prefix here.
+                var stateName = if (args.length > 0) extractString(args[0]) else null;
+                if (stateName == null) stateName = "";
+                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else null;
+                'onChange(of: appState.${stateName}) { _, _ in ${actionCode != null ? actionCode : ""} }';
             case "onAppearAction":
                 var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
                 if (actionCode != null)
