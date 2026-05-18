@@ -107,6 +107,9 @@ enum ViewModifier {
 
     // Accessibility
     AccessibilityLabel(label:String);
+    /** SwiftUI `.help("…")` — tooltip text shown on hover on macOS,
+        accessibility hint on iOS. **/
+    Help(text:String);
 
     // Interaction
     OnSubmit(actionId:Int);
