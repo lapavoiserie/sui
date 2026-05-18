@@ -1504,6 +1504,26 @@ class SwiftGenerator {
                 buf.add('${pad}}\n');
                 return buf.toString();
 
+            case "Menu":
+                // First arg is the label (String), second is a
+                // TArrayDecl of child views (typically Buttons or
+                // nested Menus).
+                var label = if (args.length > 0) extractString(args[0]) else null;
+                var children:Array<haxe.macro.Type.TypedExpr> = [];
+                if (args.length > 1) {
+                    var uArg = unwrap(args[1]);
+                    switch (uArg.expr) {
+                        case TArrayDecl(el): children = el;
+                        default:
+                    }
+                }
+                var buf = new StringBuf();
+                buf.add('${pad}Menu("${esc(label != null ? label : "")}") {\n');
+                for (child in children)
+                    buf.add(viewToSwift(child, indent + 1));
+                buf.add('${pad}}\n');
+                return buf.toString();
+
             case "AdaptiveStack":
                 needsHorizontalSizeClass = true;
                 var buf = new StringBuf();
