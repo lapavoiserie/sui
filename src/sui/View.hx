@@ -246,6 +246,13 @@ class View {
         return this;
     }
 
+    /** Tooltip text shown on hover on macOS (and used as an
+        accessibility hint on iOS). Maps to SwiftUI's `.help(_:)`. **/
+    public function help(text:String):View {
+        modifierChain.push(ViewModifier.Help(text));
+        return this;
+    }
+
     /** Adjust brightness. Pass a Float or a State<Float>. **/
     public function brightness(amount:sui.state.StateOr<Float>):View {
         modifierChain.push(ViewModifier.Brightness(amount));

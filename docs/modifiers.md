@@ -188,6 +188,7 @@ new VStack([...])
 
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
+| `.help(text)` | `text: String` | Tooltip shown on hover on macOS, accessibility hint on iOS. |
 | `.accessibilityLabel(label)` | `label: String` | Screen reader label |
 
 ## Animation

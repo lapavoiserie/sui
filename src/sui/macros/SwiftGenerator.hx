@@ -1809,7 +1809,7 @@ class SwiftGenerator {
                  "blur" | "scaleEffect" | "rotationEffect" | "offset" |
                  "brightness" | "contrast" | "saturation" | "grayscale" |
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
-                 "listStyle" | "aspectRatio" | "accessibilityLabel" |
+                 "listStyle" | "aspectRatio" | "accessibilityLabel" | "help" |
                  "onSubmit" | "onLongPressGesture" | "transition":
                 true;
             default: false;
@@ -2038,6 +2038,9 @@ class SwiftGenerator {
             case "accessibilityLabel":
                 var s = if (args.length > 0) extractString(args[0]) else "";
                 'accessibilityLabel("${esc(s != null ? s : "")}")';
+            case "help":
+                var s = if (args.length > 0) extractString(args[0]) else "";
+                'help("${esc(s != null ? s : "")}")';
 
             // --- Interaction ---
             case "onSubmit":
