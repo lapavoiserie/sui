@@ -126,6 +126,25 @@ new Slider("volume", 0.0, 100.0)
 | `rangeMin` | `Float` | Minimum value |
 | `rangeMax` | `Float` | Maximum value |
 
+## ShareLink
+
+A button that triggers the system share sheet — macOS Share menu on Mac, `UIActivityViewController` on iOS / iPadOS / visionOS. Maps to SwiftUI's `ShareLink(item:)`.
+
+```haxe
+// Default UI — system share-arrow icon
+new ShareLink("https://example.com")
+
+// Custom label
+new ShareLink("https://example.com", "Share this link")
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `item` | `String` | The thing being shared. SwiftUI auto-detects URLs vs plain text from the string. |
+| `label` | `String` (optional) | Custom label text. Without it, the default share-arrow icon is shown. |
+
 ## Picker
 
 A selection control bound to a `@State` variable.
