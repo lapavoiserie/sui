@@ -92,6 +92,38 @@ new VStack([
 |-----------|------|---------|-------------|
 | `minLength` | `Float` | `null` | Minimum size |
 
+## Gradients
+
+Three gradient views — `LinearGradient`, `RadialGradient`, `AngularGradient` — map to their SwiftUI equivalents. Like shapes, they have no intrinsic size; use `.frame(...)` or place them as a `.background(...)` overlay.
+
+```haxe
+new LinearGradient(
+    [ColorValue.Blue, ColorValue.Purple],
+    "top", "bottom"
+)
+
+new RadialGradient(
+    [ColorValue.Yellow, ColorValue.Red],
+    "center", 0, 100
+)
+
+new AngularGradient(
+    [ColorValue.Red, ColorValue.Orange, ColorValue.Yellow,
+     ColorValue.Green, ColorValue.Blue, ColorValue.Purple],
+    "center"
+)
+```
+
+Generates:
+
+```swift
+LinearGradient(colors: [.blue, .purple], startPoint: .top, endPoint: .bottom)
+RadialGradient(colors: [.yellow, .red], center: .center, startRadius: 0, endRadius: 100)
+AngularGradient(colors: [.red, .orange, .yellow, .green, .blue, .purple], center: .center)
+```
+
+**Unit-point strings** (start/end/center): `"top"`, `"bottom"`, `"leading"`, `"trailing"`, `"topLeading"`, `"topTrailing"`, `"bottomLeading"`, `"bottomTrailing"`, `"center"`.
+
 ## ScrollView
 
 Wraps content in a scrollable container.
