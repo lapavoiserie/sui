@@ -28,6 +28,20 @@ class App {
         return new View();
     }
 
+    /** Override to attach top-level menus to the macOS menu bar. The
+        returned array is read at compile time by the SwiftGenerator
+        macro and emitted as a `.commands { CommandMenu(…) { … } … }`
+        modifier on the App's WindowGroup. iOS / iPadOS / tvOS
+        ignore the commands at runtime (the menu bar isn't shown).
+
+        Each item inside a `CommandMenu` is typically a `Button` with
+        a `.keyboardShortcut`. See `sui.ui.CommandMenu` for a full
+        example.
+    **/
+    public function commands():Array<sui.ui.CommandMenu> {
+        return [];
+    }
+
     /** Override to configure scenes (multi-window on macOS, visionOS). **/
     public function scenes():Array<Scene> {
         return [Scene.WindowGroup(appName, body)];
