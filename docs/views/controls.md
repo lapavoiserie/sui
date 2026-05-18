@@ -23,6 +23,20 @@ new Button("+", () -> count.value = count.value + 1, count.inc(1))
 | `action` | `() -> Void` | Optional Haxe closure (bridged automatically) |
 | `stateAction` | `StateAction` | Optional declarative state mutation |
 
+**Styling:** chain `.buttonStyle(ButtonStyleValue.…)` to pick a SwiftUI style. Values: `Automatic`, `Plain`, `Borderless`, `Bordered`, `BorderedProminent`, `Link`.
+
+```haxe
+new Button("Save", null, saveAction)
+    .buttonStyle(ButtonStyleValue.BorderedProminent)
+```
+
+**Keyboard shortcut:** chain `.keyboardShortcut(key, modifiers)` to expose the same action as a global ⌘-shortcut. See [Modifiers ▸ Keyboard](../modifiers.md#keyboard).
+
+```haxe
+new Button("New", null, newAction)
+    .keyboardShortcut("n", ["command"])    // ⌘N
+```
+
 ### Button.withView
 
 Use a custom view as the button label:
@@ -128,14 +142,25 @@ new Slider("volume", 0.0, 100.0)
 
 ## Picker
 
-A selection control bound to a `@State` variable.
+A selection control bound to a `@State` variable. Pair with `.pickerStyle(PickerStyleValue.Segmented)` to get the native macOS segmented switcher (translucent rounded fill on the active segment, adapts to dark/light mode automatically); add `.onChange("stateName", action)` to react to selection changes.
 
 ```haxe
 new Picker("Color", "selectedColor", [
-    new Text("Red"),
-    new Text("Green"),
-    new Text("Blue")
+    new Text("Red").tag("red"),
+    new Text("Green").tag("green"),
+    new Text("Blue").tag("blue")
 ])
+
+// Segmented switcher with a reaction:
+new Picker("View", "viewMode", [
+    new Text("Month").tag("month"),
+    new Text("Week").tag("week"),
+    new Text("Day").tag("day"),
+])
+    .pickerStyle(PickerStyleValue.Segmented)
+    .onChange("viewMode", StateAction.CustomSwift(
+        'Task.detached { _ = HaxeBridgeC.setViewMode(appState.viewMode) }'
+    ))
 ```
 
 **Parameters:**
@@ -144,4 +169,8 @@ new Picker("Color", "selectedColor", [
 |-----------|------|-------------|
 | `label` | `String` | Picker label |
 | `selectionBinding` | `String` | Name of the `@State var` to bind to |
-| `content` | `Array<View>` | Options (typically Text views) |
+| `content` | `Array<View>` | Options (typically Text views with `.tag(value)`) |
+
+The `.tag(value)` modifier on each option binds it to a specific selection value. The Picker writes the tag of the user's pick into the bound state.
+
+**Picker styles** (passed to `.pickerStyle(...)`): `Automatic`, `Inline`, `Menu`, `Palette`, `Segmented`, `Wheel` (iOS only).
