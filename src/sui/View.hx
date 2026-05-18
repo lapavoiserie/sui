@@ -115,6 +115,14 @@ class View {
         return this;
     }
 
+    /** Translucent SwiftUI `Material` as a background fill — picks
+        up content behind, adapts to dark/light mode automatically.
+        Standard in macOS sidebars, popovers, toolbars. **/
+    public function backgroundMaterial(style:MaterialStyle):View {
+        modifierChain.push(ViewModifier.BackgroundMaterial(style));
+        return this;
+    }
+
     public function cornerRadius(radius:Float):View {
         modifierChain.push(ViewModifier.CornerRadius(radius));
         return this;
@@ -539,4 +547,15 @@ enum PickerStyleValue {
     Segmented;
     /** iOS only. **/
     Wheel;
+}
+
+enum MaterialStyle {
+    /** The system default — `.regularMaterial`. Mid-thickness frosted glass. **/
+    Regular;
+    Thin;
+    UltraThin;
+    Thick;
+    UltraThick;
+    /** Bar-style material — used by `.bar`. Slightly tinted for toolbars. **/
+    Bar;
 }
