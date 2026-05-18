@@ -195,6 +195,32 @@ class BridgeApp extends App {
 }
 ```
 
+## Initial Values Reach Swift
+
+When you construct a `State<T>` in your App's constructor with a non-default value — typically because the value comes from a stored token, a config file, or a computed boot-time check — that initial value is pushed across the bridge to SwiftUI's `AppState` automatically:
+
+```haxe
+public function new() {
+    super();
+    var stored = Tokens.load();
+    var logged = stored != null && !stored.isExpired();
+    isLoggedIn = new State<Bool>(logged, "isLoggedIn"); // ← Swift sees `logged`
+}
+```
+
+The first body render observes the constructor-side value, so a `ConditionalView(isLoggedIn, …)` boots into the right branch on launch — no manual "bootstrap" taskAction needed.
+
+This was historically a foot-gun: the swift-side state callback was registered *after* `haxe_bridge_init` ran, so anything the constructor pushed hit a null callback and was dropped. The fix lives in two coordinated changes: the generated `App.swift` registers the callback *before* `HaxeRuntime.initialize()`, and `State<T>`'s constructor itself fires `_hxsui_notify_swift` with the initial value (arrays send the empty-string sentinel that bumps the version counter).
+
+## Thread Safety
+
+Every entry into `HaxeBridgeC` — both your `@:expose` user functions and the implicit shared-memory readers (`arrayLength`, `arrayStringElement`, `objectField`, …) — is serialised through a single `std::recursive_mutex` and wrapped in a top-level `try/catch (::Dynamic)`. Two consequences for client code:
+
+1. **`Task.detached` is safe to combine with SwiftUI computed properties.** A closure-form `ForEach` may issue `arrayLength` / `arrayStringElement` calls from the main thread while a `Task.detached` user function is running Haxe code on a cooperative-pool thread; the mutex stops them from racing the hxcpp GC. (Until this landed, you'd see random `EXC_BAD_ACCESS` crashes inside innocuous-looking `String` operations.)
+2. **An uncaught Haxe `throw` is logged, not fatal.** The bridge body catches `Dynamic` exceptions and any `std::exception` / `...` fallback, writes a `[sui] <bridge>: Haxe exception` line to stderr, and returns the function's typed default (`0`, `false`, `""`, void). The Swift side observes the default value instead of a process termination, so a bridge function that throws on a network error or a malformed input is a recoverable condition — not an `abort()`.
+
+Recoverable doesn't mean silent: your `@:expose` body should still `try { … } catch (e:Dynamic) { return 'Erreur: $e'; }` if the caller wants a descriptive message back, since the bridge's safety-net catch just logs and returns a default.
+
 ## Multi-State Updates with State.setByName
 
 When a bridge function needs to update multiple `@:state` variables, use `State.setByName()` from a closure:

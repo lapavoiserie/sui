@@ -22,7 +22,44 @@ Commonly combined with `ForEach` for dynamic content and `Section` for grouping.
 
 ## ForEach
 
-Iterates over a `@State` array to render a view for each element.
+Iterates over a `@State` array to render a view for each element. Two call shapes — the **closure form** is the modern API, the legacy three-arg form is kept for backward compatibility.
+
+### Closure form
+
+```haxe
+new ForEach(colors, color ->
+    new Text(color).tag(color)
+)
+```
+
+Generates:
+
+```swift
+ForEach(colors, id: \.self) { color in
+    Text("\(color)")
+        .tag(color)
+}
+```
+
+The lambda parameter is a typed Haxe value (the array's element type), so references to it inside child views — `Text(color)`, `.tag(color)`, `.foregroundHex(color)`, `.blur(blurAmounts.value[i])` — are checked at compile time and the macro emits the matching Swift expression. **No stringly templates inside modifier args.**
+
+Two AST shapes are recognised inside the lambda:
+
+1. **Bare lambda parameter** — `Text(color)` where `color` is the closure param. Emits the iterated element.
+2. **Indexed parallel-array access** — `Text.withState("{names[i]}").foregroundHex(rowColors.value[i])` where the closure iterates an `Array<Int>` of indices. The macro detects `<State<Array<T>>>.value[<lambdaParam>]` and emits `appState.rowColors[i]`. Useful when multiple parallel state arrays drive one row.
+
+```haxe
+@:state var monthIndices:Array<Int> = [for (i in 0...42) i];
+@:state var monthDayNumbers:Array<String> = [];
+@:state var monthDayColors:Array<String> = [];
+
+new ForEach(monthIndices, i ->
+    Text.withState("{monthDayNumbers[i]}")
+        .foregroundHex(monthDayColors.value[i])
+)
+```
+
+### Legacy 3-arg form
 
 ```haxe
 new ForEach("todos", "i",
@@ -35,7 +72,9 @@ new ForEach("todos", "i",
 )
 ```
 
-**Parameters:**
+The iteration variable name is passed as a String, and modifier args use stringly templates (`"todos[i]"`). Still supported — useful when the body needs raw Swift fragments — but new code should prefer the closure form.
+
+**Parameters (legacy form):**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -43,14 +82,12 @@ new ForEach("todos", "i",
 | `itemName` | `String` | Iteration index variable name in generated Swift |
 | `itemView` | `View` | View rendered for each element |
 
-Access element properties with `Text.withState("{arrayName[itemName].property}")`.
-
 ### List + ForEach Pattern
 
 ```haxe
 new List([
-    new ForEach("items", "i",
-        new Text("Item")  // rendered for each element
+    new ForEach(items, item ->
+        new Text(item)
     )
 ])
 ```
