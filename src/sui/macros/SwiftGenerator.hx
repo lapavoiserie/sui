@@ -1321,6 +1321,32 @@ class SwiftGenerator {
             case "Capsule": return '${pad}Capsule()\n';
             case "Ellipse": return '${pad}Ellipse()\n';
 
+            case "LinearGradient":
+                // args[0] = TArrayDecl<ColorValue>, args[1] = startPoint String,
+                // args[2] = endPoint String.
+                var swiftColors = extractColorArrayToSwift(args.length > 0 ? args[0] : null);
+                var start = args.length > 1 ? extractString(args[1]) : "top";
+                var end = args.length > 2 ? extractString(args[2]) : "bottom";
+                if (start == null) start = "top";
+                if (end == null) end = "bottom";
+                return '${pad}LinearGradient(colors: ${swiftColors}, startPoint: .${esc(start)}, endPoint: .${esc(end)})\n';
+
+            case "RadialGradient":
+                var swiftColors = extractColorArrayToSwift(args.length > 0 ? args[0] : null);
+                var center = args.length > 1 ? extractString(args[1]) : "center";
+                var startR = args.length > 2 ? extractConstant(args[2]) : "0";
+                var endR = args.length > 3 ? extractConstant(args[3]) : "100";
+                if (center == null) center = "center";
+                if (startR == null) startR = "0";
+                if (endR == null) endR = "100";
+                return '${pad}RadialGradient(colors: ${swiftColors}, center: .${esc(center)}, startRadius: ${startR}, endRadius: ${endR})\n';
+
+            case "AngularGradient":
+                var swiftColors = extractColorArrayToSwift(args.length > 0 ? args[0] : null);
+                var center = args.length > 1 ? extractString(args[1]) : "center";
+                if (center == null) center = "center";
+                return '${pad}AngularGradient(colors: ${swiftColors}, center: .${esc(center)})\n';
+
             case "Spacer":
                 if (args.length > 0) {
                     var v = extractConstant(args[0]);
@@ -2929,6 +2955,26 @@ class SwiftGenerator {
             case "capslock": ".capsLock";
             default: null;
         };
+    }
+
+    /** Translate a TArrayDecl of `ColorValue` enum constants into a
+        Swift literal `[.red, .blue, …]`. Used by the gradient
+        views. Unknown / non-enum entries fall through to
+        `.primary` to keep the array length matched. **/
+    static function extractColorArrayToSwift(expr:haxe.macro.Type.TypedExpr):String {
+        if (expr == null) return "[]";
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TArrayDecl(elems):
+                var parts:Array<String> = [];
+                for (el in elems) {
+                    var name = extractEnumName(el);
+                    parts.push(name != null ? '.${camel(name)}' : ".primary");
+                }
+                return '[${parts.join(", ")}]';
+            default:
+        }
+        return "[]";
     }
 
     static function templateToSwift(template:String):String {
