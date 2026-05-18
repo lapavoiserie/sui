@@ -1,0 +1,6 @@
+-cp src
+-cp ../../src
+-lib hxcpp
+--macro sui.macros.SwiftGenerator.register()
+-main ClosureForEachApp
+-cpp build/cpp
