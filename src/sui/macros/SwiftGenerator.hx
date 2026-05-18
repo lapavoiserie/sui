@@ -202,13 +202,26 @@ class SwiftGenerator {
         }
         appSwift.add("        HaxeRuntime.initialize()\n");
         appSwift.add("    }\n\n");
-        appSwift.add("    var body: some Scene {\n");
+        // The `commands` block lives at Scene level, not inside a
+        // View — so `appState.X` references inside StateActions can't
+        // resolve through ContentView's `@Bindable var appState`.
+        // Inject the same declaration into the App struct so the
+        // commands closures see it.
+        var needsAppStateInApp = (commandsSwift != "" || hasSettings)
+            && needsRuntimeBridge && stateDecls.length > 0;
+        if (needsAppStateInApp) {
+            appSwift.add("\n    @Bindable var appState = AppState.shared\n");
+        }
+        appSwift.add("\n    var body: some Scene {\n");
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
         if (commandsSwift != "") {
+            var emitted = needsAppStateInApp
+                ? rewriteStateRefsToAppState(commandsSwift, stateDecls)
+                : commandsSwift;
             appSwift.add("        .commands {\n");
-            appSwift.add(commandsSwift);
+            appSwift.add(emitted);
             appSwift.add("        }\n");
         }
         if (hasSettings) {
@@ -245,52 +258,7 @@ class SwiftGenerator {
         viewSwift.add("    var body: some View {\n");
 
         if (needsRuntimeBridge && stateDecls.length > 0) {
-            // Replace state variable references with appState.name
-            var bodyWithAppState = bodySwift;
-            // Use placeholders to avoid cascading replacements
-            var placeholder = "__APPSTATE__";
-            for (sd in stateDecls) {
-                var n = sd.name;
-                // Replace $name (Swift binding) with $__APPSTATE__name
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "$" + n, "$" + placeholder + n);
-                // Replace \(name) (Swift string interpolation) with \(__APPSTATE__name)
-                bodyWithAppState = StringTools.replace(bodyWithAppState, '\\(' + n + ')', '\\(' + placeholder + n + ')');
-                // Replace {name} in bridge call args with __APPSTATE__interpolation
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "{" + n + "}", '\\(' + placeholder + n + ')');
-                // Replace bare "name = " (assignment in closures) with __APPSTATE__name =
-                bodyWithAppState = StringTools.replace(bodyWithAppState, n + " = ", placeholder + n + " = ");
-                // Replace "if name" (ConditionalView boolean) with "if __APPSTATE__name"
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + " ", "if " + placeholder + n + " ");
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "if " + n + "\n", "if " + placeholder + n + "\n");
-                // Replace "0..<name.count" — the ForEach iteration header
-                // emits the bare state name, which would otherwise resolve
-                // to an unbound identifier inside ContentView's body when
-                // the state lives on the separate AppState object that the
-                // bridge codepath generates.
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "0..<" + n + ".count", "0..<" + placeholder + n + ".count");
-                // Replace "ForEach(name," — the closure form of ForEach
-                // iterates directly over a state array; without this,
-                // the bare array name would be unbound inside the body
-                // when state lives on the appState bridge object.
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "ForEach(" + n + ",", "ForEach(" + placeholder + n + ",");
-                // Replace "(name[" (subscript access from inside string
-                // interpolation: "\(name[i])"). Matched with the leading
-                // paren so we don't accidentally rewrite suffix matches in
-                // longer identifiers, and so we leave existing
-                // "\(__APPSTATE__name[" alone (placeholder already in).
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "(" + n + "[", "(" + placeholder + n + "[");
-                // Replace "!name[" (logical-not subscript) and " name["
-                // (statement-leading bare reference inside CustomSwift
-                // bodies). Two narrow lookbehinds rather than a generic
-                // `name[` to avoid false-positives where the state name
-                // appears as a suffix of another identifier.
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "!" + n + "[", "!" + placeholder + n + "[");
-                bodyWithAppState = StringTools.replace(bodyWithAppState, " " + n + "[", " " + placeholder + n + "[");
-                bodyWithAppState = StringTools.replace(bodyWithAppState, "=" + n + "[", "=" + placeholder + n + "[");
-            }
-            // Now resolve all placeholders to "appState."
-            bodyWithAppState = StringTools.replace(bodyWithAppState, placeholder, "appState.");
-            viewSwift.add(bodyWithAppState);
+            viewSwift.add(rewriteStateRefsToAppState(bodySwift, stateDecls));
         } else {
             viewSwift.add(bodySwift);
         }
@@ -313,20 +281,7 @@ class SwiftGenerator {
             }
             viewSwift.add("    var body: some View {\n");
             if (needsRuntimeBridge && stateDecls.length > 0) {
-                // Reuse the same appState-prefix pass as ContentView.
-                var s = settingsSwift;
-                var placeholder = "__APPSTATE__";
-                for (sd in stateDecls) {
-                    var n = sd.name;
-                    s = StringTools.replace(s, "$" + n, "$" + placeholder + n);
-                    s = StringTools.replace(s, '\\(' + n + ')', '\\(' + placeholder + n + ')');
-                    s = StringTools.replace(s, "{" + n + "}", '\\(' + placeholder + n + ')');
-                    s = StringTools.replace(s, n + " = ", placeholder + n + " = ");
-                    s = StringTools.replace(s, "if " + n + " ", "if " + placeholder + n + " ");
-                    s = StringTools.replace(s, "if " + n + "\n", "if " + placeholder + n + "\n");
-                }
-                s = StringTools.replace(s, placeholder, "appState.");
-                viewSwift.add(s);
+                viewSwift.add(rewriteStateRefsToAppState(settingsSwift, stateDecls));
             } else {
                 viewSwift.add(settingsSwift);
             }
@@ -402,6 +357,48 @@ class SwiftGenerator {
                 }
             }
         }
+    }
+
+    /** Rewrite the bare state names produced by `viewToSwift` /
+        StateAction emission so they target the bridged `appState.X`
+        object. The codepath that emits Swift assumes everything will
+        be hoisted under a `@Bindable var appState = AppState.shared`
+        — but the emitter doesn't know that yet, so we patch the
+        identifiers in a single textual pass. Run this on every
+        chunk that lives in a struct holding `appState`: the
+        ContentView body, the SettingsView body, and (for
+        scene-level constructs like `.commands { … }`) the App
+        struct's body. **/
+    static function rewriteStateRefsToAppState(s:String, stateDecls:Array<{name:String, swiftType:String, defaultValue:String}>):String {
+        var placeholder = "__APPSTATE__";
+        for (sd in stateDecls) {
+            var n = sd.name;
+            // `$name` (Swift binding)
+            s = StringTools.replace(s, "$" + n, "$" + placeholder + n);
+            // `\(name)` (Swift string interpolation)
+            s = StringTools.replace(s, '\\(' + n + ')', '\\(' + placeholder + n + ')');
+            // `{name}` (bridge call argument templates)
+            s = StringTools.replace(s, "{" + n + "}", '\\(' + placeholder + n + ')');
+            // `name = ` (assignment inside closures)
+            s = StringTools.replace(s, n + " = ", placeholder + n + " = ");
+            // `if name ` / `if name\n` (ConditionalView boolean)
+            s = StringTools.replace(s, "if " + n + " ", "if " + placeholder + n + " ");
+            s = StringTools.replace(s, "if " + n + "\n", "if " + placeholder + n + "\n");
+            // `0..<name.count` (ForEach iteration header)
+            s = StringTools.replace(s, "0..<" + n + ".count", "0..<" + placeholder + n + ".count");
+            // `ForEach(name,` (closure-form ForEach over a state array)
+            s = StringTools.replace(s, "ForEach(" + n + ",", "ForEach(" + placeholder + n + ",");
+            // `(name[` `!name[` ` name[` `=name[` (subscript-access
+            // shapes that show up inside CustomSwift / interpolation
+            // bodies). Each lookbehind is narrow enough to avoid
+            // matching a state name that happens to be a suffix of a
+            // longer identifier.
+            s = StringTools.replace(s, "(" + n + "[", "(" + placeholder + n + "[");
+            s = StringTools.replace(s, "!" + n + "[", "!" + placeholder + n + "[");
+            s = StringTools.replace(s, " " + n + "[", " " + placeholder + n + "[");
+            s = StringTools.replace(s, "=" + n + "[", "=" + placeholder + n + "[");
+        }
+        return StringTools.replace(s, placeholder, "appState.");
     }
 
     /** Generate an @Observable AppState class for bridged state management. **/
