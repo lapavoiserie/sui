@@ -181,7 +181,8 @@ new VStack([...])
     .onKeyPress("right", nextAction)
 ```
 
-<<<<<<< HEAD
+`onKeyPress` uses the same `key` strings as `.keyboardShortcut` — see the [Keyboard section below](#keyboard) for the full list. The action runs only when the view (or a descendant) has keyboard focus; the handler returns `.handled` so SwiftUI stops bubbling the event up the focus chain.
+
 ## Keyboard
 
 | Modifier | Parameters | Description |
@@ -232,9 +233,6 @@ new Button("Next", null, nextAction)
 new Button("Save As…", null, saveAsAction)
     .keyboardShortcut("s", ["command", "shift"]); // ⇧⌘S
 ```
-=======
-`onKeyPress` uses the same `key` strings as `.keyboardShortcut` — single chars or named special keys: `"return"`, `"escape"`, `"delete"`, `"tab"`, `"space"`, `"left"` / `"right"` / `"up"` / `"down"`, `"home"`, `"end"`, `"pageup"` / `"pagedown"`. The action runs only when the view (or a descendant) has keyboard focus; the handler returns `.handled` so SwiftUI stops bubbling the event up the focus chain.
->>>>>>> feat/on-key-press
 
 ## Lifecycle
 
