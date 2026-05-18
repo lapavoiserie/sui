@@ -145,3 +145,51 @@ new Picker("Color", "selectedColor", [
 | `label` | `String` | Picker label |
 | `selectionBinding` | `String` | Name of the `@State var` to bind to |
 | `content` | `Array<View>` | Options (typically Text views) |
+
+## CommandMenu (macOS menu bar)
+
+A top-level menu in the macOS menu bar — appears next to **File / Edit / View / Help**. Maps to SwiftUI's `CommandMenu`. iOS, iPadOS and tvOS don't show a menu bar, so `CommandMenu`s are dropped at runtime on those platforms.
+
+CommandMenus are declared by overriding `commands()` on your `App` subclass — *not* by including them in `body()`. The macro reads the `commands()` method at compile time and emits a `.commands { … }` modifier on the App's WindowGroup.
+
+```haxe
+class MyApp extends sui.App {
+    public function new() {
+        super();
+        appName = "MyApp";
+        bundleIdentifier = "com.example.myapp";
+    }
+
+    override function body():View {
+        return new Text("Hello");
+    }
+
+    override function commands():Array<CommandMenu> {
+        return [
+            new CommandMenu("Calendar", [
+                new Button("New Event", null, newEventAction)
+                    .keyboardShortcut("n", ["command"]),
+                new Button("Today", null, showTodayAction)
+                    .keyboardShortcut("t", ["command"]),
+            ]),
+            new CommandMenu("View", [
+                new Button("Month", null, showMonthAction)
+                    .keyboardShortcut("1", ["command"]),
+                new Button("Week", null, showWeekAction)
+                    .keyboardShortcut("2", ["command"]),
+                new Button("Day", null, showDayAction)
+                    .keyboardShortcut("3", ["command"]),
+            ]),
+        ];
+    }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | `String` | Menu title in the menu bar |
+| `content` | `Array<View>` | Buttons (typically with `.keyboardShortcut`) — these become menu items |
+
+Pair `CommandMenu`s with `.keyboardShortcut(...)` on each Button to expose the same shortcut both as a menu item and as a global ⌘ shortcut. See the [Keyboard modifier section](../modifiers.md#keyboard).

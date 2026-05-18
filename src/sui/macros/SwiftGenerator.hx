@@ -150,12 +150,19 @@ class SwiftGenerator {
 
         // 4. Walk body() method (may also set needsRuntimeBridge for complex closures)
         var bodySwift = "        // empty body\n";
+        var commandsSwift = "";
         for (field in cls.fields.get()) {
             if (field.name == "body") {
                 var expr = field.expr();
                 if (expr != null)
                     bodySwift = walkFunc(expr, 2);
-                break;
+            } else if (field.name == "commands") {
+                // Walk `commands()` to find its returned TArrayDecl of
+                // `new CommandMenu(...)` values. Render each via
+                // `viewToSwift` and stitch them into a single
+                // `.commands { … }` block attached to WindowGroup.
+                var expr = field.expr();
+                if (expr != null) commandsSwift = walkCommandsFunc(expr);
             }
         }
 
@@ -174,6 +181,11 @@ class SwiftGenerator {
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
+        if (commandsSwift != "") {
+            appSwift.add("        .commands {\n");
+            appSwift.add(commandsSwift);
+            appSwift.add("        }\n");
+        }
         appSwift.add("    }\n");
         appSwift.add("}\n");
 
@@ -864,6 +876,72 @@ class SwiftGenerator {
         }
     }
 
+    /** Walk `commands(): Array<CommandMenu>` — find the returned
+        TArrayDecl, render each element via `viewToSwift`, and join
+        with the right indentation for the `.commands { … }` block
+        on the App's WindowGroup.
+
+        Haxe's typer hoists complex sub-expressions into TVar
+        bindings (e.g. inner `new Button(...)` references become
+        TLocal pointing at synthesised vars). `viewToSwift` resolves
+        TLocal through `localBindings`, so we walk the function body
+        ahead of time and collect every TVar's init expression
+        into that map. Without this pass the TLocal refs bubble up
+        as `// [sui] unhandled expression: TLocal` placeholders. **/
+    static function walkCommandsFunc(expr:haxe.macro.Type.TypedExpr):String {
+        if (expr == null) return "";
+        function collectBindings(e:haxe.macro.Type.TypedExpr):Void {
+            if (e == null) return;
+            switch (e.expr) {
+                case TVar(v, initExpr):
+                    if (initExpr != null) {
+                        localBindings.set(v.id, initExpr);
+                        collectBindings(initExpr);
+                    }
+                case TFunction(f): collectBindings(f.expr);
+                case TBlock(stmts):
+                    for (s in stmts) collectBindings(s);
+                case TReturn(re): collectBindings(re);
+                case TCast(inner, _): collectBindings(inner);
+                case TParenthesis(inner): collectBindings(inner);
+                case TMeta(_, inner): collectBindings(inner);
+                case TArrayDecl(elems):
+                    for (el in elems) collectBindings(el);
+                case TNew(_, _, args):
+                    for (a in args) collectBindings(a);
+                case TCall(_, args):
+                    for (a in args) collectBindings(a);
+                case TArray(arr, idx):
+                    collectBindings(arr);
+                    collectBindings(idx);
+                default:
+            }
+        }
+        collectBindings(expr);
+
+        // Descend through TFunction / TBlock / TReturn to the TArrayDecl.
+        function findArrayDecl(e:haxe.macro.Type.TypedExpr):Null<Array<haxe.macro.Type.TypedExpr>> {
+            if (e == null) return null;
+            switch (e.expr) {
+                case TFunction(f): return findArrayDecl(f.expr);
+                case TBlock(stmts):
+                    if (stmts.length > 0) return findArrayDecl(stmts[stmts.length - 1]);
+                case TReturn(re): return findArrayDecl(re);
+                case TCast(inner, _): return findArrayDecl(inner);
+                case TParenthesis(inner): return findArrayDecl(inner);
+                case TMeta(_, inner): return findArrayDecl(inner);
+                case TArrayDecl(elems): return elems;
+                default:
+            }
+            return null;
+        }
+        var elems = findArrayDecl(expr);
+        if (elems == null || elems.length == 0) return "";
+        var buf = new StringBuf();
+        for (cm in elems) buf.add(viewToSwift(cm, 3));
+        return buf.toString();
+    }
+
     static function viewToSwift(expr:haxe.macro.Type.TypedExpr, indent:Int):String {
         // Unwrap casts, metas, parentheses
         var unwrapped = unwrap(expr);
@@ -1357,6 +1435,27 @@ class SwiftGenerator {
                     buf.add('${pad}Section("${esc(header)}") {\n');
                 else
                     buf.add('${pad}Section {\n');
+                for (child in children)
+                    buf.add(viewToSwift(child, indent + 1));
+                buf.add('${pad}}\n');
+                return buf.toString();
+
+            case "CommandMenu":
+                // Top-level macOS menu-bar menu. Same shape as
+                // `Section` / `Menu`: label string + TArrayDecl of
+                // children. Attached to the App scene by the App.swift
+                // emitter via `.commands { … }`.
+                var label = if (args.length > 0) extractString(args[0]) else null;
+                var children:Array<haxe.macro.Type.TypedExpr> = [];
+                if (args.length > 1) {
+                    var uArg = unwrap(args[1]);
+                    switch (uArg.expr) {
+                        case TArrayDecl(el): children = el;
+                        default:
+                    }
+                }
+                var buf = new StringBuf();
+                buf.add('${pad}CommandMenu("${esc(label != null ? label : "")}") {\n');
                 for (child in children)
                     buf.add(viewToSwift(child, indent + 1));
                 buf.add('${pad}}\n');
