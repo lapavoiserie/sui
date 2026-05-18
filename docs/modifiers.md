@@ -162,6 +162,57 @@ new Text("Hold me")
     .onLongPressGesture(showMenu.tog())
 ```
 
+## Keyboard
+
+| Modifier | Parameters | Description |
+|----------|-----------|-------------|
+| `.keyboardShortcut(key, modifiers)` | `key: String`, `modifiers: Array<String>` (optional) | Bind a keyboard shortcut to a view (typically a Button). Maps to SwiftUI's `.keyboardShortcut(_:, modifiers:)`. |
+
+**`key`** is either a single character (`"n"`, `"s"`, `","`) or one of the named special keys:
+
+| Name | Swift `KeyEquivalent` |
+|------|-----------------------|
+| `"return"` | `.return` |
+| `"escape"` | `.escape` |
+| `"delete"` / `"backspace"` | `.delete` |
+| `"tab"` | `.tab` |
+| `"space"` | `.space` |
+| `"left"` | `.leftArrow` |
+| `"right"` | `.rightArrow` |
+| `"up"` | `.upArrow` |
+| `"down"` | `.downArrow` |
+| `"home"` / `"end"` | `.home` / `.end` |
+| `"pageup"` / `"pagedown"` | `.pageUp` / `.pageDown` |
+
+**`modifiers`** is any combination (order doesn't matter) of:
+
+| Name | Swift `EventModifiers` |
+|------|------------------------|
+| `"command"` / `"cmd"` | `.command` |
+| `"option"` / `"alt"` | `.option` |
+| `"control"` / `"ctrl"` | `.control` |
+| `"shift"` | `.shift` |
+| `"capslock"` | `.capsLock` |
+
+Omitting `modifiers` (or passing an empty array) binds the bare key — useful for `"escape"`, arrow keys, etc.
+
+```haxe
+new Button("New Event", null, openNewEventAction)
+    .keyboardShortcut("n", ["command"]);          // ⌘N
+
+new Button("Today", null, showTodayAction)
+    .keyboardShortcut("t", ["command"]);          // ⌘T
+
+new Button("Close", null, dismissAction)
+    .keyboardShortcut("escape");                  // Esc
+
+new Button("Next", null, nextAction)
+    .keyboardShortcut("right", ["command"]);      // ⌘→
+
+new Button("Save As…", null, saveAsAction)
+    .keyboardShortcut("s", ["command", "shift"]); // ⇧⌘S
+```
+
 ## Lifecycle
 
 | Modifier | Parameters | Description |

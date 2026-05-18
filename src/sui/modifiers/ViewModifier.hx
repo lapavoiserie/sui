@@ -100,6 +100,13 @@ enum ViewModifier {
     // Interaction
     OnSubmit(actionId:Int);
     OnLongPressGesture(action:sui.state.StateAction);
+    /** SwiftUI `.keyboardShortcut(_:, modifiers:)` — binds a keyboard
+        shortcut to the receiving view (typically a Button). The
+        `key` is a single character or one of the special-name
+        sentinels: "return", "escape", "delete", "tab", "space",
+        "left", "right", "up", "down". `modifiers` is any
+        combination of "command" / "option" / "control" / "shift". **/
+    KeyboardShortcut(key:String, modifiers:Array<String>);
 
     // Spacing
     FixedSize(horizontal:Bool, vertical:Bool);
