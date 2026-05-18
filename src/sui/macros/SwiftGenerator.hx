@@ -1810,7 +1810,7 @@ class SwiftGenerator {
                  "brightness" | "contrast" | "saturation" | "grayscale" |
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" |
-                 "onSubmit" | "onLongPressGesture" | "transition":
+                 "onSubmit" | "onLongPressGesture" | "transition" | "onKeyPress":
                 true;
             default: false;
         }
@@ -2049,6 +2049,16 @@ class SwiftGenerator {
                     'onLongPressGesture { ${actionCode} }';
                 else
                     'onLongPressGesture { }';
+            case "onKeyPress":
+                // args[0]: key name (String). args[1]: StateAction.
+                // Emits `.onKeyPress(<keyEquivalent>) { <action>; return .handled }`
+                // — `.handled` stops SwiftUI bubbling the event up the
+                // focus chain, the right default for an explicit handler.
+                var key = if (args.length > 0) extractString(args[0]) else "";
+                if (key == null) key = "";
+                var keyExpr = keyPressEquivalentToSwift(key);
+                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else "";
+                'onKeyPress(${keyExpr}) { ${actionCode}; return .handled }';
 
             default:
                 // Generic: try to pass through args
@@ -2235,6 +2245,31 @@ class SwiftGenerator {
     static function camel(s:String):String {
         if (s == null || s.length == 0) return s;
         return s.charAt(0).toLowerCase() + s.substr(1);
+    }
+
+    /** Map a sui key-name string to the matching SwiftUI
+        `KeyEquivalent` for `.onKeyPress`. Named keys resolve to
+        their static properties; anything else is wrapped in
+        `KeyEquivalent("<char>")`. Duplicates the logic
+        `feat/keyboard-shortcut` adds for `.keyboardShortcut`'s
+        `keyEquivalentToSwift` — to be deduped when both land. **/
+    static function keyPressEquivalentToSwift(key:String):String {
+        return switch (key.toLowerCase()) {
+            case "return": ".return";
+            case "escape": ".escape";
+            case "delete" | "backspace": ".delete";
+            case "tab": ".tab";
+            case "space": ".space";
+            case "left": ".leftArrow";
+            case "right": ".rightArrow";
+            case "up": ".upArrow";
+            case "down": ".downArrow";
+            case "home": ".home";
+            case "end": ".end";
+            case "pageup": ".pageUp";
+            case "pagedown": ".pageDown";
+            default: 'KeyEquivalent("${esc(key)}")';
+        };
     }
 
     static function templateToSwift(template:String):String {

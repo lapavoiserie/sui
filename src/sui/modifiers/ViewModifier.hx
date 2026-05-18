@@ -100,6 +100,14 @@ enum ViewModifier {
     // Interaction
     OnSubmit(actionId:Int);
     OnLongPressGesture(action:sui.state.StateAction);
+    /** SwiftUI `.onKeyPress(_:action:)` — runs a `StateAction` when
+        a key is pressed while this view (or a descendant) has
+        focus. The `key` follows the same naming convention as
+        `.keyboardShortcut` (single char or named special key:
+        `return`, `escape`, `delete`, `tab`, `space`,
+        `left` / `right` / `up` / `down`, `home`, `end`,
+        `pageup` / `pagedown`). **/
+    OnKeyPress(key:String, action:sui.state.StateAction);
 
     // Spacing
     FixedSize(horizontal:Bool, vertical:Bool);
