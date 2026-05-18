@@ -374,6 +374,31 @@ class View {
         return this;
     }
 
+    /** Bind a keyboard shortcut to this view (typically a Button) —
+        maps to SwiftUI's `.keyboardShortcut(_:, modifiers:)`.
+
+        `key` accepts a single character (`"n"`, `"s"`, `","`) or one
+        of the named special keys: `"return"`, `"escape"`, `"delete"`,
+        `"tab"`, `"space"`, `"left"`, `"right"`, `"up"`, `"down"`.
+
+        `modifiers` is any combination of `"command"`, `"option"`,
+        `"control"`, `"shift"`. Order doesn't matter; an empty array
+        means the bare key (rare; mostly used for `escape` and arrow
+        keys).
+
+        ```haxe
+        new Button("New Event", null, openNewEventAction)
+            .keyboardShortcut("n", ["command"]);
+
+        new Button("Today", null, showTodayAction)
+            .keyboardShortcut("t", ["command"]);
+        ```
+    **/
+    public function keyboardShortcut(key:String, ?modifiers:Array<String>):View {
+        modifierChain.push(ViewModifier.KeyboardShortcut(key, modifiers != null ? modifiers : []));
+        return this;
+    }
+
     /** Run a StateAction when the view appears. **/
     public function onAppearAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.OnAppearAction(action));

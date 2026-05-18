@@ -110,6 +110,13 @@ enum ViewModifier {
         named state value changes. Used to react to Picker / TextField
         / Toggle selection updates without polling. **/
     OnChange(stateName:String, action:sui.state.StateAction);
+    /** SwiftUI `.keyboardShortcut(_:, modifiers:)` — binds a keyboard
+        shortcut to the receiving view (typically a Button). The
+        `key` is a single character or one of the special-name
+        sentinels: "return", "escape", "delete", "tab", "space",
+        "left", "right", "up", "down". `modifiers` is any
+        combination of "command" / "option" / "control" / "shift". **/
+    KeyboardShortcut(key:String, modifiers:Array<String>);
 
     // Picker
     PickerStyle(style:sui.View.PickerStyleValue);

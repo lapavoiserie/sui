@@ -2121,7 +2121,7 @@ class SwiftGenerator {
                  "fullScreenCover" | "popover" | "contextMenu" | "swipeActions" | "refreshable" |
                  "listStyle" | "aspectRatio" | "accessibilityLabel" |
                  "onSubmit" | "onLongPressGesture" | "transition" |
-                 "onChange":
+                 "onChange" | "keyboardShortcut":
                 true;
             default: false;
         }
@@ -2404,6 +2404,35 @@ class SwiftGenerator {
                     'onLongPressGesture { ${actionCode} }';
                 else
                     'onLongPressGesture { }';
+            case "keyboardShortcut":
+                // args[0]: key string. args[1]: modifiers Array<String>.
+                // Emits `.keyboardShortcut(KeyEquivalent("k"), modifiers: [.command, ...])`
+                // — the named-key sentinels resolve to `.return`, `.escape`,
+                // `.delete`, `.tab`, `.space`, `.leftArrow`, `.rightArrow`,
+                // `.upArrow`, `.downArrow`; everything else maps directly to
+                // `KeyEquivalent("<char>")`.
+                var key = if (args.length > 0) extractString(args[0]) else null;
+                if (key == null) key = "";
+                var keyExpr = keyEquivalentToSwift(key);
+                var mods:Array<String> = [];
+                if (args.length > 1) {
+                    var arrE = unwrap(args[1]);
+                    switch (arrE.expr) {
+                        case TArrayDecl(elems):
+                            for (el in elems) {
+                                var s = extractString(el);
+                                if (s != null) {
+                                    var swift = modifierKeyToSwift(s);
+                                    if (swift != null) mods.push(swift);
+                                }
+                            }
+                        default:
+                    }
+                }
+                if (mods.length > 0)
+                    'keyboardShortcut(${keyExpr}, modifiers: [${mods.join(", ")}])';
+                else
+                    'keyboardShortcut(${keyExpr})';
 
             default:
                 // Generic: try to pass through args
@@ -2643,6 +2672,41 @@ class SwiftGenerator {
         return switch (name) {
             case "Accent": "Color.accentColor";
             default: '.${camel(name)}';
+        };
+    }
+
+    /** Map a sui `keyboardShortcut` key string to the matching
+        SwiftUI `KeyEquivalent`. Named keys (return, escape, …)
+        resolve to their static properties; anything else is wrapped
+        in `KeyEquivalent("<char>")`. **/
+    static function keyEquivalentToSwift(key:String):String {
+        return switch (key.toLowerCase()) {
+            case "return": ".return";
+            case "escape": ".escape";
+            case "delete" | "backspace": ".delete";
+            case "tab": ".tab";
+            case "space": ".space";
+            case "left": ".leftArrow";
+            case "right": ".rightArrow";
+            case "up": ".upArrow";
+            case "down": ".downArrow";
+            case "home": ".home";
+            case "end": ".end";
+            case "pageup": ".pageUp";
+            case "pagedown": ".pageDown";
+            default: 'KeyEquivalent("${esc(key)}")';
+        };
+    }
+
+    /** Map a sui modifier-key name to its `EventModifiers` member. **/
+    static function modifierKeyToSwift(name:String):Null<String> {
+        return switch (name.toLowerCase()) {
+            case "command" | "cmd": ".command";
+            case "option" | "alt": ".option";
+            case "control" | "ctrl": ".control";
+            case "shift": ".shift";
+            case "capslock": ".capsLock";
+            default: null;
         };
     }
 
