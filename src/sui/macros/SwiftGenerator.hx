@@ -151,6 +151,7 @@ class SwiftGenerator {
         // 4. Walk body() method (may also set needsRuntimeBridge for complex closures)
         var bodySwift = "        // empty body\n";
         var commandsSwift = "";
+        var settingsSwift = "";
         for (field in cls.fields.get()) {
             if (field.name == "body") {
                 var expr = field.expr();
@@ -163,8 +164,23 @@ class SwiftGenerator {
                 // `.commands { … }` block attached to WindowGroup.
                 var expr = field.expr();
                 if (expr != null) commandsSwift = walkCommandsFunc(expr);
+            } else if (field.name == "settings") {
+                var expr = field.expr();
+                if (expr != null) settingsSwift = walkFunc(expr, 2);
             }
         }
+        // The default `settings()` returns `new View()`, which
+        // `viewToSwift` renders as a "Unknown view" placeholder
+        // comment. Treat that as "user didn't override" and skip
+        // emitting the Settings scene altogether.
+        var hasSettings = settingsSwift != "" && settingsSwift.indexOf("Unknown view") == -1;
+        // The Settings scene only makes sense if its preferences
+        // share state with the rest of the app — `Toggle("Dark Mode",
+        // "darkMode")` in Settings must read/write the same value
+        // ContentView observes. Force the bridged AppState path so
+        // both view structs reference `AppState.shared` rather than
+        // each carrying its own private `@State` copies.
+        if (hasSettings) needsRuntimeBridge = true;
 
         // 5. Emit App.swift (after needsRuntimeBridge is finalized)
         var appSwift = new StringBuf();
@@ -194,6 +210,13 @@ class SwiftGenerator {
             appSwift.add("        .commands {\n");
             appSwift.add(commandsSwift);
             appSwift.add("        }\n");
+        }
+        if (hasSettings) {
+            appSwift.add("        #if os(macOS)\n");
+            appSwift.add("        Settings {\n");
+            appSwift.add("            SettingsView()\n");
+            appSwift.add("        }\n");
+            appSwift.add("        #endif\n");
         }
         appSwift.add("    }\n");
         appSwift.add("}\n");
@@ -274,6 +297,42 @@ class SwiftGenerator {
 
         viewSwift.add("    }\n");
         viewSwift.add("}\n");
+
+        // 5b. Optionally emit a SettingsView struct alongside ContentView.
+        //     Same `@Bindable var appState` (or `@State`s) wiring so it
+        //     can read/write the same app-wide state.
+        if (hasSettings) {
+            viewSwift.add("\n");
+            viewSwift.add("struct SettingsView: View {\n");
+            if (needsRuntimeBridge && stateDecls.length > 0) {
+                viewSwift.add("    @Bindable var appState = AppState.shared\n\n");
+            } else {
+                for (sd in stateDecls)
+                    viewSwift.add('    @State private var ${sd.name}: ${sd.swiftType} = ${sd.defaultValue}\n');
+                if (stateDecls.length > 0) viewSwift.add("\n");
+            }
+            viewSwift.add("    var body: some View {\n");
+            if (needsRuntimeBridge && stateDecls.length > 0) {
+                // Reuse the same appState-prefix pass as ContentView.
+                var s = settingsSwift;
+                var placeholder = "__APPSTATE__";
+                for (sd in stateDecls) {
+                    var n = sd.name;
+                    s = StringTools.replace(s, "$" + n, "$" + placeholder + n);
+                    s = StringTools.replace(s, '\\(' + n + ')', '\\(' + placeholder + n + ')');
+                    s = StringTools.replace(s, "{" + n + "}", '\\(' + placeholder + n + ')');
+                    s = StringTools.replace(s, n + " = ", placeholder + n + " = ");
+                    s = StringTools.replace(s, "if " + n + " ", "if " + placeholder + n + " ");
+                    s = StringTools.replace(s, "if " + n + "\n", "if " + placeholder + n + "\n");
+                }
+                s = StringTools.replace(s, placeholder, "appState.");
+                viewSwift.add(s);
+            } else {
+                viewSwift.add(settingsSwift);
+            }
+            viewSwift.add("    }\n");
+            viewSwift.add("}\n");
+        }
 
         // 6. Generate model structs for Observable subclasses used by this app
         var modelSwift = new StringBuf();
