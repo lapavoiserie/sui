@@ -146,6 +146,31 @@ new Picker("Color", "selectedColor", [
 | `selectionBinding` | `String` | Name of the `@State var` to bind to |
 | `content` | `Array<View>` | Options (typically Text views) |
 
+## Menu
+
+A drop-down menu containing buttons or nested `Menu`s. Maps to SwiftUI's `Menu`. The typical use case is a toolbar dropdown — clicking the label opens a popover with the actions. On macOS it adopts the system `NSMenu` look; on iOS it's a popover sheet.
+
+```haxe
+new Menu("Actions", [
+    new Button("New", null, newAction),
+    new Button("Open…", null, openAction),
+    new Menu("Recent", [
+        new Button("File 1", null, openFile1Action),
+        new Button("File 2", null, openFile2Action),
+    ]),
+    new Button("Delete", null, deleteAction),
+])
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | `String` | The text shown on the menu trigger |
+| `content` | `Array<View>` | The menu items — typically `Button`s or nested `Menu`s |
+
+Menus can be nested arbitrarily for sub-menus.
+
 ## CommandMenu (macOS menu bar)
 
 A top-level menu in the macOS menu bar — appears next to **File / Edit / View / Help**. Maps to SwiftUI's `CommandMenu`. iOS, iPadOS and tvOS don't show a menu bar, so `CommandMenu`s are dropped at runtime on those platforms.
@@ -193,3 +218,32 @@ class MyApp extends sui.App {
 | `content` | `Array<View>` | Buttons (typically with `.keyboardShortcut`) — these become menu items |
 
 Pair `CommandMenu`s with `.keyboardShortcut(...)` on each Button to expose the same shortcut both as a menu item and as a global ⌘ shortcut. See the [Keyboard modifier section](../modifiers.md#keyboard).
+
+## Settings (Preferences window)
+
+A separate macOS Preferences window — opened with **⌘,** or the system **App ▸ Preferences…** menu. Declared by overriding `settings()` on your `App` subclass. The returned view is rendered into its own SwiftUI `Settings` scene, alongside the main `WindowGroup`. If you don't override `settings()`, no Settings scene is emitted.
+
+```haxe
+class MyApp extends sui.App {
+    @:state var darkMode:Bool = false;
+    @:state var userName:String = "";
+
+    override function body():View {
+        return new VStack([
+            new Text("Main window"),
+            Text.withState("Dark mode: {darkMode}"),
+        ]);
+    }
+
+    override function settings():View {
+        return new Form([
+            new Toggle("Dark Mode", "darkMode"),
+            new TextField("Display name", "userName"),
+        ]);
+    }
+}
+```
+
+The Settings view shares state with the main `body()` automatically — toggles in Preferences immediately update the main window and vice versa. The macro emits a `SettingsView` Swift struct alongside `ContentView`, both bound to the same `AppState.shared` singleton.
+
+iOS, iPadOS and tvOS ignore the Settings scene at runtime (those platforms route preferences through the system Settings app or an in-app view), so the generated `Settings { … }` block is wrapped in `#if os(macOS)`.
