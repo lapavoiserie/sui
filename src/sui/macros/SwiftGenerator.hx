@@ -2326,7 +2326,14 @@ class SwiftGenerator {
                                     case "Toggle": '${p0}.toggle()';
                                     case "CustomSwift":
                                         var code = if (args.length > 0) extractString(args[0]) else null;
-                                        code != null ? code : "// custom";
+                                        if (code != null && StringTools.startsWith(code, SUI_ACTION_PREFIX)) {
+                                            // Bridged RunExpr — dispatch into a
+                                            // Task.detached invocation of the
+                                            // synthesised wrapper.
+                                            emitActionInvocation(code);
+                                        } else {
+                                            code != null ? code : "// custom";
+                                        }
                                     case "BridgeCall":
                                         var fnName = if (args.length > 1) extractString(args[1]) else "unknown";
                                         var argStr = if (args.length > 2) extractBridgeArgs(args[2]) else "";
@@ -2842,6 +2849,14 @@ class SwiftGenerator {
     /** Resolve a modifier argument: number (literal) or string (state variable name, emitted bare). **/
     static function resolveModifierValue(args:Array<haxe.macro.Type.TypedExpr>, index:Int, defaultVal:String):String {
         if (index >= args.length) return defaultVal;
+        // Bridge sentinel — same dispatch as `resolveHexExpr`.
+        // The bridge call returns Float (or whatever the synthesised
+        // wrapper's return type is); the modifier site embeds the
+        // call straight into its arithmetic.
+        var sLit = extractString(args[index]);
+        if (sLit != null && StringTools.startsWith(sLit, SUI_BRIDGE_PREFIX)) {
+            return emitBridgeInvocation(sLit);
+        }
         // Closure-form ForEach item refs (`item`, `other.value[i]`)
         // take priority over the legacy string/field paths.
         var itemExpr = extractItemExpr(args[index]);
@@ -2890,10 +2905,21 @@ class SwiftGenerator {
         appState-prefix pass rewrites bare names in. **/
     static function resolveHexExpr(args:Array<haxe.macro.Type.TypedExpr>):String {
         if (args.length == 0) return "\"\"";
-        // 1. Closure-form lambda item ref ("item", "other.value[i]")
+        // 1. Bridge sentinel — string literal that encodes a call
+        //    into a synthesised `@:expose` Haxe function (full Haxe
+        //    expression executed at runtime via the bridge, not
+        //    transpiled to Swift). Format:
+        //      "SUIBRIDGE<funcName><state1>,<state2>..."
+        //    Returns a closure-wrapped expression so SwiftUI keeps
+        //    its subscription on each touched state.
+        var sLit = extractString(args[0]);
+        if (sLit != null && StringTools.startsWith(sLit, SUI_BRIDGE_PREFIX)) {
+            return emitBridgeInvocation(sLit);
+        }
+        // 2. Closure-form lambda item ref ("item", "other.value[i]")
         var itemExpr = extractItemExpr(args[0]);
         if (itemExpr != null) return itemExpr;
-        // 2. Direct State<String> field reference (`.foregroundHex(myColorState)`).
+        // 3. Direct State<String> field reference (`.foregroundHex(myColorState)`).
         //    Emit `appState.<name>` straight away — the
         //    body-wide appState-prefix pass keys on bracket /
         //    interpolation / assignment patterns and doesn't match
@@ -2911,9 +2937,76 @@ class SwiftGenerator {
                 var fieldName = extractThisField(e);
                 if (fieldName != null) return 'appState.${fieldName}';
         }
-        // 3. Legacy: string literal embedded verbatim.
-        var s = extractString(args[0]);
-        return s != null ? s : "\"\"";
+        // 4. Legacy: string literal embedded verbatim.
+        return sLit != null ? sLit : "\"\"";
+    }
+
+    /** Prefix that marks a string argument as a bridge invocation.
+        Synthesised by `SwiftExprBridge.register` (or hand-written
+        for POC), recognised by every modifier codegen that supports
+        bridged expressions. **/
+    public static inline var SUI_BRIDGE_PREFIX = "\u{0001}SUIBRIDGE\u{0001}";
+
+    /** Prefix used when bridging a `StateAction.RunExpr(...)` — the
+        Swift codegen wraps the wrapper call in `Task.detached { … }`
+        instead of inlining the result. **/
+    public static inline var SUI_ACTION_PREFIX = "\u{0001}SUIACTION\u{0001}";
+
+    /** Turn a sentinel-prefixed string into a Swift expression
+        that invokes the bridged Haxe function. The sentinel
+        encodes:
+            SUIBRIDGE<funcName><statesCSV><lambdaParamsCSV>
+        Both `<statesCSV>` and `<lambdaParamsCSV>` may be empty.
+        Lambda params are passed as `Int32(<name>)` so the existing
+        `@:expose` bridge ABI sees the SwiftUI ForEach index
+        directly. When there are no lambda params we fall back to
+        the legacy single-String slot. When the expression touches
+        observable state, we wrap in a `{ _ = appState.X; … }()`
+        closure so SwiftUI keeps its subscription — but only then;
+        the bare call form keeps the ViewBuilder type-checker
+        happy on macOS 26 where the closure form trips the
+        `cannot type-check in reasonable time` heuristic. **/
+    static function emitBridgeInvocation(sentinel:String):String {
+        var rest = sentinel.substr(SUI_BRIDGE_PREFIX.length);
+        var parts = rest.split("\u{0001}");
+        var funcName = parts[0];
+        var stateList = parts.length > 1 && parts[1] != "" ? parts[1].split(",") : [];
+        var lambdaList = parts.length > 2 && parts[2] != "" ? parts[2].split(",") : [];
+        // ForEach in the generated SwiftUI gives us `Int` iteration
+        // params, and the bridge wrapper takes `Int` too — pass
+        // the param straight through (no `Int32(…)` cast which
+        // would build the wrong type).
+        var callArgs = lambdaList.length > 0
+            ? lambdaList.join(", ")
+            : '""';
+        var bare = 'HaxeBridgeC.${funcName}(${callArgs})';
+        if (stateList.length == 0) return bare;
+        var subs = "";
+        for (n in stateList) subs += '_ = appState.$n; ';
+        return '{ ${subs}return ${bare} }()';
+    }
+
+    /** Turn an action sentinel into a Swift snippet that runs the
+        bridged wrapper inside a `Task.detached`. Sentinel format:
+            SUIACTION<funcName><stateRefs><lambdaParams><primReads>
+        - lambdaParams pass straight through (Int from ForEach);
+        - primReads come from `appState.<name>` so the synthesised
+          wrapper sees the live SwiftUI binding value rather than
+          the (possibly stale) Haxe mirror.
+        Side effects written by the wrapper still travel back to
+        Swift via the existing `swiftStateCallback →
+        DispatchQueue.main.async` pipeline. **/
+    static function emitActionInvocation(sentinel:String):String {
+        var rest = sentinel.substr(SUI_ACTION_PREFIX.length);
+        var parts = rest.split("\u{0001}");
+        var funcName = parts[0];
+        var lambdaList = parts.length > 2 && parts[2] != "" ? parts[2].split(",") : [];
+        var primList = parts.length > 3 && parts[3] != "" ? parts[3].split(",") : [];
+        var args:Array<String> = [];
+        for (p in lambdaList) args.push(p);
+        for (p in primList) args.push('appState.${p}');
+        var callArgs = args.length > 0 ? args.join(", ") : '""';
+        return 'Task.detached { _ = HaxeBridgeC.${funcName}(${callArgs}) }';
     }
 
     static function extractBridgeArgs(expr:haxe.macro.Type.TypedExpr):String {
