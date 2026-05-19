@@ -24,6 +24,10 @@ package sui.state;
 **/
 #if cpp
 @:cppFileCode('
+#include <clocale>
+#include <cstdio>
+#include <cstring>
+
 // State notification function pointer — set by the bridge at init time.
 // When no bridge is linked, this stays null and set() is a no-op for Swift.
 static void (*_hxsui_state_callback)(const char* key, const char* value) = nullptr;
@@ -34,6 +38,29 @@ extern "C" void haxe_bridge_register_state_fn(void (*cb)(const char*, const char
 
 void _hxsui_notify_swift(const char* key, const char* value) {
     if (_hxsui_state_callback) _hxsui_state_callback(key, value);
+}
+
+// Locale-neutral Float → string. The Haxe-bundled `Std.string(Float)`
+// goes through the C `printf` family, which honours `LC_NUMERIC`. On
+// a comma-decimal locale (fr_FR, de_DE, ru_RU, …) it emits "-57,2",
+// which Swift\'s locale-invariant `Double(_:)` parser then rejects,
+// so the value silently falls back to 0. Force the POSIX ("C")
+// locale just around the format call and restore the caller\'s
+// locale afterwards so we don\'t disturb the rest of the runtime.
+::String _hxsui_format_float_posix(double v) {
+    char savedLocale[128];
+    const char* current = std::setlocale(LC_NUMERIC, NULL);
+    if (current) {
+        std::strncpy(savedLocale, current, sizeof(savedLocale) - 1);
+        savedLocale[sizeof(savedLocale) - 1] = 0;
+    } else {
+        std::strcpy(savedLocale, "C");
+    }
+    std::setlocale(LC_NUMERIC, "C");
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
+    std::setlocale(LC_NUMERIC, savedLocale);
+    return ::String(buf);
 }
 ')
 #end
@@ -67,8 +94,9 @@ class State<T> {
         }
         #if cpp
         var k = name;
-        // For arrays, send empty string — Swift reads data via shared memory
-        var v = if (Std.isOfType(newValue, Array)) "" else Std.string(newValue);
+        var v = if (Std.isOfType(newValue, Array)) ""
+            else if (Std.isOfType(newValue, Float)) _formatFloatPosix(cast newValue)
+            else Std.string(newValue);
         untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
         #end
         return newValue;
@@ -227,4 +255,15 @@ class State<T> {
         untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', key, value);
         #end
     }
+
+    #if cpp
+    /** Format a Float in locale-neutral form via C++17 `std::to_chars`.
+        Used by the State setter to guarantee Swift's `Double(_:)`
+        parser accepts the result regardless of the system locale. **/
+    private static inline function _formatFloatPosix(v:Float):String {
+        var out:String = "";
+        untyped __cpp__('{0} = _hxsui_format_float_posix({1})', out, v);
+        return out;
+    }
+    #end
 }
