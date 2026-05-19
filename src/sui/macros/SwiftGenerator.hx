@@ -1802,7 +1802,7 @@ class SwiftGenerator {
                  "frame" | "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "toggleStyle" | "pickerStyle" | "scrollIndicators" |
-                 "sheet" | "inspector" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
+                 "sheet" | "inspector" | "inspectorColumnWidth" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
                  "onTapGesture" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
@@ -1913,6 +1913,14 @@ class SwiftGenerator {
                 var pad = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad}    Text("Inspector")\n';
                 'inspector(isPresented: $$${binding}) {\n${contentSwift}${pad}}';
+            case "inspectorColumnWidth":
+                var mn = if (args.length > 0) extractConstant(args[0]) else null;
+                var id = if (args.length > 1) extractConstant(args[1]) else null;
+                var mx = if (args.length > 2) extractConstant(args[2]) else null;
+                if (mn == null) mn = "200";
+                if (id == null) id = "300";
+                if (mx == null) mx = "600";
+                'inspectorColumnWidth(min: ${mn}, ideal: ${id}, max: ${mx})';
             case "alert":
                 var title = if (args.length > 0) extractString(args[0]) else "Alert";
                 var binding = if (args.length > 1) resolveStateName(args[1]) else "showAlert";

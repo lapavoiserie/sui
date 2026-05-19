@@ -46,6 +46,9 @@ enum ViewModifier {
         Standard pattern in Mac apps for "details about the current
         selection" (Pages, Numbers, Xcode). **/
     Inspector(isPresentedBinding:Dynamic, content:sui.View);
+    /** Width hint for the Inspector column: `min` / `ideal` / `max`.
+        Apply on the same view that owns the `.inspector(...)` call. **/
+    InspectorColumnWidth(min:Float, ideal:Float, max:Float);
     Alert(title:String, isPresentedBinding:Dynamic, message:Null<String>);
     ConfirmationDialog(title:String, isPresentedBinding:Dynamic, content:sui.View);
 
