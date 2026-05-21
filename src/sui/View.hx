@@ -280,6 +280,37 @@ class View {
         return this;
     }
 
+    /** Attach a SwiftUI `DragGesture` and route its release event to
+        a `@:expose` Haxe bridge function. The bridge receives the
+        drag's start + end coordinates as normalised fractions of
+        the enclosing `GeometryReader`'s proxy size — five args in
+        order: `mode`, `startX`, `startY`, `endX`, `endY`.
+
+        ```haxe
+        view.onDragGesture("handleGridDrag", "week")
+        ```
+
+        Generates:
+        ```swift
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 4)
+                .onEnded { v in
+                    let sx = max(0.0, min(1.0, v.startLocation.x / proxy.size.width))
+                    ...
+                    Task.detached { _ = HaxeBridgeC.handleGridDrag("week", sx, sy, ex, ey) }
+                }
+        )
+        ```
+
+        Must be attached inside a `GeometryReader`'s content so
+        `proxy.size` is in scope — same constraint as
+        `proportionalOffset`. **/
+    public function onDragGesture(fnName:String, mode:String):View {
+        modifierChain.push(ViewModifier.OnDragGesture(fnName, mode));
+        return this;
+    }
+
     /** Set the tint/accent color for this view and its children. **/
     public function tint(color:ColorValue):View {
         modifierChain.push(ViewModifier.Tint(color));

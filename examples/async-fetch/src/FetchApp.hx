@@ -38,7 +38,7 @@ class FetchApp extends App {
 	override function body():View {
 		return new NavigationStack(new VStack(null, 16, [
 			new Text("Async Haxe Bridge").font(FontStyle.LargeTitle),
-			new ScrollView([Text.withState("{result}").font(FontStyle.Body).padding()]),
+			new ScrollView([Text.bind(result.value).font(FontStyle.Body).padding()]),
 			new HStack(null, 12, [
 				new Button("Fetch example.com", null, StateAction.BridgeCallLoading("result", "Loading...", "fetchUrl", "https://example.com")),
 				new Button("Fetch example.com", null, StateAction.BridgeCallLoading("result", "Loading...", "fetchUrl", "https://example.com")),

@@ -161,7 +161,7 @@ new Image("photo").blur(blurAmount)
 new VStack([...])
     .inspector(showInspector, new VStack([
         new Text("Details"),
-        Text.withState("Selected: {selectedItem}"),
+        Text.bind('Selected: ${selectedItem.value}'),
     ]))
     .inspectorColumnWidth(360, 480, 720)
 ```

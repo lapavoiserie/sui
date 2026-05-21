@@ -1,14 +1,15 @@
 import SwiftUI
 
 @main
-struct TestSwiftGenApp: App {
+struct TestTypedExpressionsApp: App {
     init() {
+        HaxeBridgeC.registerCallbacks()
         HaxeRuntime.initialize()
     }
 
 
     var body: some Scene {
-        WindowGroup("TestApp") {
+        WindowGroup("TestTypedExpr") {
             ContentView()
         }
     }

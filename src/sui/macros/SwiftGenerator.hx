@@ -6,6 +6,14 @@ import haxe.macro.Context;
 
 using StringTools;
 
+/** A literal fragment or an interpolated Swift expression slot,
+    produced by walking a String-typed Haxe expression for
+    `Text.bind(...)` codegen. **/
+enum StringPart {
+    Lit(s:String);
+    Interp(swift:String);
+}
+
 /**
     Compile-time macro that generates Swift/SwiftUI source files from the Haxe view DSL.
     Runs during `haxe build.hxml` via `--macro sui.macros.SwiftGenerator.register()`.
@@ -111,6 +119,8 @@ class SwiftGenerator {
         localBindings = new Map();
         needsRuntimeBridge = false;
         needsHorizontalSizeClass = false;
+        needsIsoDateHelper = false;
+        needsIsoTimeHelper = false;
         nextActionId = 0;
 
         // 1. Find State<T> fields
@@ -129,6 +139,12 @@ class SwiftGenerator {
                 default:
             }
         }
+
+        // Populate the per-pass state-name index used by typed
+        // emitters (Text.bind walker etc.) to decide whether to
+        // prefix `appState.` directly.
+        currentStateNames = new Map();
+        for (sd in stateDecls) currentStateNames.set(sd.name, true);
 
         // 2. Walk constructor for appName, bundleId, state inits
         if (cls.constructor != null) {
@@ -217,11 +233,8 @@ class SwiftGenerator {
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
         if (commandsSwift != "") {
-            var emitted = needsAppStateInApp
-                ? rewriteStateRefsToAppState(commandsSwift, stateDecls)
-                : commandsSwift;
             appSwift.add("        .commands {\n");
-            appSwift.add(emitted);
+            appSwift.add(commandsSwift);
             appSwift.add("        }\n");
         }
         if (hasSettings) {
@@ -255,15 +268,53 @@ class SwiftGenerator {
         if (needsHorizontalSizeClass)
             viewSwift.add("    @Environment(\\.horizontalSizeClass) private var horizontalSizeClass\n\n");
 
-        viewSwift.add("    var body: some View {\n");
-
-        if (needsRuntimeBridge && stateDecls.length > 0) {
-            viewSwift.add(rewriteStateRefsToAppState(bodySwift, stateDecls));
-        } else {
-            viewSwift.add(bodySwift);
+        if (needsIsoDateHelper) {
+            // Shared formatter + parse/format helpers used by every
+            // `IsoDatePicker` binding. Static so they're created
+            // once per process; UTC-anchored so the same YYYY-MM-DD
+            // string round-trips losslessly regardless of the
+            // user's locale or daylight-saving boundaries.
+            viewSwift.add("    static let suiIsoFormatter: DateFormatter = {\n");
+            viewSwift.add("        let f = DateFormatter()\n");
+            viewSwift.add("        f.dateFormat = \"yyyy-MM-dd\"\n");
+            viewSwift.add("        f.timeZone = TimeZone(identifier: \"UTC\")\n");
+            viewSwift.add("        f.locale = Locale(identifier: \"en_US_POSIX\")\n");
+            viewSwift.add("        return f\n");
+            viewSwift.add("    }()\n\n");
+            viewSwift.add("    func suiIsoParse(_ s: String) -> Date? { Self.suiIsoFormatter.date(from: s) }\n");
+            viewSwift.add("    func suiIsoFormat(_ d: Date) -> String { Self.suiIsoFormatter.string(from: d) }\n\n");
         }
 
+        if (needsIsoTimeHelper) {
+            // Parallel formatter for `IsoTimePicker` — `HH:mm`,
+            // same UTC-anchored / POSIX-locale guarantees.
+            viewSwift.add("    static let suiIsoTimeFormatter: DateFormatter = {\n");
+            viewSwift.add("        let f = DateFormatter()\n");
+            viewSwift.add("        f.dateFormat = \"HH:mm\"\n");
+            viewSwift.add("        f.timeZone = TimeZone(identifier: \"UTC\")\n");
+            viewSwift.add("        f.locale = Locale(identifier: \"en_US_POSIX\")\n");
+            viewSwift.add("        return f\n");
+            viewSwift.add("    }()\n\n");
+            viewSwift.add("    func suiIsoTimeParse(_ s: String) -> Date? { Self.suiIsoTimeFormatter.date(from: s) }\n");
+            viewSwift.add("    func suiIsoTimeFormat(_ d: Date) -> String { Self.suiIsoTimeFormatter.string(from: d) }\n\n");
+        }
+
+        viewSwift.add("    var body: some View {\n");
+        viewSwift.add(bodySwift);
         viewSwift.add("    }\n");
+
+        // Emit the extracted helper sub-views as private computed
+        // properties on the same struct. Each one is independently
+        // type-checked by Swift, keeping the body of each chunk
+        // small enough for the inference machinery to handle.
+        for (helperName in helperOrder) {
+            var helperBody = helperSubViews.get(helperName);
+            if (helperBody == null) continue;
+            viewSwift.add("\n    private var " + helperName + ": some View {\n");
+            viewSwift.add(helperBody);
+            viewSwift.add("    }\n");
+        }
+
         viewSwift.add("}\n");
 
         // 5b. Optionally emit a SettingsView struct alongside ContentView.
@@ -280,11 +331,7 @@ class SwiftGenerator {
                 if (stateDecls.length > 0) viewSwift.add("\n");
             }
             viewSwift.add("    var body: some View {\n");
-            if (needsRuntimeBridge && stateDecls.length > 0) {
-                viewSwift.add(rewriteStateRefsToAppState(settingsSwift, stateDecls));
-            } else {
-                viewSwift.add(settingsSwift);
-            }
+            viewSwift.add(settingsSwift);
             viewSwift.add("    }\n");
             viewSwift.add("}\n");
         }
@@ -359,16 +406,19 @@ class SwiftGenerator {
         }
     }
 
-    /** Rewrite the bare state names produced by `viewToSwift` /
-        StateAction emission so they target the bridged `appState.X`
-        object. The codepath that emits Swift assumes everything will
-        be hoisted under a `@Bindable var appState = AppState.shared`
-        — but the emitter doesn't know that yet, so we patch the
-        identifiers in a single textual pass. Run this on every
-        chunk that lives in a struct holding `appState`: the
-        ContentView body, the SettingsView body, and (for
-        scene-level constructs like `.commands { … }`) the App
-        struct's body. **/
+    /** Rewrite the bare state names produced by the two surviving
+        legacy emitters (`Text.withState("{name}")` and
+        `StateAction.CustomSwift("raw swift")`) so they target the
+        bridged `appState.X` object. Typed paths — `Text.bind`,
+        `ForEach.byIndex`, modifier bridges, `Increment` / `SetValue`
+        / `Toggle`, sheet / popover / picker / slider bindings, the
+        `onChange(of:)` modifier — all qualify their state names
+        directly at emission time via `qualifyStateName`, so this
+        pass no longer runs against the full body.
+
+        Called only by `qualifyStateRefsInRawSwift` (for CustomSwift
+        bodies) and the `Text.withState` shim (for backward compat).
+        New code should never need it. **/
     static function rewriteStateRefsToAppState(s:String, stateDecls:Array<{name:String, swiftType:String, defaultValue:String}>):String {
         var placeholder = "__APPSTATE__";
         for (sd in stateDecls) {
@@ -1051,6 +1101,24 @@ class SwiftGenerator {
     static var localBindings:Map<Int, haxe.macro.Type.TypedExpr> = new Map();
     /** Tracks whether the current app needs the runtime bridge (has button closures). **/
     static var needsRuntimeBridge:Bool = false;
+
+    /** Set whenever the body emits an `IsoDatePicker`. Triggers
+        the once-per-file emission of `suiIsoParse` / `suiIsoFormat`
+        helpers + a shared UTC-anchored `yyyy-MM-dd` formatter at
+        the top of `ContentView.swift`. **/
+    static var needsIsoDateHelper:Bool = false;
+
+    /** Same as `needsIsoDateHelper` but for `IsoTimePicker` — emits
+        a parallel `HH:mm` formatter + `suiIsoTimeParse` /
+        `suiIsoTimeFormat` helpers. **/
+    static var needsIsoTimeHelper:Bool = false;
+
+    /** Names of `State<T>` fields the current `generateSwift` pass
+        is emitting. Used by the typed-expression walker so it can
+        prefix `appState.` directly when running under
+        `needsRuntimeBridge`, removing the need for the legacy
+        `rewriteStateRefsToAppState` text pass. **/
+    static var currentStateNames:Map<String, Bool> = new Map();
     /** Tracks whether the current app uses AdaptiveStack (needs @Environment horizontalSizeClass). **/
     static var needsHorizontalSizeClass:Bool = false;
     /** Counter for button action IDs (must match Button._nextActionId at runtime). **/
@@ -1058,23 +1126,150 @@ class SwiftGenerator {
 
     static function walkFunc(expr:haxe.macro.Type.TypedExpr, indent:Int):String {
         if (expr == null) return "";
+        // Recursively scan the whole body for TVar bindings before
+        // emitting. The typer hoists synthesised temporaries
+        // (`_hx_tmpN = …`) into nested TBlocks — e.g. arrow-style
+        // ternaries in argument position — and the resulting TLocal
+        // references appear deep inside the view tree. Without a
+        // recursive collector, `unwrap` can't resolve those locals
+        // and the walker emits raw identifiers (`Text("\(_hx_tmp2)")`).
+        collectAllBindings(expr);
         switch (expr.expr) {
             case TFunction(f): return walkFunc(f.expr, indent);
             case TBlock(el):
-                // Collect variable bindings, then process the return
-                for (e in el) {
-                    switch (e.expr) {
-                        case TVar(v, initExpr):
-                            if (initExpr != null)
-                                localBindings.set(v.id, initExpr);
-                        default:
-                    }
-                }
                 if (el.length > 0) return walkFunc(el[el.length - 1], indent);
                 return "";
             case TReturn(e): return if (e != null) viewToSwift(e, indent) else "";
             default:
                 return viewToSwift(expr, indent);
+        }
+    }
+
+    /** Unwrap an `_hx_tmp = <rhs>` assignment whose LHS matches
+        the given var id, returning the RHS. Handles:
+          - bare `TBinop(OpAssign, TLocal(v), rhs)`
+          - any wrapping `TBlock` (scans every stmt for the
+            assignment — sibling TVars for sub-temps don't get in
+            the way)
+          - `TParenthesis` / `TMeta` / `TCast` passthrough
+        Returns null when the expression contains no such
+        assignment. **/
+    static function extractAssignRhs(expr:haxe.macro.Type.TypedExpr, varId:Int):Null<haxe.macro.Type.TypedExpr> {
+        if (expr == null) return null;
+        var e = expr;
+        switch (e.expr) {
+            case TBinop(OpAssign, lhs, rhs):
+                switch (lhs.expr) {
+                    case TLocal(v) if (v.id == varId): return rhs;
+                    default:
+                }
+            case TBlock(stmts):
+                var last:Null<haxe.macro.Type.TypedExpr> = null;
+                for (s in stmts) {
+                    var r = extractAssignRhs(s, varId);
+                    if (r != null) last = r;
+                }
+                return last;
+            case TParenthesis(inner): return extractAssignRhs(inner, varId);
+            case TMeta(_, inner): return extractAssignRhs(inner, varId);
+            case TCast(inner, _): return extractAssignRhs(inner, varId);
+            default:
+        }
+        return null;
+    }
+
+    /** Walk every node and record TVar(name = init) into the
+        `localBindings` map so `unwrap` can resolve every TLocal,
+        including the ones the typer hoists out of argument
+        position. Also reconstructs ternary-as-expression bindings:
+        Haxe emits `cond ? a : b` as `var _hx; if (cond) _hx = a;
+        else _hx = b;`, so we synthesise a TIf binding from the
+        adjacent TVar + TIf pair. **/
+    static function collectAllBindings(e:haxe.macro.Type.TypedExpr):Void {
+        if (e == null) return;
+        switch (e.expr) {
+            case TVar(v, initExpr):
+                if (initExpr != null) {
+                    localBindings.set(v.id, initExpr);
+                    collectAllBindings(initExpr);
+                }
+            case TFunction(f): collectAllBindings(f.expr);
+            case TBlock(stmts):
+                // Pre-scan: for every uninitialised `TVar(v, null)`,
+                // hunt for the assignment that materialises its
+                // value. Two shapes show up in typer output:
+                //   (a) `TIf(c, _hx = a, _hx = b)` — branches assign
+                //       in each path. Reconstruct as a TIf-expression
+                //       so downstream lookups see a ternary value.
+                //   (b) `TBinop(OpAssign, TLocal(v), rhs)` — single
+                //       assignment. The RHS is the binding.
+                // We scan up to 8 statements ahead so chained-temp
+                // patterns (`var a; var b; var c; if(...){c=...}else{c=...}`,
+                // common when the typer hoists nested sub-expressions
+                // out of an argument) all resolve.
+                for (i in 0...stmts.length) {
+                    var s0 = stmts[i];
+                    switch (s0.expr) {
+                        case TVar(v, init) if (init == null):
+                            var lookahead = i + 8 < stmts.length ? i + 8 : stmts.length - 1;
+                            for (j in (i + 1)...(lookahead + 1)) {
+                                var sj = stmts[j];
+                                switch (sj.expr) {
+                                    case TIf(c, t, eOpt) if (eOpt != null):
+                                        var thenRhs = extractAssignRhs(t, v.id);
+                                        var elseRhs = extractAssignRhs(eOpt, v.id);
+                                        if (thenRhs != null && elseRhs != null) {
+                                            var synth:haxe.macro.Type.TypedExpr = {
+                                                expr: TIf(c, thenRhs, elseRhs),
+                                                t: thenRhs.t,
+                                                pos: sj.pos,
+                                            };
+                                            localBindings.set(v.id, synth);
+                                            break;
+                                        }
+                                    case TBinop(OpAssign, lhs, rhs):
+                                        switch (lhs.expr) {
+                                            case TLocal(lv) if (lv.id == v.id):
+                                                localBindings.set(v.id, rhs);
+                                            default:
+                                        }
+                                        // Don't break — a later TIf-assign
+                                        // shape is the real value if both
+                                        // exist (rare but cheap to keep
+                                        // scanning).
+                                    default:
+                                }
+                            }
+                        default:
+                    }
+                }
+                for (s in stmts) collectAllBindings(s);
+            case TReturn(re): collectAllBindings(re);
+            case TCast(inner, _): collectAllBindings(inner);
+            case TParenthesis(inner): collectAllBindings(inner);
+            case TMeta(_, inner): collectAllBindings(inner);
+            case TArrayDecl(elems):
+                for (el in elems) collectAllBindings(el);
+            case TNew(_, _, args):
+                for (a in args) collectAllBindings(a);
+            case TCall(callee, args):
+                collectAllBindings(callee);
+                for (a in args) collectAllBindings(a);
+            case TArray(arr, idx):
+                collectAllBindings(arr);
+                collectAllBindings(idx);
+            case TField(receiver, _): collectAllBindings(receiver);
+            case TIf(c, t, eOpt):
+                collectAllBindings(c);
+                collectAllBindings(t);
+                if (eOpt != null) collectAllBindings(eOpt);
+            case TBinop(_, l, r):
+                collectAllBindings(l);
+                collectAllBindings(r);
+            case TUnop(_, _, x): collectAllBindings(x);
+            case TObjectDecl(fields):
+                for (f in fields) collectAllBindings(f.expr);
+            default:
         }
     }
 
@@ -1519,14 +1714,14 @@ class SwiftGenerator {
 
             case "Gauge":
                 var label = if (args.length > 0) extractString(args[0]) else "";
-                var binding = if (args.length > 1) extractString(args[1]) else "value";
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "value";
                 var rangeMin = if (args.length > 2) extractConstant(args[2]) else "0.0";
                 var rangeMax = if (args.length > 3) extractConstant(args[3]) else "1.0";
                 return '${pad}Gauge(value: ${binding}, in: ${rangeMin}...${rangeMax}) { Text("${esc(label != null ? label : "")}") }\n';
 
             case "ProgressView":
                 var label = if (args.length > 0) extractString(args[0]) else null;
-                var binding = if (args.length > 1) extractString(args[1]) else null;
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else null;
                 var total = if (args.length > 2) extractConstant(args[2]) else null;
                 if (binding != null && total != null)
                     return '${pad}ProgressView("${esc(label != null ? label : "")}", value: ${binding}, total: ${total})\n';
@@ -1537,7 +1732,7 @@ class SwiftGenerator {
 
             case "Stepper":
                 var label = if (args.length > 0) extractString(args[0]) else "";
-                var binding = if (args.length > 1) extractString(args[1]) else "value";
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "value";
                 var rangeMin = if (args.length > 2) extractConstant(args[2]) else "0";
                 var rangeMax = if (args.length > 3) extractConstant(args[3]) else "100";
                 return '${pad}Stepper("${esc(label != null ? label : "")}", value: $$${binding}, in: ${rangeMin}...${rangeMax})\n';
@@ -1567,7 +1762,7 @@ class SwiftGenerator {
 
             case "Picker":
                 var label = if (args.length > 0) extractString(args[0]) else "";
-                var binding = if (args.length > 1) extractString(args[1]) else "selection";
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "selection";
                 var children:Array<haxe.macro.Type.TypedExpr> = [];
                 if (args.length > 2) {
                     var uArg = unwrap(args[2]);
@@ -1583,8 +1778,32 @@ class SwiftGenerator {
                 buf.add('${pad}}\n');
                 return buf.toString();
 
+            case "IsoDatePicker":
+                // Native DatePicker bound to a State<String> ISO
+                // date. The Binding adapter round-trips through a
+                // shared UTC-anchored "yyyy-MM-dd" formatter so the
+                // Haxe layer keeps its string representation while
+                // SwiftUI gets a real Date for its calendar popover.
+                var label = if (args.length > 0) extractString(args[0]) else "";
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "";
+                if (binding == null || binding == "") binding = "date";
+                needsIsoDateHelper = true;
+                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoFormat($$0) }), displayedComponents: .date)\n';
+
+            case "IsoTimePicker":
+                // Native DatePicker pinned to `.hourAndMinute` mode
+                // and bound to a `State<String>` holding `HH:mm`.
+                // Same Binding<Date> shim as IsoDatePicker but with
+                // a separate UTC-anchored `HH:mm` formatter so the
+                // round-trip stays lossless and locale-independent.
+                var label = if (args.length > 0) extractString(args[0]) else "";
+                var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "";
+                if (binding == null || binding == "") binding = "time";
+                needsIsoTimeHelper = true;
+                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoTimeParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoTimeFormat($$0) }), displayedComponents: .hourAndMinute)\n';
+
             case "Slider":
-                var binding = if (args.length > 0) extractString(args[0]) else "value";
+                var binding = if (args.length > 0) qualifyStateName(extractString(args[0])) else "value";
                 var rangeMin = if (args.length > 1) extractConstant(args[1]) else "0";
                 var rangeMax = if (args.length > 2) extractConstant(args[2]) else "1";
                 return '${pad}Slider(value: $$${binding}, in: ${rangeMin}...${rangeMax})\n';
@@ -1641,7 +1860,7 @@ class SwiftGenerator {
             case "ConditionalView":
                 // args: stateName, trueView, falseView (optional)
                 // or: stateName, matchValue (string), matchView, elseView (optional)
-                var stateName = if (args.length > 0) resolveStateName(args[0]) else "condition";
+                var stateName = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "condition";
                 var buf = new StringBuf();
 
                 // Detect string equality mode: 4 args where arg[1] is a string constant (not a view)
@@ -1824,7 +2043,7 @@ class SwiftGenerator {
         }
         var str = extractString(e);
         if (str != null) {
-            if (isBinding) return '$$$str'; // emit $varName
+            if (isBinding) return '$' + qualifyStateName(str);
             return '"${esc(str)}"';
         }
         // For binding params, try to extract the field name from a state reference.
@@ -1832,7 +2051,7 @@ class SwiftGenerator {
         // conversions (TextInputBinding.fromState(this.name)).
         if (isBinding) {
             var fieldName = extractBindingFieldName(e);
-            if (fieldName != null) return '$$$fieldName';
+            if (fieldName != null) return '$' + qualifyStateName(fieldName);
         }
         var c = extractConstant(e);
         return c;
@@ -1885,7 +2104,7 @@ class SwiftGenerator {
         //     per-iteration element via `currentItemBinding`. Modifiers
         //     and Text codegen check the binding before falling back to
         //     constant-string extraction.
-        var arrayName = if (args.length > 0) resolveStateName(args[0]) else "items";
+        var arrayName = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "items";
 
         var lambda = (args.length >= 2) ? unwrapLambda(args[1]) : null;
         if (lambda != null) {
@@ -1916,6 +2135,31 @@ class SwiftGenerator {
             buf.add(viewToSwift(args[2], indent + 1));
         }
         buf.add('${pad}}\n');
+        return buf.toString();
+    }
+
+    /** ForEach.byIndex(arr, i -> body) — emit an index-iteration form
+        where the typed Haxe lambda param maps to the Swift loop var
+        (Int), so subscripts `arr.value[i]` and `otherArr.value[i]`
+        compile straight through the typed walker into `appState.arr[i]`. **/
+    static function forEachByIndexToSwift(args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
+        var pad = ind(indent);
+        var arrayName = qualifyStateName(resolveStateName(args[0]));
+        var lambda = unwrapLambda(args[1]);
+        if (lambda == null) {
+            return '${pad}// [sui] ForEach.byIndex requires a closure body\n';
+        }
+        var itemName = lambda.paramName != null && lambda.paramName != "" ? lambda.paramName : "i";
+        var prev = currentItemBinding;
+        currentItemBinding = {
+            paramId: lambda.paramId,
+            swiftExpr: itemName,
+        };
+        var buf = new StringBuf();
+        buf.add('${pad}ForEach(0..<${arrayName}.count, id: \\.self) { ${itemName} in\n');
+        buf.add(viewToSwift(lambda.body, indent + 1));
+        buf.add('${pad}}\n');
+        currentItemBinding = prev;
         return buf.toString();
     }
 
@@ -2022,7 +2266,7 @@ class SwiftGenerator {
                 // (Haxe property) or as a TCall to its getter.
                 var stateName = resolveValueAccessStateName(arr);
                 if (stateName == null) return null;
-                return '${stateName}[${idxRef}]';
+                return '${qualifyStateName(stateName)}[${idxRef}]';
             default:
                 return null;
         }
@@ -2130,6 +2374,37 @@ class SwiftGenerator {
     }
 
     /** Try to inline a view-returning function call. Returns null if not resolvable. **/
+    /** Subview helpers — view-returning instance methods that we
+        emit as standalone `private var X: some View { … }` on the
+        SwiftUI struct instead of inlining at every call site.
+        Splitting the body this way keeps SwiftUI's ViewBuilder
+        type-checker from blowing up on large view trees (the
+        infamous "the compiler is unable to type-check this
+        expression in reasonable time" error). **/
+    static var helperSubViews:Map<String, String> = new Map();
+    static var helperOrder:Array<String> = [];
+
+    static function tryExtractHelper(field:haxe.macro.Type.ClassField, args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
+        if (!returnsView(field)) return null;
+        if (getMetaString(field.meta, ":swiftName") != null) return null;
+        // Only 0-arg helpers can be hoisted to a SwiftUI computed
+        // property (which doesn't take parameters). Methods with
+        // args fall back to inline expansion.
+        if (args.length != 0) return null;
+        var name = field.name;
+        if (!helperSubViews.exists(name)) {
+            // Register a placeholder first to break recursion if the
+            // helper transitively calls itself (rare but possible).
+            helperSubViews.set(name, "        // computing\n");
+            helperOrder.push(name);
+            var funcExpr = field.expr();
+            if (funcExpr != null) {
+                helperSubViews.set(name, walkFunc(funcExpr, 2));
+            }
+        }
+        return ind(indent) + "self." + name + "\n";
+    }
+
     static function tryInlineViewCall(field:haxe.macro.Type.ClassField, args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
         if (!returnsView(field)) return null;
         // Static factories that carry @:swiftName have their own Swift
@@ -2142,6 +2417,11 @@ class SwiftGenerator {
         // generated Swift came out as `Image("")` instead of
         // `Image(systemName: "...")`.
         if (getMetaString(field.meta, ":swiftName") != null) return null;
+        // Try the helper-extraction path first: 0-arg view-returning
+        // methods become SwiftUI computed properties.
+        var extracted = tryExtractHelper(field, args, indent);
+        if (extracted != null) return extracted;
+
         var funcExpr = field.expr();
         if (funcExpr == null) return null;
 
@@ -2168,11 +2448,27 @@ class SwiftGenerator {
                         var cls = classRef.get();
                         var field = fieldRef.get();
 
+                        // Special case: ForEach.byIndex(arr, idx -> view) —
+                        // emit `ForEach(0..<arr.count, id: \.self) { idx in body }`
+                        // so the lambda param is the Int index (not the element).
+                        if (cls.name == "ForEach" && field.name == "byIndex" && args.length >= 2) {
+                            return forEachByIndexToSwift(args, indent);
+                        }
+
+                        // Special case: Text.bind(expr) — walk the typed
+                        // String expression directly into a Swift literal
+                        // with `\(...)` interpolation slots, bypassing the
+                        // legacy `{name}` template + text rewriter path.
+                        if (cls.name == "Text" && field.name == "bind" && args.length > 0) {
+                            var swiftExpr = stringExprToSwift(args[0]);
+                            return '${pad}Text(${swiftExpr})\n';
+                        }
+
                         // Special case: Text.withState uses {var} → \(var) interpolation
                         if (cls.name == "Text" && field.name == "withState" && args.length > 0) {
                             var template = extractString(args[0]);
                             if (template != null)
-                                return '${pad}Text(${templateToSwift(template)})\n';
+                                return '${pad}Text(${qualifyStateRefsInRawSwift(templateToSwift(template))})\n';
                         }
 
                         // Try inlining view-returning function calls
@@ -2317,7 +2613,7 @@ class SwiftGenerator {
                     case TField(_, fa):
                         switch (fa) {
                             case FEnum(_, ef):
-                                var p0 = if (args.length > 0) resolveStateName(args[0]) else null;
+                                var p0 = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else null;
                                 var p1 = if (args.length > 1) extractConstant(args[1]) else null;
                                 return switch (ef.name) {
                                     case "Increment": '${p0} += ${p1 != null ? p1 : "1"}';
@@ -2331,8 +2627,15 @@ class SwiftGenerator {
                                             // Task.detached invocation of the
                                             // synthesised wrapper.
                                             emitActionInvocation(code);
+                                        } else if (code != null) {
+                                            // Raw Swift escape hatch — prefix state
+                                            // refs with `appState.` so legacy
+                                            // `result = …`, `count[i] = …`,
+                                            // `if visible …` patterns still target
+                                            // the bridged store.
+                                            qualifyStateRefsInRawSwift(code);
                                         } else {
-                                            code != null ? code : "// custom";
+                                            "// custom";
                                         }
                                     case "BridgeCall":
                                         var fnName = if (args.length > 1) extractString(args[1]) else "unknown";
@@ -2394,7 +2697,7 @@ class SwiftGenerator {
                  "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "inspector" | "inspectorColumnWidth" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "navigationDestination" |
-                 "onTapGesture" | "tint" | "badge" | "tag" |
+                 "onTapGesture" | "onDragGesture" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
                  "blur" | "scaleEffect" | "rotationEffect" | "offset" | "proportionalOffset" | "proportionalFrame" |
                  "brightness" | "contrast" | "saturation" | "grayscale" |
@@ -2522,15 +2825,32 @@ class SwiftGenerator {
                     'onTapGesture { ${actionCode} }';
                 else
                     'onTapGesture { }';
+            case "onDragGesture":
+                // Args: (fnName, mode). The modifier wraps a SwiftUI
+                // DragGesture and dispatches the bridge fn at BOTH
+                // phases — `.onChanged` (every frame the cursor
+                // moves) and `.onEnded` (release). The phase travels
+                // as the 6th arg (`"changed"` | `"ended"`) so the
+                // bridge can route a live preview write vs a final
+                // commit. `contentShape(Rectangle())` makes
+                // transparent / Color.clear backdrops hit-testable.
+                var fnName = if (args.length > 0) extractString(args[0]) else "onDrag";
+                var mode = if (args.length > 1) extractString(args[1]) else "";
+                if (fnName == null) fnName = "onDrag";
+                if (mode == null) mode = "";
+                var coords = 'let sx = max(0.0, min(1.0, v.startLocation.x / proxy.size.width)); let sy = max(0.0, min(1.0, v.startLocation.y / proxy.size.height)); let ex = max(0.0, min(1.0, v.location.x / proxy.size.width)); let ey = max(0.0, min(1.0, v.location.y / proxy.size.height));';
+                'contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 4)'
+                + '.onChanged { v in ${coords} Task.detached { _ = HaxeBridgeC.${fnName}("${esc(mode)}", sx, sy, ex, ey, "changed") } }'
+                + '.onEnded { v in ${coords} Task.detached { _ = HaxeBridgeC.${fnName}("${esc(mode)}", sx, sy, ex, ey, "ended") } })';
             case "onChange":
                 // args[0] = state name (String literal), args[1] = StateAction.
-                // Emits `.onChange(of: appState.<name>) { _, _ in <action> }`
-                // — the body-wide appState-prefix pass doesn't reach
-                // through `of:`, so we insert the prefix here.
+                // `qualifyStateName` prefixes `appState.` in bridge mode;
+                // for standalone @State or component params it stays bare.
                 var stateName = if (args.length > 0) extractString(args[0]) else null;
                 if (stateName == null) stateName = "";
+                var qualified = qualifyStateName(stateName);
                 var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else null;
-                'onChange(of: appState.${stateName}) { _, _ in ${actionCode != null ? actionCode : ""} }';
+                'onChange(of: ${qualified}) { _, _ in ${actionCode != null ? actionCode : ""} }';
             case "onAppearAction":
                 var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
                 if (actionCode != null)
@@ -2546,12 +2866,12 @@ class SwiftGenerator {
 
             // --- Content-bearing modifiers ---
             case "sheet":
-                var binding = if (args.length > 0) resolveStateName(args[0]) else "isPresented";
+                var binding = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "isPresented";
                 var pad = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad}    Text("Sheet")\n';
                 'sheet(isPresented: $$${binding}) {\n${contentSwift}${pad}}';
             case "inspector":
-                var binding = if (args.length > 0) resolveStateName(args[0]) else "isPresented";
+                var binding = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "isPresented";
                 var pad = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad}    Text("Inspector")\n';
                 'inspector(isPresented: $$${binding}) {\n${contentSwift}${pad}}';
@@ -2565,7 +2885,7 @@ class SwiftGenerator {
                 'inspectorColumnWidth(min: ${mn}, ideal: ${id}, max: ${mx})';
             case "alert":
                 var title = if (args.length > 0) extractString(args[0]) else "Alert";
-                var binding = if (args.length > 1) resolveStateName(args[1]) else "showAlert";
+                var binding = if (args.length > 1) qualifyStateName(resolveStateName(args[1])) else "showAlert";
                 var message = if (args.length > 2) extractString(args[2]) else null;
                 if (message != null)
                     'alert("${esc(title != null ? title : "")}", isPresented: $$${binding}) {} message: { Text("${esc(message)}") }';
@@ -2573,12 +2893,12 @@ class SwiftGenerator {
                     'alert("${esc(title != null ? title : "")}", isPresented: $$${binding}) { Button("OK") {} }';
             case "confirmationDialog":
                 var title = if (args.length > 0) extractString(args[0]) else "Confirm";
-                var binding = if (args.length > 1) resolveStateName(args[1]) else "showConfirm";
+                var binding = if (args.length > 1) qualifyStateName(resolveStateName(args[1])) else "showConfirm";
                 var pad = ind(indent + 1);
                 var contentSwift = if (args.length > 2) viewToSwift(args[2], indent + 2) else '${pad}    Button("OK") {}\n';
                 'confirmationDialog("${esc(title != null ? title : "")}", isPresented: $$${binding}) {\n${contentSwift}${pad}}';
             case "searchable":
-                var binding = if (args.length > 0) extractString(args[0]) else "searchText";
+                var binding = if (args.length > 0) qualifyStateName(extractString(args[0])) else "searchText";
                 var prompt = if (args.length > 1) extractString(args[1]) else null;
                 if (prompt != null)
                     'searchable(text: $$${binding}, prompt: "${esc(prompt)}")';
@@ -2689,12 +3009,12 @@ class SwiftGenerator {
 
             // --- Presentation ---
             case "popover":
-                var binding = if (args.length > 0) resolveStateName(args[0]) else "isPresented";
+                var binding = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "isPresented";
                 var pad2 = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad2}    Text("Popover")\n';
                 'popover(isPresented: $$${binding}) {\n${contentSwift}${pad2}}';
             case "fullScreenCover":
-                var binding = if (args.length > 0) resolveStateName(args[0]) else "isPresented";
+                var binding = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "isPresented";
                 var pad2 = ind(indent + 1);
                 var contentSwift = if (args.length > 1) viewToSwift(args[1], indent + 2) else '${pad2}    Text("Content")\n';
                 'fullScreenCover(isPresented: $$${binding}) {\n${contentSwift}${pad2}}';
@@ -2869,31 +3189,41 @@ class SwiftGenerator {
                     case TFloat(v): return v;
                     case TBool(b): return b ? "true" : "false";
                     case TString(s):
-                        // Legacy: stringly-typed state name. Wrap in
-                        // the AppState placeholder so the body pass
-                        // picks it up reliably regardless of where it
-                        // sits syntactically — `y: foo)`, `blur(foo)`,
-                        // etc., wouldn't match the pattern-based pass
-                        // otherwise.
-                        return "__APPSTATE__" + s;
+                        // Legacy: stringly-typed state name. Qualified
+                        // directly so the modifier sees a final Swift
+                        // expression — no placeholder, no body rewriter.
+                        return qualifyStateName(s);
                     default:
                 }
             case TField(_, fa):
-                // Typed State<T> field reference — same reasoning:
-                // emit the placeholder so the final `__APPSTATE__` →
-                // `appState.` substitution catches the identifier in
-                // every Swift syntactic context, including
-                // `offset(x: 0, y: NAME)` where the pattern pass
-                // doesn't try to match.
+                // Typed State<T> field reference — emit the qualified
+                // Swift form directly. `qualifyStateName` adds the
+                // `appState.` prefix in bridge mode and leaves the
+                // bare name in standalone / component-binding mode.
                 switch (fa) {
-                    case FInstance(_, _, fieldRef): return "__APPSTATE__" + fieldRef.get().name;
-                    case FStatic(_, fieldRef): return "__APPSTATE__" + fieldRef.get().name;
+                    case FInstance(_, _, fieldRef): return qualifyStateName(fieldRef.get().name);
+                    case FStatic(_, fieldRef): return qualifyStateName(fieldRef.get().name);
+                    default:
+                }
+            case TCall(callee, callArgs) if (callArgs.length == 0):
+                // `state.value` after typing → `TCall(get_value, [])`.
+                // Resolve to the underlying State field's qualified
+                // name so `.proportionalFrame(myState.value, ...)`
+                // emits the same Swift as the bare field ref.
+                var calU = unwrap(callee);
+                switch (calU.expr) {
+                    case TField(receiver, fa):
+                        var fn = faName(fa);
+                        if (fn == "value" || fn == "get_value") {
+                            var stateName = resolveStateName(receiver);
+                            if (stateName != null) return qualifyStateName(stateName);
+                        }
                     default:
                 }
             default:
                 // TLocal referencing a `@:state` field — same path.
                 var fieldName = extractThisField(e);
-                if (fieldName != null) return "__APPSTATE__" + fieldName;
+                if (fieldName != null) return qualifyStateName(fieldName);
         }
         return defaultVal;
     }
@@ -2929,16 +3259,26 @@ class SwiftGenerator {
         switch (e.expr) {
             case TField(_, fa):
                 switch (fa) {
-                    case FInstance(_, _, fieldRef): return 'appState.${fieldRef.get().name}';
-                    case FStatic(_, fieldRef): return 'appState.${fieldRef.get().name}';
+                    case FInstance(_, _, fieldRef): return qualifyStateName(fieldRef.get().name);
+                    case FStatic(_, fieldRef): return qualifyStateName(fieldRef.get().name);
                     default:
                 }
             default:
                 var fieldName = extractThisField(e);
-                if (fieldName != null) return 'appState.${fieldName}';
+                if (fieldName != null) return qualifyStateName(fieldName);
         }
-        // 4. Legacy: string literal embedded verbatim.
-        return sLit != null ? sLit : "\"\"";
+        // 4. String literal — a hex token like "#007aff44" or a
+        //    CSS name. Emit as a Swift String literal so
+        //    `Color(suiHex: …)` gets the string it expects.
+        //    Patterns starting with "appState." or containing a
+        //    "?" or "[" come from the legacy stringly path where
+        //    users embedded a Swift expression directly; those
+        //    pass through verbatim for backward compatibility.
+        if (sLit == null) return "\"\"";
+        if (sLit.indexOf("appState.") == 0
+            || sLit.indexOf("?") != -1
+            || sLit.indexOf("[") != -1) return sLit;
+        return '"${esc(sLit)}"';
     }
 
     /** Prefix that marks a string argument as a bridge invocation.
@@ -3175,6 +3515,211 @@ class SwiftGenerator {
             default:
         }
         return "[]";
+    }
+
+    /** Walk a String-typed TypedExpr and produce a Swift literal
+        (with `\(...)` interpolation slots for non-literal sub-exprs).
+        Used by `Text.bind(expr)` codegen to replace the legacy
+        `Text.withState("{name}")` template form. **/
+    static function stringExprToSwift(expr:haxe.macro.Type.TypedExpr):String {
+        var parts = collectStringParts(collapseTempVarBlock(expr));
+        var buf = new StringBuf();
+        buf.add('"');
+        for (p in parts) {
+            switch (p) {
+                case Lit(s): buf.add(esc(s));
+                case Interp(sw): buf.add('\\($sw)');
+            }
+        }
+        buf.add('"');
+        return buf.toString();
+    }
+
+    /** Collapse Haxe's typer-inserted `{ var tmp = X; tmp }` pattern
+        back to `X`. The typer wraps some expressions (notably
+        ternaries in argument position) in a synthetic block that
+        names the result; without this, the walker would see a
+        bare `TLocal(_hx_tmp2)` and emit `"\(_hx_tmp2)"` as if it
+        were a Swift identifier. **/
+    static function collapseTempVarBlock(expr:haxe.macro.Type.TypedExpr):haxe.macro.Type.TypedExpr {
+        if (expr == null) return expr;
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TBlock(stmts) if (stmts.length == 2):
+                var s0 = unwrap(stmts[0]);
+                var s1 = unwrap(stmts[1]);
+                switch (s0.expr) {
+                    case TVar(v, init) if (init != null):
+                        switch (s1.expr) {
+                            case TLocal(v2) if (v2.id == v.id):
+                                return collapseTempVarBlock(init);
+                            default:
+                        }
+                    default:
+                }
+            default:
+        }
+        return e;
+    }
+
+    /** Walk a String-typed expression into its alternating literal /
+        interpolation parts. Recognises:
+          - `TConst(TString(s))` → `Lit(s)`
+          - `TBinop(OpAdd, l, r)` → parts(l) ++ parts(r) (concat,
+            including the chain produced by Haxe single-quote
+            interpolation `'foo ${bar}'`)
+          - `TCall(Std.string, [x])` → recurse into `x` so the wrap
+            inserted by the interpolation sugar is invisible.
+          - Anything else → one `Interp(stringTermToSwift(e))` slot. **/
+    static function collectStringParts(expr:haxe.macro.Type.TypedExpr):Array<StringPart> {
+        if (expr == null) return [];
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TConst(TString(s)):
+                return [Lit(s)];
+            case TBinop(OpAdd, l, r):
+                return collectStringParts(l).concat(collectStringParts(r));
+            case TCall(callee, args) if (args.length == 1):
+                var calU = unwrap(callee);
+                switch (calU.expr) {
+                    case TField(_, fa):
+                        if (faName(fa) == "string") {
+                            return collectStringParts(args[0]);
+                        }
+                    default:
+                }
+            case TParenthesis(inner): return collectStringParts(inner);
+            case TMeta(_, inner): return collectStringParts(inner);
+            case TCast(inner, _): return collectStringParts(inner);
+            default:
+        }
+        return [Interp(stringTermToSwift(e))];
+    }
+
+    /** Emit the Swift expression form of a value that will be
+        interpolated into a string. Covers state-field access,
+        `.value` on a State<T>, array subscripts (including
+        per-iteration access via `currentItemBinding`), literals,
+        ternaries, locals, and parenthesised forms. **/
+    static function stringTermToSwift(expr:haxe.macro.Type.TypedExpr):String {
+        if (expr == null) return "\"\"";
+        var e = unwrap(expr);
+        // First chance: per-iteration lambda binding (handles bare
+        // lambda param + parallel-array subscript).
+        var item = extractItemExpr(e);
+        if (item != null) return item;
+        switch (e.expr) {
+            case TLocal(v):
+                return v.name;
+            case TField(receiver, fa):
+                var fname = faName(fa);
+                if (fname == "value") {
+                    // state.value → appState.<state-name> (bridge mode)
+                    // or just <state-name> (standalone @State).
+                    var stateName = resolveStateName(receiver);
+                    if (stateName != null) return qualifyStateName(stateName);
+                }
+                // Bare this.field (State<T> property) — same emission.
+                var stateName2 = resolveStateName(e);
+                if (stateName2 != null) return qualifyStateName(stateName2);
+                var recSwift = stringTermToSwift(receiver);
+                return '${recSwift}.${fname}';
+            case TArray(arr, idx):
+                var arrSwift = stringTermToSwift(arr);
+                var idxSwift = stringTermToSwift(idx);
+                return '${arrSwift}[${idxSwift}]';
+            case TConst(TInt(i)): return Std.string(i);
+            case TConst(TFloat(f)): return f;
+            case TConst(TBool(b)): return b ? "true" : "false";
+            case TConst(TString(s)): return '"${esc(s)}"';
+            case TParenthesis(inner): return '(${stringTermToSwift(inner)})';
+            case TCast(inner, _): return stringTermToSwift(inner);
+            case TMeta(_, inner): return stringTermToSwift(inner);
+            case TIf(c, t, eOpt):
+                var cs = stringTermToSwift(c);
+                var ts = stringTermToSwift(t);
+                var es = eOpt != null ? stringTermToSwift(eOpt) : '""';
+                return '($cs ? $ts : $es)';
+            case TBinop(op, l, r):
+                var ls = stringTermToSwift(l);
+                var rs = stringTermToSwift(r);
+                return '($ls ${binopSym(op)} $rs)';
+            case TCall(callee, callArgs):
+                var calU = unwrap(callee);
+                switch (calU.expr) {
+                    case TField(receiver, fa):
+                        var fn = faName(fa);
+                        // Property getter: `state.value` types as
+                        // `state.get_value()` in the typed AST when
+                        // `value` is a property with a getter.
+                        if (callArgs.length == 0 && (fn == "value" || fn == "get_value")) {
+                            var stateName = resolveStateName(receiver);
+                            if (stateName != null) return qualifyStateName(stateName);
+                        }
+                        if (fn == "string" && callArgs.length == 1) {
+                            // Std.string(x) — strip the wrap.
+                            return stringTermToSwift(callArgs[0]);
+                        }
+                    default:
+                }
+                Context.warning('[sui] Text.bind: unsupported call expression — pre-compute in a @:state field instead.', e.pos);
+                return '"<unsupported>"';
+            default:
+                Context.warning('[sui] Text.bind: unsupported expression ${e.expr.getName()} — pre-compute in a @:state field instead.', e.pos);
+                return '"<unsupported>"';
+        }
+    }
+
+    /** Prefix `appState.` to a resolved state-field name when the
+        current pass is in bridge mode (and the name is known to be
+        a `State<T>` field). For standalone `@State`/component-local
+        fields, return the bare name. **/
+    static function qualifyStateName(name:String):String {
+        if (name == null) return null;
+        if (needsRuntimeBridge && currentStateNames.exists(name))
+            return 'appState.${name}';
+        return name;
+    }
+
+    /** Prefix `appState.` in a raw Swift fragment supplied by
+        `StateAction.CustomSwift(...)`. This is the *only* surviving
+        client of the legacy text-pass: typed paths (Text.bind,
+        ForEach.byIndex, modifier bridges, BridgeCall* / Increment /
+        SetValue / Toggle) emit `appState.X` directly via
+        `qualifyStateName`. CustomSwift is the escape hatch where
+        users write raw Swift, so we still scan known shapes —
+        `name = `, `\(name)`, subscripts, comparisons — and patch
+        them. Anything outside those shapes is left untouched. **/
+    static function qualifyStateRefsInRawSwift(code:String):String {
+        if (code == null || code == "") return code;
+        if (!needsRuntimeBridge) return code;
+        var stateList = [for (n in currentStateNames.keys()) n];
+        if (stateList.length == 0) return code;
+        return rewriteStateRefsToAppState(code, [
+            for (n in stateList) {name: n, swiftType: "", defaultValue: ""}
+        ]);
+    }
+
+    /** Symbolic form of a binary operator for embedding in Swift
+        string interpolation expressions. Limited to the handful of
+        ops users actually reach for inside a `Text.bind(...)`. **/
+    static function binopSym(op:haxe.macro.Expr.Binop):String {
+        return switch (op) {
+            case OpAdd: "+";
+            case OpSub: "-";
+            case OpMult: "*";
+            case OpDiv: "/";
+            case OpMod: "%";
+            case OpEq: "==";
+            case OpNotEq: "!=";
+            case OpLt: "<";
+            case OpLte: "<=";
+            case OpGt: ">";
+            case OpGte: ">=";
+            case OpBoolAnd: "&&";
+            case OpBoolOr: "||";
+            default: "?";
+        };
     }
 
     static function templateToSwift(template:String):String {

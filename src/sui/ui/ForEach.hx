@@ -52,6 +52,26 @@ class ForEach extends View {
         @param itemNameOrBuilder Either the iteration variable name (legacy form, takes a third argument) OR a `T -> View` closure that builds each row given the item value
         @param itemView View to render — only required for the legacy 3-arg form
     **/
+    /**
+        Index-iteration form — the body lambda receives the iteration
+        index (`Int`) rather than the array element. Useful when a row
+        needs subscripted access into several parallel state arrays.
+
+        ```haxe
+        ForEach.byIndex(calendarNames, i ->
+            new HStack([
+                new Text(calendarNames.value[i]),
+                new ColorChip(calendarColors.value[i]),
+            ])
+        )
+        ```
+    **/
+    public static function byIndex(arrayName:Dynamic, builder:Int -> View):ForEach {
+        var fe = new ForEach(arrayName, "_byIndex");
+        fe.builder = builder;
+        return fe;
+    }
+
     public function new(arrayName:Dynamic, itemNameOrBuilder:Dynamic, ?itemView:View) {
         super();
         this.viewType = "ForEach";

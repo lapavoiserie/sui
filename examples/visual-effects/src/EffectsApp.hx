@@ -31,7 +31,7 @@ class EffectsApp extends App {
                 .padding(),
 
             // Text with state-bound visual effects
-            Text.withState("{message}")
+            Text.bind(message.value)
                 .font(FontStyle.Title)
                 .foregroundColor(ColorValue.Blue)
                 .scaleEffect(scale)

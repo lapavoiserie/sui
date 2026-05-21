@@ -32,7 +32,7 @@ class SplitApp extends App {
             ]).navigationTitle("Items"),
             // Detail
             new VStack(null, 20, [
-                Text.withState("Selected: {selectedItem}")
+                Text.bind('Selected: ${selectedItem.value}')
                     .font(FontStyle.LargeTitle),
                 new Text("Tap an item in the sidebar")
                     .foregroundColor(ColorValue.Secondary)

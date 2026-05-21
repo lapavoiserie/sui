@@ -178,7 +178,7 @@ class BridgeApp extends App {
         return new VStack(null, 20, [
             new Text("Haxe <-> Swift Bridge")
                 .font(FontStyle.LargeTitle),
-            Text.withState("{result}")
+            Text.bind(result.value)
                 .font(FontStyle.Title2)
                 .padding(),
 

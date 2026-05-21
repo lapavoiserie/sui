@@ -75,7 +75,7 @@ class GridApp extends App {
                     ]).padding()
                 ),
 
-                Text.withState("Selected: {selectedItem}")
+                Text.bind('Selected: ${selectedItem.value}')
                     .font(FontStyle.Headline)
                     .foregroundColor(ColorValue.Secondary)
                     .padding()

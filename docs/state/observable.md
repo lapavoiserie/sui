@@ -43,9 +43,9 @@ class TodoApp extends App {
 
     override function body():View {
         return new List([
-            new ForEach("todos", "i",
+            ForEach.byIndex(todos, i ->
                 new HStack([
-                    Text.withState("{todos[i].title}"),
+                    Text.bind(todos.value[i].title),
                     new Spacer(),
                     new Button("Done", null,
                         StateAction.CustomSwift("todos[i].completed.toggle()"))
@@ -63,5 +63,5 @@ Mutating `todos[i].completed` directly in Swift triggers a re-render because the
 - Extend `Observable` for any data model used in `@:state` arrays
 - Public properties become Swift struct fields automatically
 - Reactivity comes from `@State` on the array &mdash; no manual change tracking required
-- Use `Text.withState("{array[index].property}")` to display properties
+- Use `Text.bind(array.value[index].property)` to display properties (inside `ForEach.byIndex`, where `index` is the lambda parameter)
 - Mutate with `StateAction.CustomSwift()` for direct Swift property access

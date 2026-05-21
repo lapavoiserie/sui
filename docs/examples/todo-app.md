@@ -46,9 +46,9 @@ class TodoApp extends App {
                             'if !newItemText.isEmpty { todos.append(TodoItem(title: newItemText, completed: false)); newItemText = "" }'))
                 ]).padding(),
                 new List([
-                    new ForEach("todos", "i",
+                    ForEach.byIndex(todos, i ->
                         new HStack([
-                            Text.withState("{todos[i].title}")
+                            Text.bind(todos.value[i].title)
                                 .font(FontStyle.Body),
                             new Spacer(),
                             new Button("Done", null,
@@ -99,15 +99,15 @@ The TextField binds to `newItemText` state. The button uses `CustomSwift` to app
 ### ForEach Iteration
 
 ```haxe
-new ForEach("todos", "i",
+ForEach.byIndex(todos, i ->
     new HStack([
-        Text.withState("{todos[i].title}"),
+        Text.bind(todos.value[i].title),
         // ...
     ])
 )
 ```
 
-`ForEach` iterates the `todos` array. The index variable `i` is used in `Text.withState` to access each item's properties.
+`ForEach.byIndex` iterates the `todos` array by index. The lambda receives `i:Int`, so `todos.value[i].title` typechecks in Haxe and the macro rewrites it to `appState.todos[i].title` in the emitted Swift.
 
 ### Inline State Mutation
 

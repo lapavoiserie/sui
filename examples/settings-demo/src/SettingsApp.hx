@@ -30,7 +30,7 @@ class SettingsApp extends App {
                         .padding(),
 
                     // Display the entered name
-                    Text.withState("Hello, {username}!")
+                    Text.bind('Hello, ${username.value}!')
                         .font(FontStyle.Title),
 
                     // Toggle
@@ -38,7 +38,7 @@ class SettingsApp extends App {
 
                     // Slider
                     new Slider("brightness", 0, 1),
-                    Text.withState("Brightness: {brightness}")
+                    Text.bind('Brightness: ${brightness.value}')
                         .font(FontStyle.Caption),
 
                     new Spacer()

@@ -40,7 +40,7 @@ an array of basic types, or a class extending Observable.
 | `.value` | Read the current value (Haxe side) |
 | `.value = newValue` | Update the value and notify SwiftUI |
 
-The variable name is used directly in fluent `StateAction` calls, `Text.withState`, and binding references.
+The variable name is used directly in fluent `StateAction` calls, `Text.bind` expressions, and binding references.
 
 ## StateAction
 
@@ -97,16 +97,22 @@ count.inc(1).animated(AnimationCurve.EaseInOut)
 
 **Animation curves:** Use the `AnimationCurve` enum: `AnimationCurve.Default`, `AnimationCurve.EaseIn`, `AnimationCurve.EaseOut`, `AnimationCurve.EaseInOut`, `AnimationCurve.Spring`, `AnimationCurve.Linear`, `AnimationCurve.Bouncy`
 
-## Text.withState
+## Text.bind
 
-Displays state values in text. Use `{variableName}` for interpolation:
+Displays state values in text. Pass any String-typed Haxe expression — sui's macro walks the typed AST and emits Swift string interpolation directly:
 
 ```haxe
-Text.withState("Count: {count}")        // → Text("Count: \(count)")
-Text.withState("{name}")                 // → Text("\(name)")
-Text.withState("{rating} / 5")          // → Text("\(rating) / 5")
-Text.withState("{todos[i].title}")      // → Text("\(todos[i].title)")
+Text.bind('Count: ${count.value}')           // → Text("Count: \(count)")
+Text.bind(name.value)                         // → Text("\(name)")
+Text.bind('${rating} / 5')                    // → Text("\(rating) / 5")  (component @:swiftBinding field — no .value)
+Text.bind(todos.value[i].title)               // → Text("\(todos[i].title)")  (inside ForEach.byIndex)
 ```
+
+Use single-quoted Haxe strings for `${...}` interpolation. For `State<T>` references, read `.value`; for component `@:swiftBinding` fields, reference the field bare.
+
+### Legacy: Text.withState
+
+`Text.withState("{name}")` is kept for backward compatibility. New code should prefer `Text.bind`, which lets the Haxe compiler typecheck the expression before sui rewrites it to Swift.
 
 ## Putting It Together
 
@@ -122,7 +128,7 @@ class CounterApp extends App {
 
     override function body():View {
         return new VStack([
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title)
                 .padding(),
             new HStack(null, 20, [

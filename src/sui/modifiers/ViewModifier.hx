@@ -81,6 +81,12 @@ enum ViewModifier {
 
     // Gestures
     OnTapGesture(action:sui.state.StateAction);
+    /** Drag gesture, dispatched to a @:expose bridge fn with the
+        normalised start + end coordinates (relative to the
+        enclosing GeometryReader). Args: `(mode, sx, sy, ex, ey)`
+        all-Float [0..1] except `mode` which is a String discriminator
+        the bridge uses to route the gesture (e.g. "week" vs "day"). **/
+    OnDragGesture(fnName:String, mode:String);
 
     // Appearance
     Tint(color:ColorValue);

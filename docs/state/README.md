@@ -10,7 +10,7 @@ sui provides a reactive state system that maps to SwiftUI's state management.
 | `StateAction` | `count.inc(1)` | `count += 1` | Declarative state mutations (fluent API) |
 | `Binding` | `Binding.fromState(state)` | `@Binding var value` | Two-way reference to parent state |
 | `Observable` | `extends Observable` | `@Observable class` | Shared data models |
-| `Text.withState` | `Text.withState("{count}")` | `Text("\(count)")` | Display state values |
+| `Text.bind` | `Text.bind(count.value)` | `Text("\(count)")` | Display state values |
 
 ## How It Works
 
@@ -33,7 +33,7 @@ class CounterApp extends App {
 
     override function body():View {
         return new VStack([
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title),
             new Button("+1", null, count.inc(1)),
             new Button("Reset", () -> count.value = 0)
@@ -59,6 +59,6 @@ public function new() {
 
 ## Pages
 
-- **[State & Actions](state/state-and-actions.md)** &mdash; `State<T>`, `StateAction`, `Text.withState`
+- **[State & Actions](state/state-and-actions.md)** &mdash; `State<T>`, `StateAction`, `Text.bind`
 - **[Binding](state/binding.md)** &mdash; `Binding`, `@:swiftBinding`, component binding
 - **[Observable](state/observable.md)** &mdash; `Observable` classes and shared data models

@@ -250,7 +250,7 @@ class MyApp extends sui.App {
     override function body():View {
         return new VStack([
             new Text("Main window"),
-            Text.withState("Dark mode: {darkMode}"),
+            Text.bind('Dark mode: ${darkMode.value}'),
         ]);
     }
 

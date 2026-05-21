@@ -1,6 +1,6 @@
 # Counter
 
-A counter app demonstrating state management with `@:state`, the fluent `StateAction` API, and `Text.withState`.
+A counter app demonstrating state management with `@:state`, the fluent `StateAction` API, and `Text.bind`.
 
 ## Full Source
 
@@ -24,7 +24,7 @@ class CounterApp extends App {
 
     override function body():View {
         return new VStack([
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title)
                 .padding(),
             new HStack(null, 20, [
@@ -51,10 +51,10 @@ class CounterApp extends App {
 ### Displaying State
 
 ```haxe
-Text.withState("Count: {count}")
+Text.bind('Count: ${count.value}')
 ```
 
-`Text.withState` interpolates state variables. `{count}` becomes `\(count)` in Swift, so the text updates automatically when the state changes.
+`Text.bind` accepts any String-typed Haxe expression. sui walks the typed AST and emits `Text("Count: \(count)")` in Swift, so the text updates automatically when the state changes. Use single-quoted Haxe strings so `${...}` interpolation is in effect.
 
 ### Mutating State
 

@@ -40,7 +40,7 @@ class FetchApp extends App {
         return new NavigationStack(new VStack(null, 16, [
             new Text("Async Haxe Bridge").font(FontStyle.LargeTitle),
             new ScrollView([
-                Text.withState("{result}")
+                Text.bind(result.value)
                     .font(FontStyle.Body)
                     .padding()
             ]),

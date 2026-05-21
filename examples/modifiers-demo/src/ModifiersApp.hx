@@ -32,13 +32,13 @@ class ModifiersApp extends App {
                 new Section("Profile", [
                     new TextField("Username", "username")
                         .textFieldStyle(TextFieldStyleValue.RoundedBorder),
-                    Text.withState("Hello, {username}!")
+                    Text.bind('Hello, ${username.value}!')
                         .font(FontStyle.Headline)
                 ]),
                 new Section("Preferences", [
                     new Toggle("Notifications", "notifications"),
                     new Slider("volume", 0, 1),
-                    Text.withState("Volume: {volume}")
+                    Text.bind('Volume: ${volume.value}')
                         .font(FontStyle.Caption)
                 ]),
                 new Section("Actions", [

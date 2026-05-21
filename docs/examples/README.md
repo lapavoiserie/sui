@@ -7,7 +7,7 @@ sui includes 18 example apps demonstrating different features. Each is a complet
 | Example | Key Features | Complexity |
 |---------|-------------|------------|
 | [hello-world](examples/hello-world.md) | Text, VStack, Spacer, modifiers | Beginner |
-| [counter](examples/counter.md) | @:state, Button, StateAction, Text.withState | Beginner |
+| [counter](examples/counter.md) | @:state, Button, StateAction, Text.bind | Beginner |
 | [todo-app](examples/todo-app.md) | Observable, ForEach, Form, CustomSwift | Intermediate |
 | navigation | NavigationStack, NavigationLink | Beginner |
 | modifiers-demo | TextField, Toggle, Slider, Sheet, Alert | Intermediate |

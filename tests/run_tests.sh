@@ -102,6 +102,48 @@ else
     FAIL=$((FAIL + 1))
 fi
 
+# Test 9: Typed-expression emission (Text.bind, ForEach.byIndex,
+# qualifyStateName, ternary temp-var reconstruction). Bridge mode
+# forces appState. prefixing — verifies the rewriter-free codepath.
+echo ""
+echo "--- Test 9: Typed-expression bridge mode ---"
+cd typed-expressions
+rm -rf build
+haxe build.hxml 2>&1 | tail -1
+if [ ! -f build/swift/ContentView.swift ]; then
+    echo "FAIL: typed-expressions Swift files not generated"
+    FAIL=$((FAIL + 1))
+elif diff -u expected/ContentView.swift build/swift/ContentView.swift > /dev/null 2>&1; then
+    echo "PASS: typed-expressions ContentView.swift matches expected"
+    PASS=$((PASS + 1))
+else
+    echo "FAIL: typed-expressions ContentView.swift differs from expected"
+    diff -u expected/ContentView.swift build/swift/ContentView.swift || true
+    FAIL=$((FAIL + 1))
+fi
+cd ..
+
+# Test 10: typed-expressions output has no rewriter placeholder /
+# no double-prefix / no stringly state names — keystone properties
+# that prove `qualifyStateName` did its job at every emit site.
+echo ""
+echo "--- Test 10: No rewriter artefacts in typed-expressions ---"
+LEAKS=0
+if grep -q "__APPSTATE__" typed-expressions/build/swift/ContentView.swift; then
+    echo "FAIL: __APPSTATE__ placeholder leaked into ContentView.swift"
+    LEAKS=$((LEAKS + 1))
+fi
+if grep -q "appState\.appState" typed-expressions/build/swift/ContentView.swift; then
+    echo "FAIL: appState.appState double-prefix in ContentView.swift"
+    LEAKS=$((LEAKS + 1))
+fi
+if [ $LEAKS -eq 0 ]; then
+    echo "PASS: no rewriter artefacts"
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + LEAKS))
+fi
+
 # Summary
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

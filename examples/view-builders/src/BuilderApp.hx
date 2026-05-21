@@ -38,7 +38,7 @@ class BuilderApp extends App {
             Shared.infoRow("Count", "see below"),
 
             // State display
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title),
 
             // Instance method inlined

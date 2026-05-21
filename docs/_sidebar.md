@@ -8,6 +8,7 @@
   - [Lists & Iteration](views/lists-and-iteration.md)
   - [Navigation](views/navigation.md)
 - [Modifiers](modifiers.md)
+- [Typed Expressions](expressions.md)
 - **State**
   - [Overview](state/README.md)
   - [State & Actions](state/state-and-actions.md)

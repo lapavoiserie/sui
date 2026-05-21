@@ -26,7 +26,25 @@ enum StateAction {
     /** Append to an array state variable. **/
     Append(state:Dynamic, value:Dynamic);
 
-    /** Custom Swift expression (escape hatch). **/
+    /** Custom Swift expression (escape hatch).
+
+        **Discouraged** for new code — every other variant of this
+        enum (`Increment`, `SetValue`, `Toggle`, `Append`, `RunExpr`,
+        `BridgeCall*`, `Animated`, `IntervalLoop`) is type-checked
+        at the Haxe layer and emits Swift directly via
+        `qualifyStateName`. `CustomSwift` is the only path that
+        still relies on the legacy `rewriteStateRefsToAppState`
+        text rewriter to prefix `appState.` on bare state names in
+        the raw Swift string.
+
+        Prefer `RunExpr(...)` for arbitrary side effects, or one of
+        the typed mutation variants for simple cases.
+
+        Also used internally as the transport for `RunExpr` sentinel
+        strings (`StateMacro.synthesiseRunExpr` encodes the bridge
+        target as a `CustomSwift(sentinel)` payload that the Swift
+        codegen recognises). No `@:deprecated` annotation here so
+        that internal use compiles warning-free. **/
     CustomSwift(code:String);
 
     /**
