@@ -1,41 +1,40 @@
 # Animations
 
-sui provides three animation primitives that map to SwiftUI's animation system.
+sui provides two animation primitives that map to SwiftUI's animation system.
 
-## Animated State Mutations
+## Declaring Which State Animates a View
 
-Chain `.animated()` on any fluent `StateAction` to animate the change. Use the `AnimationCurve` enum to specify the curve:
+You don't animate an action &mdash; you declare, on the view, which `@:state` variable
+drives its animation. Once that's set, *any* mutation of that state animates with the
+chosen curve, including mutations that come back from Haxe through the bridge. Use the
+`.animation(curve, state)` modifier with the `AnimationCurve` enum:
 
 ```haxe
-// Instant (no animation)
-new Button("Toggle", null, expanded.tog())
+@:state var scale:Float = 1.0;
 
-// Animated with spring curve
-new Button("Toggle", null,
-    expanded.tog().animated(AnimationCurve.Spring))
+new Text("Hello")
+    .scaleEffect(scale)
+    .animation(AnimationCurve.Spring, scale)
+
+// The action stays a plain closure — no animation wrapper:
+new Button("Bounce", () -> scale.value = scale.value == 1.0 ? 1.3 : 1.0)
 ```
 
-This generates:
+When the closure sets `scale.value`, SwiftUI sees the change and animates the
+`scaleEffect` with a spring. This generates:
+
 ```swift
-// Instant
-Button("Toggle") { expanded.toggle() }
+Text("Hello")
+    .scaleEffect(scale)
+    .animation(.spring, value: appState.scale)
 
-// Animated
-Button("Toggle") { withAnimation(.spring) { expanded.toggle() } }
+Button("Bounce") { /* dispatched closure mutates appState.scale */ }
 ```
 
-Any fluent `StateAction` can be animated:
-
-```haxe
-// Scale with bounce
-scale.setTo(1.5).animated(AnimationCurve.Bouncy)
-
-// Increment with ease
-count.inc(1).animated(AnimationCurve.EaseInOut)
-
-// Multiple mutations
-StateAction.CustomSwift("scale = 1; rotation = 0").animated(AnimationCurve.Spring)
-```
+> [!NOTE]
+> The old `.animated(curve)` wrapper on actions has been removed. Animation is now a
+> property of the *view*, not of the mutation. Move the curve from the action to an
+> `.animation(curve, state)` modifier on the view whose appearance should animate.
 
 ### Animation Curves
 
@@ -51,9 +50,9 @@ Use the `AnimationCurve` enum for type-safe curve selection:
 | `AnimationCurve.Linear` | Constant speed |
 | `AnimationCurve.Bouncy` | Playful bounce |
 
-## Animation Modifier
+## The Animation Modifier
 
-The `.animation()` modifier tells SwiftUI to animate a view when a `State<Float>` reference changes. Use the `AnimationCurve` enum for the curve:
+The `.animation()` modifier tells SwiftUI to animate a view when a `State<Float>` (or other `@:state`) reference changes. Use the `AnimationCurve` enum for the curve:
 
 ```haxe
 @:state var scale:Float = 1.0;
@@ -63,7 +62,8 @@ new Text("Hello")
     .animation(AnimationCurve.Spring, scale)
 ```
 
-When `scale` changes, the scale effect animates with a spring curve. Without the second parameter, all state changes trigger animation:
+When `scale` changes &mdash; whether from a button closure or a value written back from
+Haxe &mdash; the scale effect animates with a spring curve. Without the second parameter, all state changes trigger animation:
 
 ```haxe
 new Text("Hello")
@@ -92,21 +92,18 @@ new GroupBox("Card", [
 .animation(AnimationCurve.EaseOut, cardBlur)
 ```
 
-Then mutate the state with `.animated()` to trigger:
+Then mutate the state from a plain closure &mdash; the `.animation` modifiers above make the change animate:
 
 ```haxe
-new Button("Bounce", null,
-    StateAction.CustomSwift("cardScale = cardScale == 1.0 ? 1.3 : 1.0")
-        .animated(AnimationCurve.Spring))
+new Button("Bounce", () -> cardScale.value = cardScale.value == 1.0 ? 1.3 : 1.0)
 ```
 
 ## Transitions
 
-The `.transition()` modifier defines how a view enters and exits when used inside a `ConditionalView`:
+The `.transition()` modifier defines how a view enters and exits when used inside a `ConditionalView`. Put an `.animation(curve, showDetail)` on the enclosing container so the enter/exit is animated:
 
 ```haxe
-new Button("Show Detail", null,
-    showDetail.tog().animated(AnimationCurve.Spring))
+new Button("Show Detail", () -> showDetail.value = !showDetail.value)
 
 new ConditionalView(showDetail,
     // Slides in from the edge
@@ -136,27 +133,28 @@ new ConditionalView(showDetail,
 
 ```mermaid
 flowchart TD
-    A["Button tap"] --> B[".animated(AnimationCurve.Spring)"]
-    B --> C["withAnimation(.spring)"]
-    C --> D["State mutation"]
-    D --> E["SwiftUI detects change"]
-    E --> F[".animation() modifier"]
-    F --> G["Smooth interpolation"]
-    E --> H[".transition() modifier"]
-    H --> I["Enter/exit animation"]
+    A["Button tap"] --> B["Action closure mutates state"]
+    B --> C["SwiftUI detects change"]
+    C --> D[".animation(curve, state) modifier"]
+    D --> E["Smooth interpolation"]
+    C --> F[".transition() modifier"]
+    F --> G["Enter/exit animation"]
 ```
 
 ### Important
 
-Transitions only animate when the state change is itself animated. Chain `.animated()` on the toggle:
+Transitions only animate when the state that controls the `ConditionalView` is itself
+bound to an `.animation` modifier on the enclosing container:
 
 ```haxe
-// This animates the transition:
-visible.tog().animated(AnimationCurve.Spring)
+// The container declares the animation; the closure just flips the bool:
+new VStack([ /* ConditionalView with .transition()-tagged children */ ])
+    .animation(AnimationCurve.Spring, visible);
 
-// This does NOT — the view appears/disappears instantly:
-visible.tog()
+new Button("Toggle", () -> visible.value = !visible.value)
 ```
+
+Without an `.animation(curve, visible)` on the container, the view appears and disappears instantly.
 
 ## Full Example
 
@@ -176,7 +174,7 @@ class AnimApp extends App {
 
     override function body():View {
         return new VStack(null, 30, [
-            // Card with animated transforms
+            // Card whose transforms animate — the curves live here, on the view
             new Text("Hello!")
                 .font(FontStyle.Title)
                 .scaleEffect(scale)
@@ -184,18 +182,15 @@ class AnimApp extends App {
                 .animation(AnimationCurve.Spring, scale)
                 .animation(AnimationCurve.Spring, rotation),
 
-            // Animated buttons
+            // Buttons are plain closures; the mutations animate because of
+            // the .animation modifiers above
             new HStack(null, 15, [
-                new Button("Bounce", null,
-                    StateAction.CustomSwift("scale = scale == 1.0 ? 1.3 : 1.0")
-                        .animated(AnimationCurve.Spring)),
-                new Button("Spin", null,
-                    rotation.inc(90).animated(AnimationCurve.EaseInOut))
+                new Button("Bounce", () -> scale.value = scale.value == 1.0 ? 1.3 : 1.0),
+                new Button("Spin", () -> rotation.value += 90)
             ]),
 
-            // Toggle with animated transition
-            new Button("Toggle Detail", null,
-                showDetail.tog().animated(AnimationCurve.Spring)),
+            // Toggle whose transition is animated by the container's .animation
+            new Button("Toggle Detail", () -> showDetail.value = !showDetail.value),
 
             new ConditionalView(showDetail,
                 new Text("Detail!")
@@ -205,7 +200,8 @@ class AnimApp extends App {
                     .cornerRadius(12)
                     .transition("slide")
             )
-        ]).padding();
+        ]).padding()
+            .animation(AnimationCurve.Spring, showDetail);
     }
 }
 ```

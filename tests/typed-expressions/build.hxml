@@ -1,0 +1,7 @@
+-cp .
+-cp ../../src
+-lib hxcpp
+--macro sui.macros.SwiftGenerator.register()
+-D swift-output=build/swift
+-main TestTypedExpressions
+-cpp build/cpp

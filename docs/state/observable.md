@@ -43,12 +43,14 @@ class TodoApp extends App {
 
     override function body():View {
         return new List([
-            new ForEach("todos", "i",
+            ForEach.byIndex(todos, i ->
                 new HStack([
-                    Text.withState("{todos[i].title}"),
+                    Text.bind(todos.value[i].title),
                     new Spacer(),
-                    new Button("Done", null,
-                        StateAction.CustomSwift("todos[i].completed.toggle()"))
+                    new Button("Done", () -> {
+                        todos.value[i].completed = !todos.value[i].completed;
+                        todos.value = todos.value; // re-assign to notify SwiftUI
+                    })
                 ])
             )
         ]);
@@ -56,12 +58,14 @@ class TodoApp extends App {
 }
 ```
 
-Mutating `todos[i].completed` directly in Swift triggers a re-render because the array is `@State`. No manual notification needed.
+The row closure references the iteration index `i`; the macro lifts it into an indexed
+builder so Swift dispatches it with the live loop index. Re-assigning `todos.value`
+notifies SwiftUI to re-render.
 
 ## Key Points
 
 - Extend `Observable` for any data model used in `@:state` arrays
 - Public properties become Swift struct fields automatically
 - Reactivity comes from `@State` on the array &mdash; no manual change tracking required
-- Use `Text.withState("{array[index].property}")` to display properties
-- Mutate with `StateAction.CustomSwift()` for direct Swift property access
+- Use `Text.bind(array.value[index].property)` to display properties (inside `ForEach.byIndex`, where `index` is the lambda parameter)
+- Mutate from an action closure (`item.prop = ...; array.value = array.value;`) to re-render

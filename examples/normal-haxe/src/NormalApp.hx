@@ -35,10 +35,10 @@ class NormalApp extends App {
 
     override function body():View {
         return new VStack(null, 20, [
-            Text.withState("{status}")
+            Text.bind(status.value)
                 .font(FontStyle.Caption)
                 .foregroundColor(ColorValue.Secondary),
-            Text.withState("{data}")
+            Text.bind(data.value)
                 .font(FontStyle.Title)
                 .padding(),
             new Button("Fetch example.com", onFetch),

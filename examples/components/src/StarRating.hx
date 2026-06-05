@@ -20,7 +20,7 @@ class StarRating extends ViewComponent {
             new Text(label)
                 .font(FontStyle.Headline),
             new Spacer(),
-            Text.withState("{rating} / 5")
+            Text.bind('${rating} / 5')
                 .foregroundColor(ColorValue.Orange)
         ]);
     }

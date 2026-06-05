@@ -4,26 +4,27 @@ sui uses Haxe metadata annotations to control Swift code generation.
 
 ## @:expose
 
-Exposes a static function to Swift as a named entry point (`HaxeBridgeC.functionName()`). This is an advanced escape hatch &mdash; most bridging is **automatic** via closures, `@:state` updates, and lifecycle handlers.
+Exposes a static function to Swift as a named entry point (`HaxeBridgeC.functionName()`), so **hand-written Swift** can call it by name. This is an advanced escape hatch &mdash; most bridging is **automatic** via action closures, `@:state` updates, and lifecycle handlers.
 
 ```haxe
 @:expose
 public static function greet(name:String):String {
     return 'Hello, $name!';
 }
-
-// Call by name from Swift expression:
-new Button("Greet", null,
-    StateAction.CustomSwift('result = HaxeBridgeC.greet("World")'))
 ```
 
-**Closure equivalent (preferred for most cases):**
+```swift
+// In your own Swift code:
+let msg = HaxeBridgeC.greet("World")
+```
+
+**Calling it from an action (no @:expose needed):**
 ```haxe
-function greet(name:String):String {
+public static function greet(name:String):String {
     return 'Hello, $name!';
 }
 
-// Instance method — bridged automatically:
+// Ordinary Haxe call inside the closure — bridged automatically:
 new Button("Greet", () -> result.value = greet("World"))
 ```
 

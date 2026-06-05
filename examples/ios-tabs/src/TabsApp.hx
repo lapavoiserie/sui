@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class TabsApp extends App {
     static function main() {}
@@ -40,11 +39,11 @@ class TabsApp extends App {
                 systemImage: "number.circle",
                 content: new NavigationStack(
                     new VStack(null, 20, [
-                        Text.withState("Tasks: {taskCount}")
+                        Text.bind('Tasks: ${taskCount.value}')
                             .font(FontStyle.LargeTitle),
                         new HStack(null, 16, [
-                            new Button("-", null, StateAction.Decrement("taskCount", 1)),
-                            new Button("+", null, StateAction.Increment("taskCount", 1))
+                            new Button("-", () -> taskCount.value--),
+                            new Button("+", () -> taskCount.value++)
                         ])
                     ]).navigationTitle("Counter")
                 )
@@ -57,7 +56,7 @@ class TabsApp extends App {
                         new TextField("Write something...", "notesText")
                             .textFieldStyle(TextFieldStyleValue.RoundedBorder)
                             .padding(),
-                        Text.withState("{notesText}")
+                        Text.bind(notesText.value)
                             .font(FontStyle.Body)
                             .padding()
                     ]).navigationTitle("Notes")

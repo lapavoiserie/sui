@@ -1,64 +1,38 @@
 package sui.state;
 
 /**
-    Describes a state mutation declaratively so the Swift generator
-    can emit proper SwiftUI code instead of trying to decompile closures.
+    A state action is a plain Haxe closure. Write whatever you need —
+    multi-statement bodies, captures, partial application, calls into
+    your own code — and the framework runs it through the bridge when
+    the user interacts:
 
-    State references are type-checked — pass the `State<T>` field directly:
     ```haxe
-    StateAction.Increment(rotation, 90)    // not "rotation"
-    StateAction.Toggle(showDetail)          // not "showDetail"
+    new Button("+", () -> count.value++)
+    new Button("Reset", () -> count.value = 0)
+    new Button("Login", MyApp.startLogin)
+    view.onTapGesture(() -> isDark.value = !isDark.value)
+    view.onTapGesture(() -> { flag.value = true; doWork(); })
     ```
+
+    Typed setters (`count.value = …`) go through the `State<T>`
+    property setter, which notifies the SwiftUI side — no dispatch
+    enum, no `Reflect`.
+
+    Historical note: this used to be an enum with declarative
+    variants (`Increment`, `SetValue`, `Toggle`, `BridgeCall`,
+    `RunExpr`, …) that the Swift generator pattern-matched into
+    Swift fragments. All of that is now expressed directly in Haxe:
+
+    - `count.inc(1)`            → `() -> count.value++`
+    - `x.setTo(v)`              → `() -> x.value = v`
+    - `b.tog()`                 → `() -> b.value = !b.value`
+    - `RunExpr(expr)`           → `() -> expr`
+    - `BridgeCall(s, "fn", a)`  → `() -> s.value = fn(a)`
+    - `BridgeCallLoading(s, l, "fn", a)`
+                                → `() -> { s.value = l; s.value = fn(a); }`
+    - `BridgeCallVoid("fn", a)` → `() -> fn(a)`
+    - `Animated(action, curve)` → closure + `.animation(curve, state)`
+                                  on the view (SwiftUI-idiomatic)
+    - `IntervalLoop(s, action)` → `.every(s, () -> …)` on the view
 **/
-enum StateAction {
-    /** Increment a state variable by a value. **/
-    Increment(state:Dynamic, amount:Int);
-
-    /** Decrement a state variable by a value. **/
-    Decrement(state:Dynamic, amount:Int);
-
-    /** Set a state variable to a specific value. **/
-    SetValue(state:Dynamic, value:Dynamic);
-
-    /** Toggle a boolean state variable. **/
-    Toggle(state:Dynamic);
-
-    /** Append to an array state variable. **/
-    Append(state:Dynamic, value:Dynamic);
-
-    /** Custom Swift expression (escape hatch). **/
-    CustomSwift(code:String);
-
-    /**
-        Call a @:expose function asynchronously and assign the result to a state variable.
-
-        ```haxe
-        BridgeCall(result, "greet", "World")
-        BridgeCall(result, "doLogin", ["url", "email", "pass"])
-        ```
-    **/
-    BridgeCall(state:Dynamic, functionName:String, args:Dynamic);
-
-    /**
-        Like BridgeCall but sets a loading value immediately before the async call.
-
-        ```haxe
-        BridgeCallLoading(result, "Loading...", "fetchData", "https://url")
-        ```
-    **/
-    BridgeCallLoading(state:Dynamic, loadingValue:String, functionName:String, args:Dynamic);
-
-    /**
-        Wrap any StateAction in a SwiftUI `withAnimation` block.
-
-        ```haxe
-        StateAction.Animated(rotation.inc(90), AnimationCurve.Spring)
-        ```
-
-        Generates:
-        ```swift
-        withAnimation(.spring) { rotation += 90 }
-        ```
-    **/
-    Animated(action:StateAction, curve:AnimationCurve);
-}
+typedef StateAction = () -> Void;

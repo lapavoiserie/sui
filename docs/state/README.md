@@ -7,16 +7,16 @@ sui provides a reactive state system that maps to SwiftUI's state management.
 | Concept | Haxe | SwiftUI | Purpose |
 |---------|------|---------|---------|
 | `@:state` | `@:state var count:Int = 0` | `@State var count = 0` | View-local mutable state |
-| `StateAction` | `count.inc(1)` | `count += 1` | Declarative state mutations (fluent API) |
+| Action | `() -> count.value++` | `count += 1` | A `() -> Void` closure that mutates state |
 | `Binding` | `Binding.fromState(state)` | `@Binding var value` | Two-way reference to parent state |
 | `Observable` | `extends Observable` | `@Observable class` | Shared data models |
-| `Text.withState` | `Text.withState("{count}")` | `Text("\(count)")` | Display state values |
+| `Text.bind` | `Text.bind(count.value)` | `Text("\(count)")` | Display state values |
 
 ## How It Works
 
 1. Declare `@:state` fields in your App class
 2. The framework generates matching `@State var` properties in Swift
-3. Mutations happen through the fluent `StateAction` API (in Swift) or `state.value = x` (in Haxe via bridge)
+3. Mutations happen in action closures via `state.value = x` (run in Haxe, dispatched through the bridge)
 4. SwiftUI automatically re-renders when state changes
 
 ## Quick Example
@@ -33,9 +33,9 @@ class CounterApp extends App {
 
     override function body():View {
         return new VStack([
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title),
-            new Button("+1", null, count.inc(1)),
+            new Button("+1", () -> count.value++),
             new Button("Reset", () -> count.value = 0)
         ]);
     }
@@ -59,6 +59,6 @@ public function new() {
 
 ## Pages
 
-- **[State & Actions](state/state-and-actions.md)** &mdash; `State<T>`, `StateAction`, `Text.withState`
+- **[State & Actions](state/state-and-actions.md)** &mdash; `State<T>`, action closures, `Text.bind`
 - **[Binding](state/binding.md)** &mdash; `Binding`, `@:swiftBinding`, component binding
 - **[Observable](state/observable.md)** &mdash; `Observable` classes and shared data models

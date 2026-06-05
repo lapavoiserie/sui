@@ -56,8 +56,21 @@ new Text("Styled")
 |----------|-----------|-------------|
 | `.foregroundColor(color)` | `color: ColorValue` | Text/icon color |
 | `.background(color)` | `color: ColorValue` | Background color |
+| `.backgroundMaterial(style)` | `style: MaterialStyle` | Translucent frosted-glass background (`.regularMaterial`, etc.) — adapts to dark/light, picks up content behind. |
 | `.opacity(value)` | `value: Float` | Opacity (0.0 to 1.0) |
 | `.tint(color)` | `color: ColorValue` | Accent/tint color |
+
+**MaterialStyle values:** `Regular`, `Thin`, `UltraThin`, `Thick`, `UltraThick`, `Bar`
+
+The `.backgroundMaterial` modifier gives you the translucent frosted-glass treatment that macOS uses on sidebars, popovers and toolbars. Each style is a different thickness — `Thin` lets more of the underlying content through, `Thick` is more opaque. `Bar` is the toolbar-specific variant.
+
+```haxe
+new VStack([...])
+    .backgroundMaterial(MaterialStyle.Regular)
+
+new VStack([...])
+    .backgroundMaterial(MaterialStyle.Bar)
+```
 
 **ColorValue values:** `Primary`, `Secondary`, `Accent`, `Red`, `Orange`, `Yellow`, `Green`, `Blue`, `Purple`, `Pink`, `White`, `Black`, `Gray`, `Clear`, `Custom(hex)`
 
@@ -139,27 +152,103 @@ new Image("photo").blur(blurAmount)
 | `.alert(title, binding, message)` | `title: String`, `binding: State<Bool>`, `message: String` | Alert dialog |
 | `.confirmationDialog(title, binding, content)` | `title: String`, `binding: State<Bool>`, `content: View` | Action sheet |
 | `.contextMenu(content)` | `content: View` | Long-press context menu |
+| `.inspector(binding, content)` | `binding: State<Bool>`, `content: View` | macOS trailing inspector pane — slides out from the right edge when the binding is `true`. Standard pattern for "details about the current selection". |
+| `.inspectorColumnWidth(min, ideal, max)` | `min: Float`, `ideal: Float`, `max: Float` | Width hint for the Inspector column. SwiftUI defaults to a narrow track that can shrink further on window resize — set explicit bounds here whenever the inspector content has its own intrinsic width (forms, multi-column lists, etc.). Apply on the same view that owns `.inspector(...)`. |
+
+```haxe
+@:state var showInspector:Bool = false;
+
+new VStack([...])
+    .inspector(showInspector, new VStack([
+        new Text("Details"),
+        Text.bind('Selected: ${selectedItem.value}'),
+    ]))
+    .inspectorColumnWidth(360, 480, 720)
+```
+
+The Inspector is the macOS-native alternative to a sheet for showing supplementary info — Pages, Numbers, Xcode, Final Cut all use this pattern. On iOS it falls back to a popover.
+
+`.inspectorColumnWidth(min, ideal, max)` is almost always wanted alongside `.inspector(...)` — without it the column lands at SwiftUI's default (~250pt) and can shrink further when the user resizes the window, which is too tight for anything other than a key/value detail list.
 
 ```haxe
 new VStack([...])
     .sheet(showSheet, new Text("Sheet content"))
     .alert("Warning", showAlert, "Are you sure?")
-    .contextMenu(new Button("Delete", null, StateAction.CustomSwift("deleteItem()")))
+    .contextMenu(new Button("Delete", () -> deleteItem()))
 ```
 
 ## Gestures
 
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
-| `.onTapGesture(action)` | `action: StateAction` | Runs a StateAction when tapped |
-| `.onLongPressGesture(action)` | `action: StateAction` | Runs a StateAction on long press |
+| `.onTapGesture(action)` | `action: () -> Void` | Runs a closure when tapped |
+| `.onLongPressGesture(action)` | `action: () -> Void` | Runs a closure on long press |
+| `.onKeyPress(key, action)` | `key: String`, `action: () -> Void` | Runs a closure when the named key is pressed while the view (or a descendant) has focus. |
 
 ```haxe
 new Text("Tap me")
-    .onTapGesture(selected.setTo("true"))
+    .onTapGesture(() -> selected.value = "true")
 
 new Text("Hold me")
-    .onLongPressGesture(showMenu.tog())
+    .onLongPressGesture(() -> showMenu.value = !showMenu.value)
+
+// Key press handlers — same key-naming as keyboardShortcut
+new VStack([...])
+    .onKeyPress("escape", dismissAction)
+    .onKeyPress("right", nextAction)
+```
+
+`onKeyPress` uses the same `key` strings as `.keyboardShortcut` — see the [Keyboard section below](#keyboard) for the full list. The action runs only when the view (or a descendant) has keyboard focus; the handler returns `.handled` so SwiftUI stops bubbling the event up the focus chain.
+
+## Keyboard
+
+| Modifier | Parameters | Description |
+|----------|-----------|-------------|
+| `.keyboardShortcut(key, modifiers)` | `key: String`, `modifiers: Array<String>` (optional) | Bind a keyboard shortcut to a view (typically a Button). Maps to SwiftUI's `.keyboardShortcut(_:, modifiers:)`. |
+
+**`key`** is either a single character (`"n"`, `"s"`, `","`) or one of the named special keys:
+
+| Name | Swift `KeyEquivalent` |
+|------|-----------------------|
+| `"return"` | `.return` |
+| `"escape"` | `.escape` |
+| `"delete"` / `"backspace"` | `.delete` |
+| `"tab"` | `.tab` |
+| `"space"` | `.space` |
+| `"left"` | `.leftArrow` |
+| `"right"` | `.rightArrow` |
+| `"up"` | `.upArrow` |
+| `"down"` | `.downArrow` |
+| `"home"` / `"end"` | `.home` / `.end` |
+| `"pageup"` / `"pagedown"` | `.pageUp` / `.pageDown` |
+
+**`modifiers`** is any combination (order doesn't matter) of:
+
+| Name | Swift `EventModifiers` |
+|------|------------------------|
+| `"command"` / `"cmd"` | `.command` |
+| `"option"` / `"alt"` | `.option` |
+| `"control"` / `"ctrl"` | `.control` |
+| `"shift"` | `.shift` |
+| `"capslock"` | `.capsLock` |
+
+Omitting `modifiers` (or passing an empty array) binds the bare key — useful for `"escape"`, arrow keys, etc.
+
+```haxe
+new Button("New Event", openNewEventAction)
+    .keyboardShortcut("n", ["command"]);          // ⌘N
+
+new Button("Today", showTodayAction)
+    .keyboardShortcut("t", ["command"]);          // ⌘T
+
+new Button("Close", dismissAction)
+    .keyboardShortcut("escape");                  // Esc
+
+new Button("Next", nextAction)
+    .keyboardShortcut("right", ["command"]);      // ⌘→
+
+new Button("Save As…", saveAsAction)
+    .keyboardShortcut("s", ["command", "shift"]); // ⇧⌘S
 ```
 
 ## Lifecycle
@@ -169,11 +258,14 @@ new Text("Hold me")
 | `.onAppear(action)` | `action: () -> Void` | Closure when view appears |
 | `.onDisappear(action)` | `action: () -> Void` | Closure when view disappears |
 | `.task(action)` | `action: () -> Void` | Async closure on appear |
-| `.onAppearAction(action)` | `action: StateAction` | StateAction on appear |
-| `.taskAction(action)` | `action: StateAction` | StateAction async on appear |
 | `.onSubmit(action)` | `action: () -> Void` | Closure on form/text submit |
 | `.refreshable(action)` | `action: () -> Void` | Pull-to-refresh closure |
+| `.every(seconds, action)` | `seconds: Float`, `action: () -> Void` | Run a closure on a repeating timer while the view is alive |
 | `.swipeActions(content)` | `content: View` | Swipe actions on list rows |
+
+All lifecycle modifiers now take plain `() -> Void` closures. To run Haxe business
+logic, call it inside the closure and assign the result &mdash; the closure runs off the
+main thread, so blocking work is fine:
 
 ```haxe
 new List([...])
@@ -181,13 +273,21 @@ new List([...])
     .listStyle("inset")
 
 new VStack([...])
-    .taskAction(StateAction.BridgeCallLoading(data, "Loading...", "fetchData", ""))
+    .task(() -> {
+        data.value = "Loading...";
+        data.value = fetchData("");
+    })
+
+// Repeating timer — replaces the old StateAction.IntervalLoop
+new Text("Clock")
+    .every(1.0, () -> tick.value++)
 ```
 
 ## Accessibility
 
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
+| `.help(text)` | `text: String` | Tooltip shown on hover on macOS, accessibility hint on iOS. |
 | `.accessibilityLabel(label)` | `label: String` | Screen reader label |
 
 ## Animation
@@ -214,23 +314,22 @@ new ConditionalView(showDetail,
 )
 ```
 
-### Animated State Mutations
+### Animating a Mutation
 
-Chain `.animated()` on any fluent `StateAction` to animate the change. Use the `AnimationCurve` enum for the curve:
-
-```haxe
-// Without animation — instant
-new Button("Toggle", null, expanded.tog())
-
-// With animation — smooth spring
-new Button("Toggle", null,
-    expanded.tog().animated(AnimationCurve.Spring))
-```
-
-Works with any action:
+Animation is declared on the view, not on the action. Bind the state that should
+animate via `.animation(curve, state)`, then mutate it from a plain closure &mdash; the
+change animates automatically:
 
 ```haxe
-count.inc(1).animated(AnimationCurve.EaseInOut)
-scale.setTo(1.5).animated(AnimationCurve.Spring)
-StateAction.CustomSwift("offset = offset == 0 ? 50 : 0").animated(AnimationCurve.Bouncy)
+// Declare which state animates the view…
+new GroupBox("Card", [new Text("Hi")])
+    .scaleEffect(scale)
+    .animation(AnimationCurve.Spring, scale)
+
+// …then just mutate it. No animation wrapper on the action.
+new Button("Toggle", () -> expanded.value = !expanded.value)
+new Button("Grow", () -> scale.value = 1.5)
 ```
+
+See [Animations](animations.md) for the full picture. The old `.animated(curve)` wrapper
+on actions has been removed.

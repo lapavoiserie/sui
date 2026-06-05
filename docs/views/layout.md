@@ -51,8 +51,8 @@ new HStack([
 
 ```haxe
 new HStack(null, 20, [
-    new Button("-", null, count.dec(1)),
-    new Button("+", null, count.inc(1))
+    new Button("-", () -> count.value--),
+    new Button("+", () -> count.value++)
 ])
 ```
 
@@ -91,6 +91,62 @@ new VStack([
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `minLength` | `Float` | `null` | Minimum size |
+
+## Shape primitives
+
+`Rectangle`, `Circle`, `Capsule`, `Ellipse` are zero-arg shape views that map to their SwiftUI equivalents. Like all SwiftUI shapes, they have no intrinsic size — give them one via `.frame(...)` (or rely on the parent layout to size them). Fill with `.foregroundColor(...)` / `.foregroundHex(...)`.
+
+```haxe
+new Rectangle()
+    .frame(100, 50)
+    .foregroundColor(ColorValue.Blue)
+
+new Circle()
+    .frame(20, 20)
+    .foregroundColor(ColorValue.Red)
+
+new Capsule()
+    .frame(100, 24)
+    .foregroundColor(ColorValue.Accent)
+
+new Ellipse()
+    .frame(100, 50)
+    .foregroundColor(ColorValue.Purple)
+```
+
+Useful as drawing primitives, decoration, overlays, and for chip-style backgrounds where a plain `cornerRadius` isn't enough. For more complex curves use `Path` (not yet wrapped) in hand-written Swift.
+
+## Gradients
+
+Three gradient views — `LinearGradient`, `RadialGradient`, `AngularGradient` — map to their SwiftUI equivalents. Like shapes, they have no intrinsic size; use `.frame(...)` or place them as a `.background(...)` overlay.
+
+```haxe
+new LinearGradient(
+    [ColorValue.Blue, ColorValue.Purple],
+    "top", "bottom"
+)
+
+new RadialGradient(
+    [ColorValue.Yellow, ColorValue.Red],
+    "center", 0, 100
+)
+
+new AngularGradient(
+    [ColorValue.Red, ColorValue.Orange, ColorValue.Yellow,
+     ColorValue.Green, ColorValue.Blue, ColorValue.Purple],
+    "center"
+)
+```
+
+Generates:
+
+```swift
+LinearGradient(colors: [.blue, .purple], startPoint: .top, endPoint: .bottom)
+RadialGradient(colors: [.yellow, .red], center: .center, startRadius: 0, endRadius: 100)
+AngularGradient(colors: [.red, .orange, .yellow, .green, .blue, .purple], center: .center)
+```
+
+**Unit-point strings** (start/end/center): `"top"`, `"bottom"`, `"leading"`, `"trailing"`, `"topLeading"`, `"topTrailing"`, `"bottomLeading"`, `"bottomTrailing"`, `"center"`.
 
 ## ScrollView
 
@@ -155,16 +211,17 @@ new ConditionalView(currentScreen, "login",
 
 ### Animated transitions
 
-Add `.transition()` to child views for enter/exit animations, and chain `.animated()` with an `AnimationCurve` to animate the toggle:
+Add `.transition()` to child views for enter/exit animations, and put `.animation(curve, showDetail)` on the enclosing container so the toggle animates. The button itself is a plain closure:
 
 ```haxe
-new Button("Toggle", null,
-    showDetail.tog().animated(AnimationCurve.Spring))
+new Button("Toggle", () -> showDetail.value = !showDetail.value)
 
-new ConditionalView(showDetail,
-    detailView.transition("slide"),
-    placeholder.transition("opacity")
-)
+new VStack([
+    new ConditionalView(showDetail,
+        detailView.transition("slide"),
+        placeholder.transition("opacity")
+    )
+]).animation(AnimationCurve.Spring, showDetail)
 ```
 
 **Transition styles:** `"slide"`, `"opacity"`, `"scale"`, `"move"`, `"push"`

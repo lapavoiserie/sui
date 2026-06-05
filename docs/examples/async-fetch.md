@@ -1,6 +1,6 @@
 # Async Fetch
 
-Demonstrates async bridge calls with a loading state using `BridgeCallLoading`.
+Demonstrates a blocking bridge call with a loading placeholder, all from a plain action closure.
 
 ## Full Source
 
@@ -9,20 +9,23 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class FetchApp extends App {
     static function main() {}
 
-    @:state var result:String = "Press a button to fetch data";
+    var result:State<String>;
 
     public function new() {
         super();
         appName = "AsyncFetch";
         bundleIdentifier = "com.sui.asyncfetch";
+        result = new State<String>("Press a button to fetch data", "result");
     }
 
-    @:expose
+    /**
+        Fetch a URL and return its content. Runs in Haxe/C++ via the bridge,
+        on the detached thread the action closure already runs on.
+    **/
     public static function fetchUrl(url:String):String {
         var http = new haxe.Http(url);
         var data = "";
@@ -40,14 +43,15 @@ class FetchApp extends App {
         return new NavigationStack(new VStack(null, 16, [
             new Text("Async Haxe Bridge").font(FontStyle.LargeTitle),
             new ScrollView([
-                Text.withState("{result}")
+                Text.bind(result.value)
                     .font(FontStyle.Body)
                     .padding()
             ]),
             new HStack(null, 12, [
-                new Button("Fetch example.com", null,
-                    StateAction.BridgeCallLoading("result", "Loading...",
-                        "fetchUrl", "https://example.com")),
+                new Button("Fetch example.com", () -> {
+                    result.value = "Loading...";
+                    result.value = fetchUrl("https://example.com");
+                }),
             ]).padding()
         ]).navigationTitle("Async Fetch"));
     }
@@ -59,7 +63,6 @@ class FetchApp extends App {
 ### Bridge Function with HTTP
 
 ```haxe
-@:expose
 public static function fetchUrl(url:String):String {
     var http = new haxe.Http(url);
     // ...
@@ -68,74 +71,26 @@ public static function fetchUrl(url:String):String {
 }
 ```
 
-The `@:expose` annotation is needed here because `BridgeCallLoading` calls the function by name from Swift as `HaxeBridgeC.fetchUrl()`.
+This is an ordinary Haxe function &mdash; no annotation needed to call it from a closure.
+(Add `@:expose` only if you also want to call it by name from hand-written Swift.)
 
-**Without @:expose**, the same logic works via a closure:
+### The Action Closure
 
 ```haxe
-// No annotation needed
-public static function fetchUrl(url:String):String {
-    var http = new haxe.Http(url);
-    var data = "";
-    http.onData = (d) -> data = d;
-    http.onError = (e) -> data = "Error: " + e;
-    http.request(false);
-    return data.length > 500 ? data.substr(0, 500) + "..." : data;
-}
-
-// Call via closure — handle loading state yourself
 new Button("Fetch example.com", () -> {
     result.value = "Loading...";
     result.value = fetchUrl("https://example.com");
 })
 ```
 
-### BridgeCallLoading (requires @:expose)
+The closure runs on a detached thread, so the blocking `http.request(false)` is fine.
+The two assignments are both seen by SwiftUI: the placeholder appears immediately, then
+the result replaces it when the network call finishes. No manual `Task` wrapping &mdash;
+the bridge already runs the closure off the main thread.
 
-```haxe
-StateAction.BridgeCallLoading("result", "Loading...", "fetchUrl", "https://example.com")
-```
-
-This generates Swift code that:
-
-1. Immediately sets `result = "Loading..."` (UI shows loading state)
-2. Wraps the bridge call in a `Task { @MainActor in ... }` (async)
-3. When the bridge call completes, sets `result` to the return value
-
-**Without @:expose (closure equivalent):**
-
-```haxe
-new Button("Fetch example.com", () -> {
-    result.value = "Loading...";
-    var http = new haxe.Http("https://example.com");
-    http.onData = (d) -> result.value = d.length > 500 ? d.substr(0, 500) + "..." : d;
-    http.onError = (e) -> result.value = "Error: " + e;
-    http.request(false);
-})
-```
-
-The `@:expose` + `BridgeCallLoading` version is more concise and handles the async wrapping for you. The closure version gives you full control but requires managing the loading state manually.
-
-**Parameters (BridgeCallLoading):**
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `stateName` | `"result"` | State variable to update |
-| `loadingValue` | `"Loading..."` | Value shown while loading |
-| `functionName` | `"fetchUrl"` | Bridge function to call |
-| `arg` | `"https://example.com"` | Argument to pass |
-
-### Generated Swift
-
-```swift
-// What BridgeCallLoading generates:
-result = "Loading..."
-Task { @MainActor in
-    result = HaxeBridgeC.fetchUrl("https://example.com")
-}
-```
-
-This gives you a responsive UI &mdash; the loading indicator appears instantly, and the result replaces it when the network call finishes.
+> [!NOTE]
+> The old `StateAction.BridgeCallLoading(...)` variant has been removed. Write the
+> placeholder assignment and the call back-to-back in one closure, as above.
 
 ## Run It
 

@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class ModifiersApp extends App {
     static function main() {}
@@ -32,18 +31,18 @@ class ModifiersApp extends App {
                 new Section("Profile", [
                     new TextField("Username", "username")
                         .textFieldStyle(TextFieldStyleValue.RoundedBorder),
-                    Text.withState("Hello, {username}!")
+                    Text.bind('Hello, ${username.value}!')
                         .font(FontStyle.Headline)
                 ]),
                 new Section("Preferences", [
                     new Toggle("Notifications", "notifications"),
                     new Slider("volume", 0, 1),
-                    Text.withState("Volume: {volume}")
+                    Text.bind('Volume: ${volume.value}')
                         .font(FontStyle.Caption)
                 ]),
                 new Section("Actions", [
-                    new Button("Show Sheet", null, StateAction.SetValue("showSheet", true)),
-                    new Button("Show Alert", null, StateAction.SetValue("showAlert", true))
+                    new Button("Show Sheet", () -> showSheet.value = true),
+                    new Button("Show Alert", () -> showAlert.value = true)
                 ])
             ])
             .navigationTitle("Settings")

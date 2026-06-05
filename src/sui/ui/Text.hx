@@ -22,9 +22,36 @@ class Text extends View {
     }
 
     /**
+        Typed-expression text. The argument can be any String-typed
+        Haxe expression — state field access, array subscript, string
+        interpolation, concatenation. Sui's macro inspects the typed
+        AST at compile time and emits the matching Swift expression
+        directly (no `{name}` template string, no text rewriter).
+
+        ```haxe
+        Text.bind(editorStartHour.value)            // → Text("\(appState.editorStartHour)")
+        Text.bind('${currentPage.value} / 12')      // → Text("\(appState.currentPage) / 12")
+        Text.bind(calendarNames.value[i])           // inside ForEach.byIndex(...) → Text("\(appState.calendarNames[i])")
+        ```
+
+        Falls back to a plain `Text(template)` at runtime so the
+        method is callable outside the macro path (tests, views never
+        reached by SwiftGenerator).
+    **/
+    public static function bind(template:String):Text {
+        return new Text(template);
+    }
+
+    /**
         Create a text view that interpolates a state variable.
         `template` uses `{stateName}` placeholders, e.g. "Count: {count}"
+
+        Legacy form — prefer `Text.bind(...)` which takes a typed Haxe
+        expression instead of a stringly template. Kept only for
+        backward compatibility; this path still depends on sui's
+        deprecated `rewriteStateRefsToAppState` text pass.
     **/
+    @:deprecated("Use Text.bind(stateField.value) or Text.bind('${stateField.value}') — fully typed, no text rewriter, no template strings.")
     public static function withState(template:String):Text {
         var t = new Text("");
         // Convert {name} to Swift's \(name) interpolation

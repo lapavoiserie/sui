@@ -1,6 +1,9 @@
 # Bridge Demo
 
-Demonstrates the explicit `@:expose` annotation for exposing named Haxe functions to Swift. Note that most bridging (closures, `@:state` updates, lifecycle handlers) is automatic and needs no annotation &mdash; `@:expose` is only for named function exports.
+Demonstrates calling Haxe business logic from action closures. The `greet` and
+`fibonacci` functions run in Haxe/C++ and are called directly from the button
+closures. `@:expose` is kept here so the same functions can also be called by name
+from hand-written Swift (`HaxeBridgeC.greet()`).
 
 ## Full Source
 
@@ -9,24 +12,26 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class BridgeApp extends App {
     static function main() {}
 
-    @:state var result:String = "Press a button!";
+    var result:State<String>;
 
     public function new() {
         super();
         appName = "BridgeDemo";
         bundleIdentifier = "com.sui.bridgedemo";
+        result = new State<String>("Press a button!", "result");
     }
 
+    /** Haxe business logic: generates a greeting. Runs in C++. **/
     @:expose
     public static function greet(name:String):String {
         return 'Hello, $name! (from Haxe/C++)';
     }
 
+    /** Haxe business logic: computes fibonacci. **/
     @:expose
     public static function fibonacci(n:Int):Int {
         if (n <= 1) return n;
@@ -37,13 +42,11 @@ class BridgeApp extends App {
         return new VStack(null, 20, [
             new Text("Haxe <-> Swift Bridge")
                 .font(FontStyle.LargeTitle),
-            Text.withState("{result}")
+            Text.bind(result.value)
                 .font(FontStyle.Title2)
                 .padding(),
-            new Button("Greet from Haxe", null,
-                StateAction.CustomSwift('result = HaxeBridgeC.greet("World")')),
-            new Button("Fibonacci(20)", null,
-                StateAction.CustomSwift('result = "fib(20) = \\(HaxeBridgeC.fibonacci(20))"')),
+            new Button("Greet from Haxe", () -> result.value = greet("World")),
+            new Button("Fibonacci(20)", () -> result.value = 'fib(20) = ${fibonacci(20)}'),
         ]);
     }
 }
@@ -60,37 +63,21 @@ public static function greet(name:String):String {
 }
 ```
 
-`@:expose` tells the framework to generate a named Swift-callable wrapper as `HaxeBridgeC.greet()`. This is needed here because we want to call the function by name from `StateAction.CustomSwift` and get a return value.
+These are ordinary Haxe functions that run in C++. The action closures call them
+directly &mdash; no special action variant required. `@:expose` is not needed just to call
+them from a closure; it's kept here only so the same function is reachable by name from
+any custom Swift code as `HaxeBridgeC.greet()`.
 
-**Without @:expose**, the same logic works via a closure:
+### Calling from an Action
 
-```haxe
-// No annotation needed — closure is bridged automatically
-public static function greet(name:String):String {
-    return 'Hello, $name! (from Haxe/C++)';
-}
-
-new Button("Greet from Haxe", () -> {
-    result.value = greet("World");
-})
-```
-
-### Calling from SwiftUI
-
-**With @:expose** &mdash; call by name in a Swift expression:
-
-```haxe
-new Button("Greet from Haxe", null,
-    StateAction.CustomSwift('result = HaxeBridgeC.greet("World")'))
-```
-
-**Without @:expose** &mdash; use a closure instead:
+Call the function inside the closure and assign its result to the state variable:
 
 ```haxe
 new Button("Greet from Haxe", () -> result.value = greet("World"))
 ```
 
-Both produce the same result. The `@:expose` version is useful when you need the return value in a `CustomSwift` expression or want to compose calls in Swift code.
+The closure runs on a detached thread, so even a blocking computation keeps the UI
+responsive. SwiftUI re-renders the `Text.bind(result.value)` when the assignment lands.
 
 ### Multiple Bridge Functions
 
@@ -101,17 +88,11 @@ public static function fibonacci(n:Int):Int {
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-// With @:expose:
-new Button("Fibonacci(20)", null,
-    StateAction.CustomSwift('result = "fib(20) = \\(HaxeBridgeC.fibonacci(20))"'))
-
-// Without @:expose:
-new Button("Fibonacci(20)", () -> {
-    result.value = "fib(20) = " + fibonacci(20);
-})
+new Button("Fibonacci(20)", () -> result.value = 'fib(20) = ${fibonacci(20)}')
 ```
 
-Any number of `@:expose` functions can be defined. They all become available as `HaxeBridgeC.functionName()` in Swift.
+Any number of functions can be called this way. Add `@:expose` to any of them you also
+want to invoke by name from hand-written Swift.
 
 ## Run It
 

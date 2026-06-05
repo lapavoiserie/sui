@@ -24,6 +24,10 @@ package sui.state;
 **/
 #if cpp
 @:cppFileCode('
+#include <clocale>
+#include <cstdio>
+#include <cstring>
+
 // State notification function pointer — set by the bridge at init time.
 // When no bridge is linked, this stays null and set() is a no-op for Swift.
 static void (*_hxsui_state_callback)(const char* key, const char* value) = nullptr;
@@ -34,6 +38,29 @@ extern "C" void haxe_bridge_register_state_fn(void (*cb)(const char*, const char
 
 void _hxsui_notify_swift(const char* key, const char* value) {
     if (_hxsui_state_callback) _hxsui_state_callback(key, value);
+}
+
+// Locale-neutral Float → string. The Haxe-bundled `Std.string(Float)`
+// goes through the C `printf` family, which honours `LC_NUMERIC`. On
+// a comma-decimal locale (fr_FR, de_DE, ru_RU, …) it emits "-57,2",
+// which Swift\'s locale-invariant `Double(_:)` parser then rejects,
+// so the value silently falls back to 0. Force the POSIX ("C")
+// locale just around the format call and restore the caller\'s
+// locale afterwards so we don\'t disturb the rest of the runtime.
+::String _hxsui_format_float_posix(double v) {
+    char savedLocale[128];
+    const char* current = std::setlocale(LC_NUMERIC, NULL);
+    if (current) {
+        std::strncpy(savedLocale, current, sizeof(savedLocale) - 1);
+        savedLocale[sizeof(savedLocale) - 1] = 0;
+    } else {
+        std::strcpy(savedLocale, "C");
+    }
+    std::setlocale(LC_NUMERIC, "C");
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.17g", v);
+    std::setlocale(LC_NUMERIC, savedLocale);
+    return ::String(buf);
 }
 ')
 #end
@@ -54,6 +81,27 @@ class State<T> {
         this.name = name != null ? name : "";
         if (this.name != "")
             _registry.set(this.name, this);
+        // Push the initial value across the bridge so AppState's
+        // Swift-side property — which the macro currently emits with a
+        // literal default (`""`, `false`, `0`, …) — picks up what Haxe
+        // intends. Without this, a `new State<Bool>(true, "isLoggedIn")`
+        // in the App constructor leaves Swift's `isLoggedIn` at `false`
+        // until the next mutation, which routinely causes the wrong
+        // initial view to render (re-login screen for an
+        // already-authenticated user, empty grids, …).
+        //
+        // Arrays go through the shared-memory bridge, so we still send
+        // an empty string — that bumps the version counter on the
+        // Swift side and triggers a fresh read.
+        #if cpp
+        if (this.name != "") {
+            var k = this.name;
+            var v = if (Std.isOfType(initialValue, Array)) ""
+                else if (Std.isOfType(initialValue, Float)) _formatFloatPosix(cast initialValue)
+                else Std.string(initialValue);
+            untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
+        }
+        #end
     }
 
     function get_value():T {
@@ -67,8 +115,9 @@ class State<T> {
         }
         #if cpp
         var k = name;
-        // For arrays, send empty string — Swift reads data via shared memory
-        var v = if (Std.isOfType(newValue, Array)) "" else Std.string(newValue);
+        var v = if (Std.isOfType(newValue, Array)) ""
+            else if (Std.isOfType(newValue, Float)) _formatFloatPosix(cast newValue)
+            else Std.string(newValue);
         untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
         #end
         return newValue;
@@ -86,33 +135,6 @@ class State<T> {
 
     public function onValueChanged(callback:T->Void):Void {
         onChange = callback;
-    }
-
-    // ── Action builders (return StateAction for declarative UI) ──────
-
-    /** Create an increment action: `count.inc(1)` → `count += 1` in Swift. **/
-    public inline function inc(amount:Int):Action {
-        return StateAction.Increment(this, amount);
-    }
-
-    /** Create a decrement action: `count.dec(1)` → `count -= 1` in Swift. **/
-    public inline function dec(amount:Int):Action {
-        return StateAction.Decrement(this, amount);
-    }
-
-    /** Create a set action: `scale.setTo(1.5)` → `scale = 1.5` in Swift. **/
-    public inline function setTo(val:Dynamic):Action {
-        return StateAction.SetValue(this, val);
-    }
-
-    /** Create a toggle action: `visible.tog()` → `visible.toggle()` in Swift. **/
-    public inline function tog():Action {
-        return StateAction.Toggle(this);
-    }
-
-    /** Create an append action: `items.appendAction("new")` → `items.append("new")` in Swift. **/
-    public inline function appendAction(val:Dynamic):Action {
-        return StateAction.Append(this, val);
     }
 
     // ── Shared-memory query API (called from C bridge) ──────────────
@@ -218,6 +240,39 @@ class State<T> {
         return null;
     }
 
+    /** Apply a value written by a SwiftUI binding (TextField, Toggle,
+        Picker, Slider, …) to the Haxe-side mirror WITHOUT notifying
+        Swift back — the write originated there. Called from the C
+        bridge (`haxe_bridge_sync_state`) whenever an `AppState`
+        stored property's `didSet` fires.
+
+        This is what lets action closures running in Haxe read fresh
+        values: before this hook, a state owned by a SwiftUI binding
+        (e.g. the text of a TextField) only existed on the Swift side
+        and `state.value` reads in Haxe saw the stale initial value. **/
+    public static function _applyFromSwift(stateName:String, raw:String):Void {
+        if (stateName == null) return;
+        var state:Dynamic = _registry.get(stateName);
+        if (state == null) return;
+        var s:State<Dynamic> = state;
+        var current:Dynamic = s._value;
+        // Infer the target type from the current value. Order
+        // matters: on hxcpp `Bool` and `Int` both satisfy broader
+        // checks, so test the narrowest types first. Arrays and
+        // objects are never written through scalar bindings.
+        var parsed:Dynamic =
+            if (Std.isOfType(current, Bool)) raw == "true"
+            else if (Std.isOfType(current, Int)) {
+                var i = Std.parseInt(raw);
+                if (i != null) i else Std.int(Std.parseFloat(raw));
+            }
+            else if (Std.isOfType(current, Float)) Std.parseFloat(raw)
+            else if (Std.isOfType(current, String)) raw
+            else return;
+        s._value = parsed;
+        if (s.onChange != null) s.onChange(parsed);
+    }
+
     /**
         Update a SwiftUI state variable by name from Haxe.
         Useful in bridge function closures to update multiple states at once.
@@ -227,4 +282,15 @@ class State<T> {
         untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', key, value);
         #end
     }
+
+    #if cpp
+    /** Format a Float in locale-neutral form via C++17 `std::to_chars`.
+        Used by the State setter to guarantee Swift's `Double(_:)`
+        parser accepts the result regardless of the system locale. **/
+    private static inline function _formatFloatPosix(v:Float):String {
+        var out:String = "";
+        untyped __cpp__('{0} = _hxsui_format_float_posix({1})', out, v);
+        return out;
+    }
+    #end
 }

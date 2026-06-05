@@ -1,6 +1,6 @@
 # Counter
 
-A counter app demonstrating state management with `@:state`, the fluent `StateAction` API, and `Text.withState`.
+A counter app demonstrating state management with `@:state`, action closures, and `Text.bind`.
 
 ## Full Source
 
@@ -8,8 +8,6 @@ A counter app demonstrating state management with `@:state`, the fluent `StateAc
 import sui.App;
 import sui.View;
 import sui.ui.*;
-import sui.state.State;
-import sui.state.StateAction;
 
 class CounterApp extends App {
     static function main() {}
@@ -24,14 +22,12 @@ class CounterApp extends App {
 
     override function body():View {
         return new VStack([
-            Text.withState("Count: {count}")
+            Text.bind('Count: ${count.value}')
                 .font(FontStyle.Title)
                 .padding(),
             new HStack(null, 20, [
-                new Button("-", () -> count.value = count.value - 1,
-                    count.dec(1)),
-                new Button("+", () -> count.value = count.value + 1,
-                    count.inc(1))
+                new Button("-", () -> count.value--),
+                new Button("+", () -> count.value++)
             ])
         ]);
     }
@@ -51,24 +47,20 @@ class CounterApp extends App {
 ### Displaying State
 
 ```haxe
-Text.withState("Count: {count}")
+Text.bind('Count: ${count.value}')
 ```
 
-`Text.withState` interpolates state variables. `{count}` becomes `\(count)` in Swift, so the text updates automatically when the state changes.
+`Text.bind` accepts any String-typed Haxe expression. sui walks the typed AST and emits `Text("Count: \(count)")` in Swift, so the text updates automatically when the state changes. Use single-quoted Haxe strings so `${...}` interpolation is in effect.
 
 ### Mutating State
 
 ```haxe
-new Button("-", () -> count.value = count.value - 1,
-    count.dec(1))
+new Button("-", () -> count.value--)
 ```
 
-Each button has two actions:
-
-1. **Haxe closure** `() -> count.value = count.value - 1` &mdash; Runs on the Haxe/C++ side, bridged automatically (no `@:expose` needed)
-2. **Fluent StateAction** `count.dec(1)` &mdash; Generates Swift `count -= 1` for immediate UI update
-
-Both are optional. Use the fluent `StateAction` API for instant SwiftUI updates, closures for Haxe-side logic.
+The button's action is a plain `() -> Void` closure. It runs on the Haxe/C++ side
+(bridged automatically, no `@:expose` needed); assigning to `count.value` pushes the
+change back to SwiftUI, which re-renders the `Text.bind`.
 
 ### Layout
 

@@ -28,6 +28,42 @@ class App {
         return new View();
     }
 
+    /** Override to attach top-level menus to the macOS menu bar. The
+        returned array is read at compile time by the SwiftGenerator
+        macro and emitted as a `.commands { CommandMenu(…) { … } … }`
+        modifier on the App's WindowGroup. iOS / iPadOS / tvOS
+        ignore the commands at runtime (the menu bar isn't shown).
+
+        Each item inside a `CommandMenu` is typically a `Button` with
+        a `.keyboardShortcut`. See `sui.ui.CommandMenu` for a full
+        example.
+    **/
+    public function commands():Array<sui.ui.CommandMenu> {
+        return [];
+    }
+
+    /** Override to declare a Settings (Preferences) window — the
+        standard macOS `App ▸ Preferences…` / ⌘, scene. The returned
+        view is rendered into its own SwiftUI `Settings` scene
+        alongside the main WindowGroup; if this is left at the
+        default (a bare `View()`), no Settings scene is emitted.
+
+        ```haxe
+        override function settings():View {
+            return new Form([
+                new Toggle("Dark Mode", "darkMode"),
+                new Picker("Default View", "defaultView", [...]),
+            ]);
+        }
+        ```
+
+        iOS / iPadOS / tvOS ignore the Settings scene at runtime —
+        on those platforms preferences belong in the system Settings
+        bundle or an in-app view. **/
+    public function settings():View {
+        return new View();
+    }
+
     /** Override to configure scenes (multi-window on macOS, visionOS). **/
     public function scenes():Array<Scene> {
         return [Scene.WindowGroup(appName, body)];

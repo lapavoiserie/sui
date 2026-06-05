@@ -12,6 +12,9 @@ enum ViewModifier {
     Padding(value:Float);
     PaddingEdges(edges:Edge, value:Float);
     Frame(width:Null<Float>, height:Null<Float>, alignment:Null<Alignment>);
+    FillWidth;
+    FillHeight;
+    FillBoth;
 
     // Typography
     Font(style:FontStyle);
@@ -22,7 +25,13 @@ enum ViewModifier {
     // Colors & Appearance
     ForegroundColor(color:ColorValue);
     Background(color:ColorValue);
-    Opacity(value:Float);
+    ForegroundHex(expr:Dynamic);
+    BackgroundHex(expr:Dynamic);
+    /** Translucent SwiftUI Material as a background fill — picks up
+        content behind it. Standard in macOS sidebars, popovers, and
+        toolbars. **/
+    BackgroundMaterial(style:sui.View.MaterialStyle);
+    Opacity(value:Dynamic);
 
     // Shape
     CornerRadius(radius:Float);
@@ -38,9 +47,18 @@ enum ViewModifier {
 
     // Styles
     TextFieldStyle(style:sui.View.TextFieldStyleValue);
+    ButtonStyle(style:sui.View.ButtonStyleValue);
 
     // Presentation
     Sheet(isPresentedBinding:Dynamic, content:sui.View);
+    /** macOS-style trailing inspector pane — slides out from the
+        right edge of the window when its bound Bool is true.
+        Standard pattern in Mac apps for "details about the current
+        selection" (Pages, Numbers, Xcode). **/
+    Inspector(isPresentedBinding:Dynamic, content:sui.View);
+    /** Width hint for the Inspector column: `min` / `ideal` / `max`.
+        Apply on the same view that owns the `.inspector(...)` call. **/
+    InspectorColumnWidth(min:Float, ideal:Float, max:Float);
     Alert(title:String, isPresentedBinding:Dynamic, message:Null<String>);
     ConfirmationDialog(title:String, isPresentedBinding:Dynamic, content:sui.View);
 
@@ -51,18 +69,33 @@ enum ViewModifier {
     Overlay(content:sui.View);
 
     // Animation
-    Animation(curve:String, value:Dynamic);
+    Animation(curve:sui.state.AnimationCurve, value:Dynamic);
     Transition(style:String);
 
     // Lifecycle
-    OnAppear(actionId:Int);
-    OnDisappear(actionId:Int);
-    TaskOnAppear(actionId:Int);
+    OnAppear(action:sui.state.StateAction);
+    OnDisappear(action:sui.state.StateAction);
+    TaskOnAppear(action:sui.state.StateAction);
     OnAppearAction(action:sui.state.StateAction);
     TaskAction(action:sui.state.StateAction);
+    /** Run the action every `seconds` for as long as the view stays
+        attached — SwiftUI `task { while !Task.isCancelled { sleep;
+        … } }`. Replaces the old `StateAction.IntervalLoop`. **/
+    Every(seconds:Float, action:sui.state.StateAction);
 
     // Gestures
     OnTapGesture(action:sui.state.StateAction);
+    /** Drag gesture, dispatched to a @:expose bridge fn with the
+        normalised start + end coordinates (relative to the
+        enclosing GeometryReader). Args: `(mode, sx, sy, ex, ey)`
+        all-Float [0..1] except `mode` which is a String discriminator
+        the bridge uses to route the gesture (e.g. "week" vs "day"). **/
+    OnDragGesture(fnName:String, mode:String);
+    /** SwiftUI `.allowsHitTesting(enabled)` — when false, touches
+        / clicks fall through to the view below in the ZStack.
+        Useful for decorative overlays that shouldn't capture
+        gestures intended for a backdrop. **/
+    AllowsHitTesting(enabled:Bool);
 
     // Appearance
     Tint(color:ColorValue);
@@ -74,6 +107,13 @@ enum ViewModifier {
     ScaleEffect(scale:Dynamic);
     RotationEffect(degrees:Dynamic);
     Offset(x:Dynamic, y:Dynamic);
+    /** Fraction-of-parent-size offset. Valid only inside a
+        `GeometryReader`; reads `proxy.size.{width,height}` from
+        the enclosing reader. **/
+    ProportionalOffset(xFraction:Dynamic, yFraction:Dynamic);
+    /** Fraction-of-parent-size frame. Like `ProportionalOffset`,
+        only valid inside a `GeometryReader`. **/
+    ProportionalFrame(widthFraction:Dynamic, heightFraction:Dynamic);
 
     // Image effects (accept Float for static or String for state-bound)
     Brightness(amount:Dynamic);
@@ -88,7 +128,7 @@ enum ViewModifier {
 
     // List
     SwipeActions(content:sui.View);
-    Refreshable(actionId:Int);
+    Refreshable(action:sui.state.StateAction);
     ListStyle(style:String);
 
     // Layout
@@ -96,10 +136,35 @@ enum ViewModifier {
 
     // Accessibility
     AccessibilityLabel(label:String);
+    /** SwiftUI `.help("…")` — tooltip text shown on hover on macOS,
+        accessibility hint on iOS. **/
+    Help(text:String);
 
     // Interaction
-    OnSubmit(actionId:Int);
+    OnSubmit(action:sui.state.StateAction);
     OnLongPressGesture(action:sui.state.StateAction);
+    /** SwiftUI `.onChange(of:_:)` — fires a StateAction when the
+        named state value changes. Used to react to Picker / TextField
+        / Toggle selection updates without polling. **/
+    OnChange(stateName:String, action:sui.state.StateAction);
+    /** SwiftUI `.keyboardShortcut(_:, modifiers:)` — binds a keyboard
+        shortcut to the receiving view (typically a Button). The
+        `key` is a single character or one of the special-name
+        sentinels: "return", "escape", "delete", "tab", "space",
+        "left", "right", "up", "down". `modifiers` is any
+        combination of "command" / "option" / "control" / "shift". **/
+    KeyboardShortcut(key:String, modifiers:Array<String>);
+    /** SwiftUI `.onKeyPress(_:action:)` — runs a `StateAction` when
+        a key is pressed while this view (or a descendant) has
+        focus. The `key` follows the same naming convention as
+        `.keyboardShortcut` (single char or named special key:
+        `return`, `escape`, `delete`, `tab`, `space`,
+        `left` / `right` / `up` / `down`, `home`, `end`,
+        `pageup` / `pagedown`). **/
+    OnKeyPress(key:String, action:sui.state.StateAction);
+
+    // Picker
+    PickerStyle(style:sui.View.PickerStyleValue);
 
     // Spacing
     FixedSize(horizontal:Bool, vertical:Bool);

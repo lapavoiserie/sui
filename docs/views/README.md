@@ -16,7 +16,7 @@ sui provides 40+ built-in views that map directly to SwiftUI components.
 | `Spacer` | Layout | `Spacer` | Flexible space |
 | `ScrollView` | Layout | `ScrollView` | Scrollable container |
 | `Text` | Display | `Text` | Static text |
-| `Text.withState` | Display | `Text("\(...)")` | Dynamic text with state interpolation |
+| `Text.bind` | Display | `Text("\(...)")` | Dynamic text from a typed Haxe expression |
 | `Label` | Display | `Label` | Icon + text |
 | `Image` | Display | `Image` | Image display |
 | `ProgressView` | Display | `ProgressView` | Loading indicator |
@@ -49,7 +49,7 @@ sui provides 40+ built-in views that map directly to SwiftUI components.
 ## Categories
 
 - **[Layout](views/layout.md)** &mdash; VStack, HStack, ZStack, LazyVStack, LazyHStack, LazyVGrid, LazyHGrid, Spacer, ScrollView
-- **[Text & Labels](views/text-and-labels.md)** &mdash; Text, Text.withState, Label, Image
+- **[Text & Labels](views/text-and-labels.md)** &mdash; Text, Text.bind, Label, Image
 - **[Controls](views/controls.md)** &mdash; Button, TextField, SecureField, TextEditor, Toggle, Slider, Picker, Stepper, DatePicker, ColorPicker, Link
 - **[Lists & Iteration](views/lists-and-iteration.md)** &mdash; List, ForEach, ScrollView, Section, Form, GroupBox, DisclosureGroup
 - **[Navigation](views/navigation.md)** &mdash; NavigationStack, NavigationLink, NavigationSplitView, TabView

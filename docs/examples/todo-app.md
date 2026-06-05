@@ -9,7 +9,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 import sui.state.Observable;
 
 class TodoItem extends Observable {
@@ -26,13 +25,15 @@ class TodoItem extends Observable {
 class TodoApp extends App {
     static function main() {}
 
-    @:state var todos:Array<TodoItem> = [];
-    @:state var newItemText:String = "";
+    var todos:State<Array<TodoItem>>;
+    var newItemText:State<String>;
 
     public function new() {
         super();
         appName = "TodoList";
         bundleIdentifier = "com.sui.todoapp";
+        todos = new State<Array<TodoItem>>([], "todos");
+        newItemText = new State<String>("", "newItemText");
     }
 
     override function body():View {
@@ -41,18 +42,25 @@ class TodoApp extends App {
                 new HStack(null, 8, [
                     new TextField("New item...", "newItemText")
                         .textFieldStyle(TextFieldStyleValue.RoundedBorder),
-                    new Button("Add", null,
-                        StateAction.CustomSwift(
-                            'if !newItemText.isEmpty { todos.append(TodoItem(title: newItemText, completed: false)); newItemText = "" }'))
+                    new Button("Add", () -> {
+                        // newItemText is fresh here: the TextField's
+                        // Swift binding writes back to the Haxe mirror.
+                        if (newItemText.value != "") {
+                            todos.value = todos.value.concat([new TodoItem(newItemText.value, false)]);
+                            newItemText.value = "";
+                        }
+                    })
                 ]).padding(),
                 new List([
-                    new ForEach("todos", "i",
+                    ForEach.byIndex(todos, i ->
                         new HStack([
-                            Text.withState("{todos[i].title}")
+                            Text.bind(todos.value[i].title)
                                 .font(FontStyle.Body),
                             new Spacer(),
-                            new Button("Done", null,
-                                StateAction.CustomSwift("todos[i].completed.toggle()"))
+                            new Button("Done", () -> {
+                                todos.value[i].completed = !todos.value[i].completed;
+                                todos.value = todos.value; // re-assign to notify SwiftUI
+                            })
                         ])
                     )
                 ])
@@ -79,43 +87,56 @@ class TodoItem extends Observable {
 ### State Arrays
 
 ```haxe
-@:state var todos:Array<TodoItem> = [];
+todos = new State<Array<TodoItem>>([], "todos");
 ```
 
-`@:state` can hold arrays of Observable objects. SwiftUI renders the list and updates when items are added, removed, or modified.
+`State` can hold arrays of Observable objects. SwiftUI renders the list and updates when the array is re-assigned.
 
 ### Text Input + Add Button
 
 ```haxe
 new TextField("New item...", "newItemText")
     .textFieldStyle(TextFieldStyleValue.RoundedBorder),
-new Button("Add", null,
-    StateAction.CustomSwift(
-        'if !newItemText.isEmpty { todos.append(TodoItem(title: newItemText, completed: false)); newItemText = "" }'))
+new Button("Add", () -> {
+    if (newItemText.value != "") {
+        todos.value = todos.value.concat([new TodoItem(newItemText.value, false)]);
+        newItemText.value = "";
+    }
+})
 ```
 
-The TextField binds to `newItemText` state. The button uses `CustomSwift` to append a new `TodoItem` and clear the text field &mdash; all in generated Swift for immediate responsiveness.
+The TextField binds to `newItemText`. The button's closure reads `newItemText.value`
+&mdash; which is always current, because the TextField's SwiftUI binding writes back into
+the Haxe mirror via `didSet` (see [The Bridge](../bridge.md#write-back-swift--haxe)).
+It appends a new `TodoItem` and clears the field, all in plain Haxe.
 
 ### ForEach Iteration
 
 ```haxe
-new ForEach("todos", "i",
+ForEach.byIndex(todos, i ->
     new HStack([
-        Text.withState("{todos[i].title}"),
+        Text.bind(todos.value[i].title),
         // ...
     ])
 )
 ```
 
-`ForEach` iterates the `todos` array. The index variable `i` is used in `Text.withState` to access each item's properties.
+`ForEach.byIndex` iterates the `todos` array by index. The lambda receives `i:Int`, so `todos.value[i].title` typechecks in Haxe and the macro rewrites it to `appState.todos[i].title` in the emitted Swift.
 
-### Inline State Mutation
+### Row Action Closures
 
 ```haxe
-StateAction.CustomSwift("todos[i].completed.toggle()")
+new Button("Done", () -> {
+    todos.value[i].completed = !todos.value[i].completed;
+    todos.value = todos.value; // re-assign to notify SwiftUI
+})
 ```
 
-`CustomSwift` lets you write any Swift expression. Here it toggles a todo item's `completed` property directly.
+Inside a `ForEach` row, the action closure may reference the iteration parameter `i`.
+The macro lifts it into an indexed builder, and Swift dispatches it with the live loop
+index (`HaxeBridgeC.invokeIndexedAction`). A row closure can only reference iteration
+parameters, `@:state` fields, App members and statics &mdash; not locals of the enclosing
+method. See [Lists & Iteration](../views/lists-and-iteration.md).
 
 ## Run It
 

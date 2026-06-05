@@ -6,45 +6,91 @@ import sui.View;
     Iterates over a state array and generates a view for each element.
     Maps to SwiftUI's `ForEach`.
 
-    Usage:
-    ```haxe
-    // Typed State reference (preferred):
-    new ForEach(todos, "i",
-        new Text("Item")
-    )
+    Two call shapes, both compiled by the SwiftGenerator macro:
 
-    // String name (still supported for backward compat):
-    new ForEach("todos", "i",
-        new Text("Item")
+    **Closure form (preferred)** — the iteration parameter is a Haxe
+    value, so references inside the body are type-checked at compile
+    time and SwiftUI receives the right expression without you having
+    to spell out the array subscript as a string. Modifiers like
+    `Text(item)` and `.tag(item)` detect the item ref and emit the
+    matching Swift expression.
+
+    ```haxe
+    new ForEach(colorOptions, item ->
+        new Text(item).tag(item)
     )
     ```
 
     Generates:
     ```swift
-    ForEach(0..<todos.count, id: \.self) { i in
-        Text("Item")
+    ForEach(0..<colorOptions.count, id: \.self) { item in
+        Text("\(appState.colorOptions[item])")
+            .tag(appState.colorOptions[item])
     }
     ```
 
-    Use `Text.withState("{todos[i].title}")` in the child view
-    to reference properties of each item.
+    **Legacy form (kept for backward compatibility)** — pass the
+    iteration variable name as a String and use string templating
+    inside the body view (`Text.withState("{name[i]}")`).
+
+    ```haxe
+    new ForEach(todos, "i",
+        Text.withState("{todos[i].title}")
+    )
+    ```
 **/
 class ForEach extends View {
     public var arrayName:Dynamic;
     public var itemName:String;
     public var itemView:View;
+    /** Closure-form builder, captured at runtime so the type-system
+        sees the param; the macro takes the typed-AST path instead. **/
+    public var builder:Dynamic;
 
     /**
         @param arrayName State<Array<T>> field reference or string name of the @State array variable
-        @param itemName  Name for the iteration variable in generated Swift
-        @param itemView  View to render for each item (use {arrayName[itemName].prop} for interpolation)
+        @param itemNameOrBuilder Either the iteration variable name (legacy form, takes a third argument) OR a `T -> View` closure that builds each row given the item value
+        @param itemView View to render — only required for the legacy 3-arg form
     **/
-    public function new(arrayName:Dynamic, itemName:String, itemView:View) {
+    /**
+        Index-iteration form — the body lambda receives the iteration
+        index (`Int`) rather than the array element. Useful when a row
+        needs subscripted access into several parallel state arrays.
+
+        ```haxe
+        ForEach.byIndex(calendarNames, i ->
+            new HStack([
+                new Text(calendarNames.value[i]),
+                new ColorChip(calendarColors.value[i]),
+            ])
+        )
+        ```
+    **/
+    public static function byIndex(arrayName:Dynamic, builder:Int -> View):ForEach {
+        var fe = new ForEach(arrayName, "_byIndex");
+        fe.builder = builder;
+        return fe;
+    }
+
+    public function new(arrayName:Dynamic, itemNameOrBuilder:Dynamic, ?itemView:View) {
         super();
         this.viewType = "ForEach";
         this.arrayName = arrayName;
-        this.itemName = itemName;
-        this.itemView = itemView;
-        this.children = [itemView];
+        if (itemView != null) {
+            this.itemName = itemNameOrBuilder;
+            this.itemView = itemView;
+            this.children = [itemView];
+        } else if (Reflect.isFunction(itemNameOrBuilder)) {
+            // Closure form — the macro inspects the typed AST.
+            this.builder = itemNameOrBuilder;
+            this.itemName = "item";
+            this.itemView = null;
+            this.children = [];
+        } else {
+            // String itemName but no itemView — degenerate, kept for safety.
+            this.itemName = itemNameOrBuilder;
+            this.itemView = null;
+            this.children = [];
+        }
     }
 }

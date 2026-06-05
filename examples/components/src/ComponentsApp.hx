@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class ComponentsApp extends App {
     static function main() {}
@@ -31,10 +30,10 @@ class ComponentsApp extends App {
 
                 // Buttons to modify ratings
                 new HStack(null, 12, [
-                    new Button("Movie +", null, StateAction.Increment("movieRating", 1)),
-                    new Button("Movie -", null, StateAction.Decrement("movieRating", 1)),
-                    new Button("Book +", null, StateAction.Increment("bookRating", 1)),
-                    new Button("Book -", null, StateAction.Decrement("bookRating", 1)),
+                    new Button("Movie +", () -> movieRating.value++),
+                    new Button("Movie -", () -> movieRating.value--),
+                    new Button("Book +", () -> bookRating.value++),
+                    new Button("Book -", () -> bookRating.value--),
                 ])
             ]).padding()
             .navigationTitle("Components")

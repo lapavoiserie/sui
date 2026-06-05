@@ -1,7 +1,6 @@
 import sui.App;
 import sui.View;
 import sui.ui.*;
-import sui.state.StateAction;
 
 /**
     Demonstrates visual effect modifiers bound to state:
@@ -31,7 +30,7 @@ class EffectsApp extends App {
                 .padding(),
 
             // Text with state-bound visual effects
-            Text.withState("{message}")
+            Text.bind(message.value)
                 .font(FontStyle.Title)
                 .foregroundColor(ColorValue.Blue)
                 .scaleEffect(scale)
@@ -47,10 +46,10 @@ class EffectsApp extends App {
                 ]).padding(),
 
                 new HStack(null, 20, [
-                    new Button("Spin", null, StateAction.Increment("rotation", 45)),
-                    new Button("Grow", null, StateAction.CustomSwift("scale += 0.2")),
-                    new Button("Shrink", null, StateAction.CustomSwift("scale = max(0.2, scale - 0.2)")),
-                    new Button("Reset", null, StateAction.CustomSwift("rotation = 0; scale = 1.0; blurAmount = 0"))
+                    new Button("Spin", () -> rotation.value += 45),
+                    new Button("Grow", () -> scale.value += 0.2),
+                    new Button("Shrink", () -> scale.value = Math.max(0.2, scale.value - 0.2)),
+                    new Button("Reset", () -> { rotation.value = 0; scale.value = 1.0; blurAmount.value = 0; })
                 ])
             ]),
 

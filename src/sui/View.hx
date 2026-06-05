@@ -45,8 +45,68 @@ class View {
         return this;
     }
 
+    /** Set the foreground colour from a hex string held in a state
+        variable. `expr` is emitted verbatim in the generated Swift body
+        and therefore picked up by the macro's state-prefix pass —
+        plain names like `calendarColor` resolve to
+        `appState.calendarColor`, and subscripted forms like
+        `calendarColors[i]` resolve to `appState.calendarColors[i]`
+        (the per-iteration case for ForEach). Invalid hex falls back to
+        `.primary` via the nil-coalescing operator on `Color(suiHex:)`. **/
+    /** Accepts either a string literal (legacy stringly expr) or a
+        typed `State<String>` field reference — the macro extracts
+        the right Swift expression in both cases, no `.value`
+        ceremony at the call site. **/
+    public function foregroundHex(expr:Dynamic):View {
+        modifierChain.push(ViewModifier.ForegroundHex(expr));
+        return this;
+    }
+
+    /** Same as `foregroundHex` but for the background fill. **/
+    public function backgroundHex(expr:Dynamic):View {
+        modifierChain.push(ViewModifier.BackgroundHex(expr));
+        return this;
+    }
+
     public function frame(?width:Float, ?height:Float, ?alignment:Alignment):View {
         modifierChain.push(ViewModifier.Frame(width, height, alignment));
+        return this;
+    }
+
+    /** Stretch the view horizontally to fill its parent. Compiles to
+        `.frame(maxWidth: .infinity)`. Useful for views that don't have
+        an intrinsic preferred width (e.g. Lists inside sheets). **/
+    public function fillWidth():View {
+        modifierChain.push(ViewModifier.FillWidth);
+        return this;
+    }
+
+    /** Stretch the view vertically to fill its parent. Compiles to
+        `.frame(maxHeight: .infinity)`. The canonical use case is
+        `List`-inside-`.sheet`: SwiftUI's `List` collapses to zero
+        height inside a sheet's content closure because its parent's
+        intrinsic height doesn't reserve room for a scrollable list. **/
+    public function fillHeight():View {
+        modifierChain.push(ViewModifier.FillHeight);
+        return this;
+    }
+
+    /** Shorthand for `.fillWidth().fillHeight()`. **/
+    public function fillBoth():View {
+        modifierChain.push(ViewModifier.FillBoth);
+        return this;
+    }
+
+    /** Pin this view to its **intrinsic** size on either axis. Compiles
+        to `.fixedSize(horizontal:, vertical:)`. Crucial for views like
+        `List` and `ScrollView` whose default size is "fill available" —
+        in some layout contexts (notably `.sheet` content on macOS,
+        where the container sizes to its children's intrinsic heights)
+        their default behaviour resolves to zero. Pinning to intrinsic
+        size makes them report the sum of their content heights
+        instead. **/
+    public function fixedSize(horizontal:Bool = false, vertical:Bool = true):View {
+        modifierChain.push(ViewModifier.FixedSize(horizontal, vertical));
         return this;
     }
 
@@ -55,12 +115,22 @@ class View {
         return this;
     }
 
+    /** Translucent SwiftUI `Material` as a background fill — picks
+        up content behind, adapts to dark/light mode automatically.
+        Standard in macOS sidebars, popovers, toolbars. **/
+    public function backgroundMaterial(style:MaterialStyle):View {
+        modifierChain.push(ViewModifier.BackgroundMaterial(style));
+        return this;
+    }
+
     public function cornerRadius(radius:Float):View {
         modifierChain.push(ViewModifier.CornerRadius(radius));
         return this;
     }
 
-    public function opacity(value:Float):View {
+    /** Set the view's opacity (`0…1`). Accepts a literal `Float`
+        or a `State<Float>` for reactive fade in/out. **/
+    public function opacity(value:sui.state.StateOr<Float>):View {
         modifierChain.push(ViewModifier.Opacity(value));
         return this;
     }
@@ -100,6 +170,30 @@ class View {
         return this;
     }
 
+    /** Apply a SwiftUI ButtonStyle. The most useful values for visual
+        hierarchy are `BorderedProminent` (the "filled" CTA look) and
+        `Bordered` (a thin outline). Use `Plain` to strip the default
+        chrome — handy inside Lists, sidebars and tappable cells. **/
+    /** Apply a SwiftUI PickerStyle. Most useful: `Segmented` for the
+        native macOS switcher control. **/
+    public function pickerStyle(style:PickerStyleValue):View {
+        modifierChain.push(ViewModifier.PickerStyle(style));
+        return this;
+    }
+
+    /** Run a `StateAction` whenever the named state changes (e.g.
+        when a `Picker` writes its new selection). Maps to SwiftUI's
+        `.onChange(of:_:)`. **/
+    public function onChange(stateName:String, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnChange(stateName, action));
+        return this;
+    }
+
+    public function buttonStyle(style:ButtonStyleValue):View {
+        modifierChain.push(ViewModifier.ButtonStyle(style));
+        return this;
+    }
+
     public function searchable(textBinding:String, ?prompt:String):View {
         modifierChain.push(ViewModifier.Searchable(textBinding, prompt));
         return this;
@@ -107,6 +201,32 @@ class View {
 
     public function sheet(isPresentedBinding:Dynamic, content:View):View {
         modifierChain.push(ViewModifier.Sheet(isPresentedBinding, content));
+        return this;
+    }
+
+    /** Trailing inspector pane (macOS) — slides out from the right
+        edge when `isPresentedBinding` becomes true. Maps to
+        SwiftUI's `.inspector(isPresented:_:)`. The standard macOS
+        pattern for showing details about the current selection
+        without opening a modal. **/
+    public function inspector(isPresentedBinding:Dynamic, content:View):View {
+        modifierChain.push(ViewModifier.Inspector(isPresentedBinding, content));
+        return this;
+    }
+
+    /** Set the Inspector column's `min` / `ideal` / `max` widths.
+        SwiftUI defaults the Inspector column to a narrow ~250pt
+        track that can shrink further when the window resizes —
+        too tight for anything beyond simple key/value detail
+        lists. Apply this directly after `.inspector(...)`:
+        ```haxe
+        myView
+            .inspector("editorOpen", buildEditor())
+            .inspectorColumnWidth(360, 480, 720);
+        ```
+        Maps to `.inspectorColumnWidth(min:ideal:max:)`. **/
+    public function inspectorColumnWidth(min:Float, ideal:Float, max:Float):View {
+        modifierChain.push(ViewModifier.InspectorColumnWidth(min, ideal, max));
         return this;
     }
 
@@ -131,8 +251,14 @@ class View {
         return this;
     }
 
-    /** Animate changes. Curve: "default", "easeIn", "easeOut", "easeInOut", "spring", "linear", "bouncy". **/
-    public function animation(curve:String, ?value:sui.state.StateOr<Float>):View {
+    /** Animate changes of `value` (a `State<T>` field) with the
+        given curve — SwiftUI's `.animation(_, value:)`. This is the
+        replacement for the old `StateAction.Animated(action, curve)`
+        wrapper: instead of animating *one mutation*, the view
+        declares which state drives its animation, and every change
+        of that state animates — including changes coming back from
+        Haxe through the bridge. **/
+    public function animation(curve:sui.state.AnimationCurve, ?value:Dynamic):View {
         modifierChain.push(ViewModifier.Animation(curve, value));
         return this;
     }
@@ -157,6 +283,46 @@ class View {
     /** Add a tap gesture with a declarative StateAction. **/
     public function onTapGesture(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.OnTapGesture(action));
+        return this;
+    }
+
+    /** Attach a SwiftUI `DragGesture` and route its release event to
+        a `@:expose` Haxe bridge function. The bridge receives the
+        drag's start + end coordinates as normalised fractions of
+        the enclosing `GeometryReader`'s proxy size — five args in
+        order: `mode`, `startX`, `startY`, `endX`, `endY`.
+
+        ```haxe
+        view.onDragGesture("handleGridDrag", "week")
+        ```
+
+        Generates:
+        ```swift
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 4)
+                .onEnded { v in
+                    let sx = max(0.0, min(1.0, v.startLocation.x / proxy.size.width))
+                    ...
+                    Task.detached { _ = HaxeBridgeC.handleGridDrag("week", sx, sy, ex, ey) }
+                }
+        )
+        ```
+
+        Must be attached inside a `GeometryReader`'s content so
+        `proxy.size` is in scope — same constraint as
+        `proportionalOffset`. **/
+    public function onDragGesture(fnName:String, mode:String):View {
+        modifierChain.push(ViewModifier.OnDragGesture(fnName, mode));
+        return this;
+    }
+
+    /** SwiftUI's `.allowsHitTesting(enabled)`. Passing `false`
+        lets touches drop through to the view stacked below —
+        the way to expose a backdrop drag gesture beneath
+        decorative event blocks. **/
+    public function allowsHitTesting(enabled:Bool):View {
+        modifierChain.push(ViewModifier.AllowsHitTesting(enabled));
         return this;
     }
 
@@ -202,6 +368,29 @@ class View {
         return this;
     }
 
+    /** Offset by a *fraction* of the parent's measured size. Only
+        valid inside a `GeometryReader` — the codegen expression
+        references the `proxy` variable that container provides.
+        GeometryReader anchors its content at top-leading, so
+        `(0, 0)` leaves the view at the parent's top-leading edge,
+        `(0.5, 0.5)` lands it at the centre, and `(1, 1)` at
+        bottom-trailing. Accepts either a literal `Float` or a
+        `State<Float>` per axis. **/
+    public function proportionalOffset(xFraction:sui.state.StateOr<Float>, yFraction:sui.state.StateOr<Float>):View {
+        modifierChain.push(ViewModifier.ProportionalOffset(xFraction, yFraction));
+        return this;
+    }
+
+    /** Constrain the frame to a *fraction* of the parent's measured
+        size. Like `proportionalOffset`, only valid inside a
+        `GeometryReader`. Pass `null` (or any negative literal) on
+        an axis to leave that dimension intrinsic. Typical use is
+        timeline event blocks whose height = duration / day-length. **/
+    public function proportionalFrame(widthFraction:sui.state.StateOr<Float>, heightFraction:sui.state.StateOr<Float>):View {
+        modifierChain.push(ViewModifier.ProportionalFrame(widthFraction, heightFraction));
+        return this;
+    }
+
     /** Present a full-screen modal. **/
     public function fullScreenCover(isPresentedBinding:Dynamic, content:View):View {
         modifierChain.push(ViewModifier.FullScreenCover(isPresentedBinding, content));
@@ -222,9 +411,7 @@ class View {
 
     /** Add pull-to-refresh to a list. **/
     public function refreshable(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.Refreshable(actionId));
+        modifierChain.push(ViewModifier.Refreshable(action));
         return this;
     }
 
@@ -243,6 +430,13 @@ class View {
     /** Set accessibility label. **/
     public function accessibilityLabel(label:String):View {
         modifierChain.push(ViewModifier.AccessibilityLabel(label));
+        return this;
+    }
+
+    /** Tooltip text shown on hover on macOS (and used as an
+        accessibility hint on iOS). Maps to SwiftUI's `.help(_:)`. **/
+    public function help(text:String):View {
+        modifierChain.push(ViewModifier.Help(text));
         return this;
     }
 
@@ -278,9 +472,7 @@ class View {
 
     /** Run a closure on form/text field submit. **/
     public function onSubmit(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnSubmit(actionId));
+        modifierChain.push(ViewModifier.OnSubmit(action));
         return this;
     }
 
@@ -290,39 +482,85 @@ class View {
         return this;
     }
 
-    /** Run a StateAction when the view appears. **/
+    /** Bind a keyboard shortcut to this view (typically a Button) —
+        maps to SwiftUI's `.keyboardShortcut(_:, modifiers:)`.
+
+        `key` accepts a single character (`"n"`, `"s"`, `","`) or one
+        of the named special keys: `"return"`, `"escape"`, `"delete"`,
+        `"tab"`, `"space"`, `"left"`, `"right"`, `"up"`, `"down"`.
+
+        `modifiers` is any combination of `"command"`, `"option"`,
+        `"control"`, `"shift"`. Order doesn't matter; an empty array
+        means the bare key (rare; mostly used for `escape` and arrow
+        keys).
+
+        ```haxe
+        new Button("New Event", null, openNewEventAction)
+            .keyboardShortcut("n", ["command"]);
+
+        new Button("Today", null, showTodayAction)
+            .keyboardShortcut("t", ["command"]);
+        ```
+    **/
+    public function keyboardShortcut(key:String, ?modifiers:Array<String>):View {
+        modifierChain.push(ViewModifier.KeyboardShortcut(key, modifiers != null ? modifiers : []));
+        return this;
+    }
+
+    /** Run a `StateAction` when the given key is pressed while
+        this view (or a descendant) has focus. Maps to SwiftUI's
+        `.onKeyPress(_:action:)`. Use the same key-naming scheme
+        as `.keyboardShortcut` — single chars or named special
+        keys (`"return"`, `"escape"`, `"left"`, …). **/
+    public function onKeyPress(key:String, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnKeyPress(key, action));
+        return this;
+    }
+
+    /** Run an action when the view appears (synchronous variant —
+        same emission as `onAppear`). **/
     public function onAppearAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.OnAppearAction(action));
         return this;
     }
 
-    /** Run a StateAction as an async task when the view appears. **/
+    /** Run an action as an async task when the view appears. **/
     public function taskAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.TaskAction(action));
         return this;
     }
 
+    /** Run the action every `seconds` for as long as the view stays
+        attached — the replacement for the old
+        `StateAction.IntervalLoop`:
+
+        ```haxe
+        rootView.every(60, () -> tickNowLine());
+        ```
+
+        Compiles to a SwiftUI `.task` whose body sleeps and
+        re-dispatches until the view goes away (the task is
+        cancelled automatically on detach). **/
+    public function every(seconds:Float, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.Every(seconds, action));
+        return this;
+    }
+
     /** Run a closure when the view appears. Runs in Haxe via the bridge. **/
     public function onAppear(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnAppear(actionId));
+        modifierChain.push(ViewModifier.OnAppear(action));
         return this;
     }
 
     /** Run a closure when the view disappears. Runs in Haxe via the bridge. **/
     public function onDisappear(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnDisappear(actionId));
+        modifierChain.push(ViewModifier.OnDisappear(action));
         return this;
     }
 
     /** Run an async closure when the view appears. Runs in Haxe via the bridge. **/
     public function task(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.TaskOnAppear(actionId));
+        modifierChain.push(ViewModifier.TaskOnAppear(action));
         return this;
     }
 }
@@ -382,4 +620,36 @@ enum TextFieldStyleValue {
     Automatic;
     RoundedBorder;
     Plain;
+}
+
+enum ButtonStyleValue {
+    Automatic;
+    Plain;
+    Borderless;
+    Bordered;
+    BorderedProminent;
+    Link;
+}
+
+enum PickerStyleValue {
+    Automatic;
+    Inline;
+    Menu;
+    Palette;
+    /** macOS / iOS / iPadOS — the segmented "switcher" control,
+        typical for view-mode toolbars. **/
+    Segmented;
+    /** iOS only. **/
+    Wheel;
+}
+
+enum MaterialStyle {
+    /** The system default — `.regularMaterial`. Mid-thickness frosted glass. **/
+    Regular;
+    Thin;
+    UltraThin;
+    Thick;
+    UltraThick;
+    /** Bar-style material — used by `.bar`. Slightly tinted for toolbars. **/
+    Bar;
 }
