@@ -61,7 +61,7 @@ class HelloApp extends App {
 - **[Views](views/README.md)** &mdash; 40+ built-in views.
 - **[Modifiers](modifiers.md)** &mdash; 58+ view modifiers reference.
 - **[State](state/README.md)** &mdash; State management, bindings, and observables.
-- **[Animations](animations.md)** &mdash; Animated actions, transitions, and curves.
+- **[Animations](animations.md)** &mdash; State-driven `.animation(curve, state)`, transitions, and curves.
 - **[Bridge](bridge.md)** &mdash; Transparent Haxe/C++ bridge (automatic closures + explicit exports).
 - **[Native Extensions](native-extensions.md)** &mdash; Custom Swift files and SPM packages.
 - **[Examples](examples/README.md)** &mdash; 18 example apps.

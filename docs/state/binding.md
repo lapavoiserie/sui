@@ -50,7 +50,7 @@ class MyApp extends App {
     override function body():View {
         return new VStack([
             new StarRating("Movie:", "movieRating"),  // passes binding to state
-            new Button("+", null, movieRating.inc(1))
+            new Button("+", () -> movieRating.value++)
         ]);
     }
 }

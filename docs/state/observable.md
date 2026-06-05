@@ -47,8 +47,10 @@ class TodoApp extends App {
                 new HStack([
                     Text.bind(todos.value[i].title),
                     new Spacer(),
-                    new Button("Done", null,
-                        StateAction.CustomSwift("todos[i].completed.toggle()"))
+                    new Button("Done", () -> {
+                        todos.value[i].completed = !todos.value[i].completed;
+                        todos.value = todos.value; // re-assign to notify SwiftUI
+                    })
                 ])
             )
         ]);
@@ -56,7 +58,9 @@ class TodoApp extends App {
 }
 ```
 
-Mutating `todos[i].completed` directly in Swift triggers a re-render because the array is `@State`. No manual notification needed.
+The row closure references the iteration index `i`; the macro lifts it into an indexed
+builder so Swift dispatches it with the live loop index. Re-assigning `todos.value`
+notifies SwiftUI to re-render.
 
 ## Key Points
 
@@ -64,4 +68,4 @@ Mutating `todos[i].completed` directly in Swift triggers a re-render because the
 - Public properties become Swift struct fields automatically
 - Reactivity comes from `@State` on the array &mdash; no manual change tracking required
 - Use `Text.bind(array.value[index].property)` to display properties (inside `ForEach.byIndex`, where `index` is the lambda parameter)
-- Mutate with `StateAction.CustomSwift()` for direct Swift property access
+- Mutate from an action closure (`item.prop = ...; array.value = array.value;`) to re-render

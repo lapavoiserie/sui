@@ -16,7 +16,7 @@ new Button("Say Hello", () -> {
 })
 ```
 
-Under the hood, the framework registers the closure in an action registry and generates Swift code that calls `HaxeBridgeC.invokeAction(id)`. You never see this &mdash; it just works.
+Under the hood, the framework registers the closure under a stable id and generates Swift code that calls `HaxeBridgeC.invokeAction(id)`. You never see this &mdash; it just works. See [Dispatch by id](#dispatch-by-id) below for the exact mechanism.
 
 ### State Updates
 
@@ -48,89 +48,115 @@ new VStack([...])
 
 These closures run in Haxe/C++ and can update `@:state` variables to push updates back to SwiftUI.
 
+## Calling Haxe Business Logic from an Action
+
+There is no special action variant for bridge calls anymore. To run Haxe/C++ logic,
+just call the function inside the closure and assign its result to a state variable.
+The closure already runs on a detached thread, so blocking work (HTTP, heavy compute)
+is fine:
+
+```haxe
+// Synchronous call + assign
+new Button("Greet", () -> result.value = greet("World"))
+
+// Several arguments
+new Button("Login", () -> result.value = doLogin("https://api.example.com", "user@email.com", "pass123"))
+
+// Show a loading placeholder, then the result — SwiftUI sees both writes
+new Button("Fetch Data", () -> {
+    result.value = "Loading...";
+    result.value = fetchUrl("https://example.com");
+})
+
+// Fire-and-forget (no return value)
+new Button("Refresh", () -> refresh())
+```
+
+The function does not need `@:expose` to be called this way &mdash; it's an ordinary Haxe
+call inside a Haxe closure.
+
 ## @:expose (Explicit Named Exports)
 
-Use `@:expose` when you want to expose a **named static function** to Swift, so you can call it from `StateAction.CustomSwift`, `BridgeCall`, or `BridgeCallLoading`:
+Use `@:expose` when you want to expose a **named static function** to Swift so that
+*custom Swift code* (hand-written, outside the generated view) can call it by name as
+`HaxeBridgeC.<fn>()`:
 
-**With @:expose:**
 ```haxe
 @:expose
 public static function greet(name:String):String {
     return 'Hello, $name! (from Haxe/C++)';
 }
-
-// Called by name from Swift:
-new Button("Greet", null,
-    StateAction.CustomSwift('result = HaxeBridgeC.greet("World")'))
 ```
 
-**Without @:expose (closure equivalent):**
-```haxe
-// No annotation — just use a closure
-new Button("Greet", () -> {
-    result.value = 'Hello, World! (from Haxe/C++)';
-})
+```swift
+// In your own Swift code:
+let msg = HaxeBridgeC.greet("World")
 ```
 
-The `@:expose` version is useful when you need the return value in a Swift expression, or when you want to reuse the same function from multiple call sites. The closure version is simpler when you just need to run Haxe logic and update state.
+> [!NOTE]
+> `@:expose` is no longer required for actions. Action closures call Haxe functions
+> directly (see above) whether or not they are exposed. `@:expose` matters only when
+> Swift you wrote yourself needs a named entry point into Haxe.
 
 ### When to Use @:expose
 
 Use `@:expose` when you need to:
-- Call a Haxe function from a `StateAction.CustomSwift` expression
-- Use `StateAction.BridgeCall` or `BridgeCallLoading`
-- Get a return value back from Haxe into a Swift expression
+- Call a Haxe function from hand-written Swift code by name
+- Get a return value back from Haxe into a custom Swift expression
 
 You do **not** need `@:expose` for:
-- Button closures (automatic)
+- Button / action closures (automatic)
+- Calling a Haxe function from inside an action closure (ordinary Haxe call)
 - `@:state` variable updates (automatic)
 - Lifecycle closures like `onAppear`, `task`, `onDisappear` (automatic)
 
-## Calling @:expose Functions
+## Dispatch by id
 
-### From StateAction.CustomSwift
+Every action call site is rewritten by `StateMacro` so the closure is registered under
+a **stable id** and dispatched from Swift &mdash; no Swift mutation code is generated for
+the action itself.
+
+- **Outside a `ForEach` row:** the macro rewrites the call site to
+  `Callbacks.reg(<id>, closure)`. The closure is registered as the view tree is built;
+  Swift dispatches it with `HaxeBridgeC.invokeAction(id)`.
+- **Inside a `ForEach` row:** the macro lifts the closure into a static builder
+  `(i0, i1) -> (() -> Void)` registered with `Callbacks.indexed(<id>, frames)`. Swift
+  dispatches it with `HaxeBridgeC.invokeIndexedAction(id, i0, i1)`, passing the **live**
+  loop indices so the closure operates on the right row.
+
+The ids are stable hashes assigned at compile time and read straight from the typed AST
+by the Swift generator &mdash; there is no parallel macro/runtime counter to keep in sync.
+All dispatch is serialized by the bridge's global mutex.
+
+```mermaid
+flowchart TD
+    A["Action closure in body()"] --> B["StateMacro: Callbacks.reg(id, closure)"]
+    B --> C["Swift generator reads id from typed AST"]
+    C --> D["Button { HaxeBridgeC.invokeAction(id) }"]
+    D --> E["bridge mutex → run closure on detached thread"]
+```
+
+## Write-Back: Swift → Haxe
+
+Scalar `@:state` / AppState properties carry a `didSet` that replicates writes coming
+from SwiftUI bindings (`TextField`, `Toggle`, `Slider`, `Picker`, …) back into the Haxe
+mirror via `HaxeBridgeC.syncState` → `State._applyFromSwift`.
+
+The practical consequence: inside an action closure, `someState.value` is **always
+fresh**, even for a value the user just typed into a `TextField` and hasn't submitted
+through any other path.
 
 ```haxe
-// With @:expose — calls greet() by name in Swift
-new Button("Greet", null,
-    StateAction.CustomSwift('result = HaxeBridgeC.greet("World")'))
-
-// Without @:expose — same logic via closure
-new Button("Greet", () -> {
-    result.value = 'Hello, World! (from Haxe/C++)';
+new TextField("New item...", "newItemText"),
+new Button("Add", () -> {
+    // newItemText was written back by the TextField binding —
+    // .value is up to date here
+    if (newItemText.value != "") {
+        todos.value = todos.value.concat([new TodoItem(newItemText.value)]);
+        newItemText.value = "";
+    }
 })
 ```
-
-### With BridgeCall
-
-```haxe
-// Single argument
-new Button("Greet", null,
-    StateAction.BridgeCall("result", "greet", "World"))
-
-// Multiple arguments
-new Button("Login", null,
-    StateAction.BridgeCall("result", "doLogin", ["https://api.example.com", "user@email.com", "pass123"]))
-
-// Without @:expose — same logic via closure
-new Button("Greet", () -> result.value = greet("World"))
-```
-
-### Async with BridgeCallLoading
-
-For slow operations, show a loading state while the bridge call runs:
-
-```haxe
-// Single argument
-new Button("Fetch Data", null,
-    StateAction.BridgeCallLoading("result", "Loading...", "fetchUrl", "https://example.com"))
-
-// Multiple arguments
-new Button("Login", null,
-    StateAction.BridgeCallLoading("result", "Logging in...", "doLogin", ["https://api.example.com", "user@email.com", "pass123"]))
-```
-
-The `BridgeCallLoading` version sets the loading text immediately, then runs the bridge call in a background task and updates the state when done.
 
 ## How It Works
 
@@ -143,12 +169,12 @@ flowchart LR
     end
 
     subgraph Explicit["@:expose (explicit)"]
-        SW2["Swift code"] --> HBC["HaxeBridgeC.fn()"] --> CPP2["C++/Haxe"]
+        SW2["Custom Swift code"] --> HBC["HaxeBridgeC.fn()"] --> CPP2["C++/Haxe"]
         CPP2 --> RET["Return value"] --> SW2
     end
 ```
 
-The transparent bridge handles closures and state synchronization without any annotations. `@:expose` adds named entry points for when Swift code needs to call specific Haxe functions by name and get return values.
+The transparent bridge handles closures and state synchronization without any annotations. `@:expose` adds named entry points for when hand-written Swift code needs to call specific Haxe functions by name and get return values.
 
 ## Full Example
 
@@ -162,7 +188,8 @@ class BridgeApp extends App {
         bundleIdentifier = "com.sui.bridgedemo";
     }
 
-    // Explicit bridge: callable by name from Swift as HaxeBridgeC.greet()
+    // Haxe business logic, runs in C++. @:expose also makes it callable
+    // by name from hand-written Swift as HaxeBridgeC.greet().
     @:expose
     public static function greet(name:String):String {
         return 'Hello, $name! (from Haxe/C++)';
@@ -182,14 +209,9 @@ class BridgeApp extends App {
                 .font(FontStyle.Title2)
                 .padding(),
 
-            // Uses @:expose (named function, return value)
-            new Button("Greet from Haxe", null,
-                StateAction.CustomSwift('result = HaxeBridgeC.greet("World")')),
-
-            // Uses transparent bridge (closure, no annotation needed)
-            new Button("Hello via closure", () -> {
-                result.value = "Hello from a closure!";
-            }),
+            // Action closures call the Haxe functions directly
+            new Button("Greet from Haxe", () -> result.value = greet("World")),
+            new Button("Fibonacci(20)", () -> result.value = 'fib(20) = ${fibonacci(20)}'),
         ]);
     }
 }
@@ -268,10 +290,11 @@ HaxeBridgeC.objectBoolField("users", at: index, field: "active") // → Bool
 ## Key Points
 
 - **Most bridging is automatic** &mdash; closures and `@:state` updates just work
-- `@:expose` is only needed for named function exports callable from Swift expressions
-- `@:expose` functions must be `public static`
-- They can accept and return basic types (`String`, `Int`, `Float`, `Bool`)
+- Actions are plain `() -> Void` closures, dispatched by stable id (`invokeAction` / `invokeIndexedAction`)
+- To run Haxe logic from an action, just call the function in the closure &mdash; no `@:expose` needed
+- `@:expose` is only needed for named function exports callable from hand-written Swift; they must be `public static`
+- `@:expose` functions can accept and return basic types (`String`, `Int`, `Float`, `Bool`)
+- SwiftUI binding writes mirror back into Haxe via `didSet`, so `state.value` is always fresh in a closure
 - Arrays and objects use shared memory &mdash; no serialization overhead
-- The generated bridge uses `HaxeBridgeC.functionName()` in Swift
-- Use `BridgeCallLoading` for operations that take time
+- For a loading placeholder, write the placeholder then the result in the same closure
 - Use `State.setByName()` to update multiple `@:state` variables from a single closure

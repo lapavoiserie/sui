@@ -40,62 +40,90 @@ an array of basic types, or a class extending Observable.
 | `.value` | Read the current value (Haxe side) |
 | `.value = newValue` | Update the value and notify SwiftUI |
 
-The variable name is used directly in fluent `StateAction` calls, `Text.bind` expressions, and binding references.
+The variable name is used directly in action closures, `Text.bind` expressions, and binding references.
 
-## StateAction
+## Actions
 
-`StateAction` provides declarative state mutations that generate inline Swift code. Actions use a fluent API where you call methods directly on typed state references.
-
-### Arithmetic
-
-```haxe
-count.inc(1)    // count += 1
-count.dec(1)    // count -= 1
-```
-
-### Assignment
+An action is just a Haxe closure &mdash; `typedef StateAction = () -> Void`. You mutate
+state by assigning to `.value`; the change is reflected in SwiftUI automatically.
 
 ```haxe
-name.setTo("Haxe")  // name = "Haxe"
-isOn.tog()           // isOn.toggle()
+new Button("+", () -> count.value++)
+new Button("-", () -> count.value--)
+new Button("Reset", () -> count.value = 0)
+new Button("Toggle", () -> isOn.value = !isOn.value)
 ```
 
-### Array Operations
+A closure can run any Haxe logic and touch several state variables:
 
 ```haxe
-items.appendAction(newItem)   // items.append(newItem)
+new Button("Reset all", () -> {
+    scale.value = 1;
+    rotation.value = 0;
+    offset.value = 0;
+})
 ```
 
-### Custom Swift
-
-For complex mutations, write Swift directly:
+A bare function reference works too, as long as its signature is `() -> Void`:
 
 ```haxe
-StateAction.CustomSwift('if !text.isEmpty { items.append(Item(title: text)); text = "" }')
+new Button("Login", MyApp.startLogin)
 ```
 
-### Bridge Calls
+Actions run on a detached thread on the Haxe/C++ side. Each call site is registered
+under a stable id at build time and dispatched from Swift &mdash; see
+[The Bridge](../bridge.md) for the mechanics. Because every `@:state` property
+mirrors SwiftUI's bindings back into Haxe via `didSet`, reading `someState.value`
+inside an action always returns the current value, even one the user just typed into a
+`TextField`.
 
-Call `@:expose` functions from Swift:
+### Bridge calls
+
+To run business logic in Haxe/C++, just call the function from the closure and assign
+its result. The closure already runs off the main thread, so a blocking call is fine:
 
 ```haxe
 // Synchronous
-StateAction.BridgeCall(result, "greet", "World")
-// → result = HaxeBridgeC.greet("World")
+new Button("Greet", () -> result.value = greet("World"))
 
-// Async with loading state
-StateAction.BridgeCallLoading(result, "Loading...", "fetchUrl", "https://example.com")
-// → result = "Loading..."; Task { result = HaxeBridgeC.fetchUrl("https://example.com") }
+// With a loading placeholder — both assignments are seen by SwiftUI
+new Button("Fetch", () -> {
+    result.value = "Loading...";
+    result.value = fetchUrl("https://example.com");
+})
 
-// Animated — chain .animated() on any action
-showDetail.tog().animated(AnimationCurve.Spring)
-// → withAnimation(.spring) { showDetail.toggle() }
-
-count.inc(1).animated(AnimationCurve.EaseInOut)
-// → withAnimation(.easeInOut) { count += 1 }
+// Fire-and-forget (no return value)
+new Button("Refresh", () -> refresh())
 ```
 
-**Animation curves:** Use the `AnimationCurve` enum: `AnimationCurve.Default`, `AnimationCurve.EaseIn`, `AnimationCurve.EaseOut`, `AnimationCurve.EaseInOut`, `AnimationCurve.Spring`, `AnimationCurve.Linear`, `AnimationCurve.Bouncy`
+> [!TIP]
+> Periodic work that used to be expressed as an interval action now lives on the view:
+> `view.every(2.0, () -> tick.value++)` ticks the closure every two seconds.
+
+### Migrating from the `StateAction` enum
+
+The `StateAction` enum, the fluent shortcuts (`.inc`, `.dec`, `.setTo`, `.tog`,
+`.appendAction`), the `.animated()` wrapper and the `Action` abstract have all been
+removed. Every action is now a plain `() -> Void` closure.
+
+| Old API | New closure |
+|---------|-------------|
+| `count.inc(1)` / `StateAction.Increment(count, 1)` | `() -> count.value++` |
+| `count.dec(1)` / `StateAction.Decrement(count, 1)` | `() -> count.value--` |
+| `x.setTo(v)` / `StateAction.SetValue(x, v)` | `() -> x.value = v` |
+| `b.tog()` / `StateAction.Toggle(b)` | `() -> b.value = !b.value` |
+| `items.appendAction(v)` | `() -> items.value = items.value.concat([v])` |
+| `StateAction.RunExpr(expr)` | `() -> expr` |
+| `StateAction.CustomSwift("…")` | rewrite the logic in pure Haxe inside the closure |
+| `StateAction.BridgeCall(s, "fn", a)` | `() -> s.value = fn(a)` |
+| `StateAction.BridgeCallLoading(s, "…", "fn", a)` | `() -> { s.value = "…"; s.value = fn(a); }` |
+| `StateAction.BridgeCallVoid("fn", a)` | `() -> fn(a)` |
+| `StateAction.Animated(action, curve)` | closure + `.animation(curve, state)` on the view |
+| `StateAction.IntervalLoop(secs, action)` | `view.every(secs, () -> …)` |
+
+The `CustomSwift` escape hatch for actions is gone &mdash; write the equivalent logic in
+Haxe. To make animations follow a mutation, declare which state drives a view's
+animation with `.animation(AnimationCurve.X, state)`; see [Animations](../animations.md).
 
 ## Text.bind
 
@@ -132,14 +160,12 @@ class CounterApp extends App {
                 .font(FontStyle.Title)
                 .padding(),
             new HStack(null, 20, [
-                new Button("-", () -> count.value = count.value - 1,
-                    count.dec(1)),
-                new Button("+", () -> count.value = count.value + 1,
-                    count.inc(1))
+                new Button("-", () -> count.value--),
+                new Button("+", () -> count.value++)
             ])
         ]);
     }
 }
 ```
 
-The fluent `StateAction` (e.g. `count.dec(1)`) handles the Swift-side state mutation for immediate UI updates. The closure runs the same logic on the Haxe/C++ side. Both are optional &mdash; use whichever fits your use case.
+Each button's closure mutates `count.value`; SwiftUI re-renders the `Text.bind` automatically.

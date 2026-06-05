@@ -1,6 +1,6 @@
 # Animations
 
-Demonstrates all three animation primitives: fluent `.animated()` chaining, `.animation()` modifier with `AnimationCurve`, and `.transition()`.
+Demonstrates the animation primitives: the `.animation(curve, state)` modifier with `AnimationCurve`, and `.transition()`. Actions are plain closures &mdash; the curves live on the views.
 
 ## Full Source
 
@@ -37,22 +37,20 @@ class AnimApp extends App {
             .animation(AnimationCurve.EaseInOut, offset)
             .padding(),
 
+            // Plain closures — they animate because of the .animation
+            // modifiers declared on the card above.
             new HStack(null, 15, [
-                new Button("Bounce", null,
-                    StateAction.CustomSwift("scale = scale == 1.0 ? 1.3 : 1.0")
-                        .animated(AnimationCurve.Spring)),
-                new Button("Spin", null,
-                    rotation.inc(90).animated(AnimationCurve.EaseInOut)),
-                new Button("Slide", null,
-                    StateAction.CustomSwift("offset = offset == 0 ? 50 : 0")
-                        .animated(AnimationCurve.EaseInOut)),
-                new Button("Reset", null,
-                    StateAction.CustomSwift("scale = 1; rotation = 0; offset = 0")
-                        .animated(AnimationCurve.Spring))
+                new Button("Bounce", () -> scale.value = scale.value == 1.0 ? 1.3 : 1.0),
+                new Button("Spin", () -> rotation.value += 90),
+                new Button("Slide", () -> offset.value = offset.value == 0 ? 50 : 0),
+                new Button("Reset", () -> {
+                    scale.value = 1;
+                    rotation.value = 0;
+                    offset.value = 0;
+                })
             ]),
 
-            new Button("Toggle Detail", null,
-                showDetail.tog().animated(AnimationCurve.Spring)),
+            new Button("Toggle Detail", () -> showDetail.value = !showDetail.value),
 
             new ConditionalView(showDetail,
                 new VStack([
@@ -70,7 +68,8 @@ class AnimApp extends App {
                     .foregroundColor(ColorValue.Gray)
                     .transition("opacity")
             )
-        ]).padding();
+        ]).padding()
+            .animation(AnimationCurve.Spring, showDetail);
     }
 }
 ```
@@ -86,15 +85,17 @@ class AnimApp extends App {
 .animation(AnimationCurve.Spring, rotation)
 ```
 
-Pass a `State<Float>` reference to visual effect modifiers for dynamic binding. Type-checked at compile time. The `.animation()` modifier takes an `AnimationCurve` enum value that tells SwiftUI which curve to use when that `State<Float>` reference changes.
+Pass a `State<Float>` reference to visual effect modifiers for dynamic binding. Type-checked at compile time. The `.animation()` modifier takes an `AnimationCurve` enum value that tells SwiftUI which curve to use when that `State<Float>` reference changes &mdash; no matter where the change comes from.
 
-### Animated Mutations
+### Mutations Are Plain Closures
 
 ```haxe
-rotation.inc(90).animated(AnimationCurve.EaseInOut)
+new Button("Spin", () -> rotation.value += 90)
 ```
 
-The fluent `.animated()` method wraps any `StateAction` in `withAnimation(.curve) { }`. Without it, the state change is instant. With it, SwiftUI interpolates the visual property smoothly.
+The action just sets `rotation.value`. Because the card declares
+`.animation(AnimationCurve.Spring, rotation)`, SwiftUI interpolates the rotation
+smoothly. Animation is a property of the *view*, not of the mutation.
 
 ### Transitions
 
@@ -105,24 +106,18 @@ new ConditionalView(showDetail,
 )
 ```
 
-`.transition()` defines how a view enters and exits. Only works when the state toggle is animated:
-
-```haxe
-// Animates transition:
-showDetail.tog().animated(AnimationCurve.Spring)
-
-// No transition animation:
-showDetail.tog()
-```
+`.transition()` defines how a view enters and exits. It only animates when the state
+that drives the `ConditionalView` is bound to an `.animation` on the enclosing
+container &mdash; here the outer `VStack` carries `.animation(AnimationCurve.Spring, showDetail)`.
 
 ### How They Work Together
 
-1. **State changes** &mdash; `.animated(AnimationCurve.Spring)` wraps the mutation in `withAnimation`
+1. **Action closures** &mdash; mutate state (`rotation.value += 90`)
 2. **View bindings** &mdash; `.scaleEffect(scale)` reads the `State<Float>` field (type-checked)
-3. **Animation curve** &mdash; `.animation(AnimationCurve.Spring, scale)` specifies HOW to animate
+3. **Animation curve** &mdash; `.animation(AnimationCurve.Spring, scale)` declares which state animates the view and HOW
 4. **Transitions** &mdash; `.transition("slide")` specifies enter/exit behavior
 
-All three can be combined on the same view for complex animated interactions.
+All can be combined on the same view for complex animated interactions.
 
 ## Run It
 

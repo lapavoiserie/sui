@@ -5,14 +5,13 @@
 Triggers an action when tapped.
 
 ```haxe
-// With a fluent StateAction
-new Button("Increment", null, count.inc(1))
+// With a closure action (bridged automatically, no annotation needed)
+new Button("Increment", () -> count.value++)
 
-// With a Haxe closure (bridged automatically, no annotation needed)
 new Button("Say Hello", () -> myState.value = "Hello!")
 
-// With both (fluent StateAction for Swift, closure for Haxe-side effects)
-new Button("+", () -> count.value = count.value + 1, count.inc(1))
+// A bare () -> Void function reference works too
+new Button("Login", MyApp.startLogin)
 ```
 
 **Parameters:**
@@ -20,8 +19,7 @@ new Button("+", () -> count.value = count.value + 1, count.inc(1))
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `label` | `String` | Button text |
-| `action` | `() -> Void` | Optional Haxe closure (bridged automatically) |
-| `stateAction` | `StateAction` | Optional declarative state mutation |
+| `action` | `() -> Void` | Optional action closure (bridged automatically) |
 
 ### Button.withView
 
@@ -33,8 +31,7 @@ Button.withView(
         Image.systemImage("plus.circle"),
         new Text("Add Item")
     ]),
-    null,
-    items.appendAction(someValue)
+    () -> items.value = items.value.concat([someValue])
 )
 ```
 
@@ -171,13 +168,13 @@ A drop-down menu containing buttons or nested `Menu`s. Maps to SwiftUI's `Menu`.
 
 ```haxe
 new Menu("Actions", [
-    new Button("New", null, newAction),
-    new Button("Open…", null, openAction),
+    new Button("New", newAction),
+    new Button("Open…", openAction),
     new Menu("Recent", [
-        new Button("File 1", null, openFile1Action),
-        new Button("File 2", null, openFile2Action),
+        new Button("File 1", openFile1Action),
+        new Button("File 2", openFile2Action),
     ]),
-    new Button("Delete", null, deleteAction),
+    new Button("Delete", deleteAction),
 ])
 ```
 
@@ -211,17 +208,17 @@ class MyApp extends sui.App {
     override function commands():Array<CommandMenu> {
         return [
             new CommandMenu("Calendar", [
-                new Button("New Event", null, newEventAction)
+                new Button("New Event", newEventAction)
                     .keyboardShortcut("n", ["command"]),
-                new Button("Today", null, showTodayAction)
+                new Button("Today", showTodayAction)
                     .keyboardShortcut("t", ["command"]),
             ]),
             new CommandMenu("View", [
-                new Button("Month", null, showMonthAction)
+                new Button("Month", showMonthAction)
                     .keyboardShortcut("1", ["command"]),
-                new Button("Week", null, showWeekAction)
+                new Button("Week", showWeekAction)
                     .keyboardShortcut("2", ["command"]),
-                new Button("Day", null, showDayAction)
+                new Button("Day", showDayAction)
                     .keyboardShortcut("3", ["command"]),
             ]),
         ];

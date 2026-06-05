@@ -174,23 +174,23 @@ The Inspector is the macOS-native alternative to a sheet for showing supplementa
 new VStack([...])
     .sheet(showSheet, new Text("Sheet content"))
     .alert("Warning", showAlert, "Are you sure?")
-    .contextMenu(new Button("Delete", null, StateAction.CustomSwift("deleteItem()")))
+    .contextMenu(new Button("Delete", () -> deleteItem()))
 ```
 
 ## Gestures
 
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
-| `.onTapGesture(action)` | `action: StateAction` | Runs a StateAction when tapped |
-| `.onLongPressGesture(action)` | `action: StateAction` | Runs a StateAction on long press |
-| `.onKeyPress(key, action)` | `key: String`, `action: StateAction` | Runs a StateAction when the named key is pressed while the view (or a descendant) has focus. |
+| `.onTapGesture(action)` | `action: () -> Void` | Runs a closure when tapped |
+| `.onLongPressGesture(action)` | `action: () -> Void` | Runs a closure on long press |
+| `.onKeyPress(key, action)` | `key: String`, `action: () -> Void` | Runs a closure when the named key is pressed while the view (or a descendant) has focus. |
 
 ```haxe
 new Text("Tap me")
-    .onTapGesture(selected.setTo("true"))
+    .onTapGesture(() -> selected.value = "true")
 
 new Text("Hold me")
-    .onLongPressGesture(showMenu.tog())
+    .onLongPressGesture(() -> showMenu.value = !showMenu.value)
 
 // Key press handlers — same key-naming as keyboardShortcut
 new VStack([...])
@@ -235,19 +235,19 @@ new VStack([...])
 Omitting `modifiers` (or passing an empty array) binds the bare key — useful for `"escape"`, arrow keys, etc.
 
 ```haxe
-new Button("New Event", null, openNewEventAction)
+new Button("New Event", openNewEventAction)
     .keyboardShortcut("n", ["command"]);          // ⌘N
 
-new Button("Today", null, showTodayAction)
+new Button("Today", showTodayAction)
     .keyboardShortcut("t", ["command"]);          // ⌘T
 
-new Button("Close", null, dismissAction)
+new Button("Close", dismissAction)
     .keyboardShortcut("escape");                  // Esc
 
-new Button("Next", null, nextAction)
+new Button("Next", nextAction)
     .keyboardShortcut("right", ["command"]);      // ⌘→
 
-new Button("Save As…", null, saveAsAction)
+new Button("Save As…", saveAsAction)
     .keyboardShortcut("s", ["command", "shift"]); // ⇧⌘S
 ```
 
@@ -258,11 +258,14 @@ new Button("Save As…", null, saveAsAction)
 | `.onAppear(action)` | `action: () -> Void` | Closure when view appears |
 | `.onDisappear(action)` | `action: () -> Void` | Closure when view disappears |
 | `.task(action)` | `action: () -> Void` | Async closure on appear |
-| `.onAppearAction(action)` | `action: StateAction` | StateAction on appear |
-| `.taskAction(action)` | `action: StateAction` | StateAction async on appear |
 | `.onSubmit(action)` | `action: () -> Void` | Closure on form/text submit |
 | `.refreshable(action)` | `action: () -> Void` | Pull-to-refresh closure |
+| `.every(seconds, action)` | `seconds: Float`, `action: () -> Void` | Run a closure on a repeating timer while the view is alive |
 | `.swipeActions(content)` | `content: View` | Swipe actions on list rows |
+
+All lifecycle modifiers now take plain `() -> Void` closures. To run Haxe business
+logic, call it inside the closure and assign the result &mdash; the closure runs off the
+main thread, so blocking work is fine:
 
 ```haxe
 new List([...])
@@ -270,7 +273,14 @@ new List([...])
     .listStyle("inset")
 
 new VStack([...])
-    .taskAction(StateAction.BridgeCallLoading(data, "Loading...", "fetchData", ""))
+    .task(() -> {
+        data.value = "Loading...";
+        data.value = fetchData("");
+    })
+
+// Repeating timer — replaces the old StateAction.IntervalLoop
+new Text("Clock")
+    .every(1.0, () -> tick.value++)
 ```
 
 ## Accessibility
@@ -304,23 +314,22 @@ new ConditionalView(showDetail,
 )
 ```
 
-### Animated State Mutations
+### Animating a Mutation
 
-Chain `.animated()` on any fluent `StateAction` to animate the change. Use the `AnimationCurve` enum for the curve:
-
-```haxe
-// Without animation — instant
-new Button("Toggle", null, expanded.tog())
-
-// With animation — smooth spring
-new Button("Toggle", null,
-    expanded.tog().animated(AnimationCurve.Spring))
-```
-
-Works with any action:
+Animation is declared on the view, not on the action. Bind the state that should
+animate via `.animation(curve, state)`, then mutate it from a plain closure &mdash; the
+change animates automatically:
 
 ```haxe
-count.inc(1).animated(AnimationCurve.EaseInOut)
-scale.setTo(1.5).animated(AnimationCurve.Spring)
-StateAction.CustomSwift("offset = offset == 0 ? 50 : 0").animated(AnimationCurve.Bouncy)
+// Declare which state animates the view…
+new GroupBox("Card", [new Text("Hi")])
+    .scaleEffect(scale)
+    .animation(AnimationCurve.Spring, scale)
+
+// …then just mutate it. No animation wrapper on the action.
+new Button("Toggle", () -> expanded.value = !expanded.value)
+new Button("Grow", () -> scale.value = 1.5)
 ```
+
+See [Animations](animations.md) for the full picture. The old `.animated(curve)` wrapper
+on actions has been removed.

@@ -51,8 +51,8 @@ new HStack([
 
 ```haxe
 new HStack(null, 20, [
-    new Button("-", null, count.dec(1)),
-    new Button("+", null, count.inc(1))
+    new Button("-", () -> count.value--),
+    new Button("+", () -> count.value++)
 ])
 ```
 
@@ -114,7 +114,7 @@ new Ellipse()
     .foregroundColor(ColorValue.Purple)
 ```
 
-Useful as drawing primitives, decoration, overlays, and for chip-style backgrounds where a plain `cornerRadius` isn't enough. For more complex curves use `Path` (not yet wrapped) via `CustomSwift`.
+Useful as drawing primitives, decoration, overlays, and for chip-style backgrounds where a plain `cornerRadius` isn't enough. For more complex curves use `Path` (not yet wrapped) in hand-written Swift.
 
 ## Gradients
 
@@ -211,16 +211,17 @@ new ConditionalView(currentScreen, "login",
 
 ### Animated transitions
 
-Add `.transition()` to child views for enter/exit animations, and chain `.animated()` with an `AnimationCurve` to animate the toggle:
+Add `.transition()` to child views for enter/exit animations, and put `.animation(curve, showDetail)` on the enclosing container so the toggle animates. The button itself is a plain closure:
 
 ```haxe
-new Button("Toggle", null,
-    showDetail.tog().animated(AnimationCurve.Spring))
+new Button("Toggle", () -> showDetail.value = !showDetail.value)
 
-new ConditionalView(showDetail,
-    detailView.transition("slide"),
-    placeholder.transition("opacity")
-)
+new VStack([
+    new ConditionalView(showDetail,
+        detailView.transition("slide"),
+        placeholder.transition("opacity")
+    )
+]).animation(AnimationCurve.Spring, showDetail)
 ```
 
 **Transition styles:** `"slide"`, `"opacity"`, `"scale"`, `"move"`, `"push"`

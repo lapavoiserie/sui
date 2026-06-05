@@ -41,13 +41,19 @@ ForEach.byIndex(todos, i ->
     new HStack([
         Text.bind(todos.value[i].title),
         new Spacer(),
-        new Button("Delete", null,
-            StateAction.CustomSwift("todos.remove(at: i)"))
+        new Button("Delete", () -> todos.value = todos.value.filter(t -> t != todos.value[i]))
     ])
 )
 ```
 
 The lambda receives the **index** (`i: Int`). Subscripts into the iterated array (`todos.value[i].title`) and any parallel arrays (`colors.value[i]`) flow through the typed walker into `appState.todos[i]` / `appState.colors[i]` — no stringly templates anywhere. Generates `ForEach(0..<appState.todos.count, id: \.self) { i in … }`.
+
+The `Delete` action is a closure that references the iteration index `i`. Inside a
+`ForEach` row, the macro lifts the closure into an indexed builder and Swift dispatches
+it with the live loop index (`HaxeBridgeC.invokeIndexedAction`). A row closure may only
+reference iteration parameters, `@:state` fields, App members and statics — not locals
+of the enclosing method — and at most 2 levels of `ForEach` can be nested. See
+[The Bridge](../bridge.md#dispatch-by-id).
 
 ### Legacy three-arg form
 

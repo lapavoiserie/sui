@@ -172,7 +172,7 @@ This is the same pattern calendar-mac uses everywhere.
 | `.opacity(expr)`, `.offset(x, y)`, `.scaleEffect(expr)`, `.proportionalOffset(x, y)`, `.proportionalFrame(w, h)`, `.blur(expr)`, `.brightness(expr)`, `.contrast(expr)`, `.saturation(expr)`, `.grayscale(expr)`, `.rotationEffect(expr)` | `resolveModifierValue` |
 | `ForEach.byIndex(arr, i -> body)` | `forEachByIndexToSwift` + `extractItemExpr` per-row |
 | `new ForEach(arr, item -> body)` (closure form) | `forEachToSwift` + `extractItemExpr` per-row |
-| `StateAction.Increment` / `Decrement` / `SetValue` / `Toggle` / `BridgeCall*` | `stateActionToSwift` |
+| Action closures (`() -> Void`) | registered via `Callbacks.reg` / `Callbacks.indexed`, dispatched by id — see [Bridge](bridge.md#dispatch-by-id) |
 | `.sheet`, `.popover`, `.alert`, `.confirmationDialog`, `.searchable`, `.fullScreenCover`, `.inspector` | direct `qualifyStateName` |
 | `.onChange(of:)` | direct `qualifyStateName` |
 
@@ -192,5 +192,5 @@ When you see this, the emitted Swift falls back to `"<unsupported>"`. Replace th
 
 - **[Text & Labels](views/text-and-labels.md)** — `Text.bind` introductory examples
 - **[Lists & Iteration](views/lists-and-iteration.md)** — `ForEach.byIndex` vs closure form vs legacy `"i"` form
-- **[State & Actions](state/state-and-actions.md)** — typed `StateAction` variants
+- **[State & Actions](state/state-and-actions.md)** — action closures
 - **[Bridge](bridge.md)** — `@:expose` Haxe functions, bridged modifier args
