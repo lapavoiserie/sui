@@ -61,6 +61,31 @@ class SwiftGenerator {
 
     // ── Type detection ──────────────────────────────────────────────
 
+    /** True when the typed expression contains a
+        `sui.state.Callbacks.reg(…)` or `Callbacks.indexed(…)` call —
+        i.e. StateMacro wired at least one action closure in it. **/
+    static function typedExprHasCallbacksDispatch(e:haxe.macro.Type.TypedExpr):Bool {
+        if (e == null) return false;
+        var found = false;
+        function visit(te:haxe.macro.Type.TypedExpr):Void {
+            if (found || te == null) return;
+            switch (te.expr) {
+                case TField(_, FStatic(clsRef, fieldRef)):
+                    var c = clsRef.get();
+                    var f = fieldRef.get().name;
+                    if (c.name == "Callbacks" && c.pack.join(".") == "sui.state"
+                        && (f == "reg" || f == "indexed")) {
+                        found = true;
+                        return;
+                    }
+                default:
+            }
+            haxe.macro.TypedExprTools.iter(te, visit);
+        }
+        visit(e);
+        return found;
+    }
+
     static function isAppSubclass(cls:haxe.macro.Type.ClassType):Bool {
         if (cls.name == "App" && cls.pack.join(".") == "sui") return false;
         var sc = cls.superClass;
@@ -121,7 +146,7 @@ class SwiftGenerator {
         needsHorizontalSizeClass = false;
         needsIsoDateHelper = false;
         needsIsoTimeHelper = false;
-        nextActionId = 0;
+        forEachIdxVars = [];
 
         // 1. Find State<T> fields
         var stateDecls:Array<{name:String, swiftType:String, defaultValue:String}> = [];
@@ -162,6 +187,31 @@ class SwiftGenerator {
                 needsRuntimeBridge = true;
             }
             if (field.meta.has(":expose")) needsRuntimeBridge = true;
+        }
+
+        // 3b. Pre-detect action closures. StateMacro rewrote every
+        // action call site to a `sui.state.Callbacks.reg/indexed`
+        // call; any of those forces bridge mode. The flag must be
+        // final BEFORE the body walk so every state-name emission
+        // (`qualifyStateName`) picks the `appState.` prefix
+        // consistently — otherwise a Text.bind emitted before the
+        // first Button would reference the bare @State name while
+        // the rest of the file uses AppState.
+        if (!needsRuntimeBridge) {
+            for (field in cls.fields.get()) {
+                var fe = field.expr();
+                if (fe != null && typedExprHasCallbacksDispatch(fe)) { needsRuntimeBridge = true; break; }
+            }
+        }
+        if (!needsRuntimeBridge && componentTypes != null) {
+            for (compName in componentTypes.keys()) {
+                var compCls = componentTypes.get(compName);
+                for (field in compCls.fields.get()) {
+                    var fe = field.expr();
+                    if (fe != null && typedExprHasCallbacksDispatch(fe)) { needsRuntimeBridge = true; break; }
+                }
+                if (needsRuntimeBridge) break;
+            }
         }
 
         // 4. Walk body() method (may also set needsRuntimeBridge for complex closures)
@@ -406,19 +456,18 @@ class SwiftGenerator {
         }
     }
 
-    /** Rewrite the bare state names produced by the two surviving
-        legacy emitters (`Text.withState("{name}")` and
-        `StateAction.CustomSwift("raw swift")`) so they target the
-        bridged `appState.X` object. Typed paths — `Text.bind`,
-        `ForEach.byIndex`, modifier bridges, `Increment` / `SetValue`
-        / `Toggle`, sheet / popover / picker / slider bindings, the
-        `onChange(of:)` modifier — all qualify their state names
-        directly at emission time via `qualifyStateName`, so this
-        pass no longer runs against the full body.
+    /** Rewrite the bare state names produced by the one surviving
+        legacy emitter (`Text.withState("{name}")`) so they target
+        the bridged `appState.X` object. Typed paths — `Text.bind`,
+        `ForEach.byIndex`, modifier bridges, action dispatch, sheet /
+        popover / picker / slider bindings, the `onChange(of:)`
+        modifier — all qualify their state names directly at emission
+        time via `qualifyStateName`, so this pass no longer runs
+        against the full body.
 
-        Called only by `qualifyStateRefsInRawSwift` (for CustomSwift
-        bodies) and the `Text.withState` shim (for backward compat).
-        New code should never need it. **/
+        Called only through `qualifyStateRefsInRawSwift` by the
+        `Text.withState` shim (backward compat). New code should
+        never need it. **/
     static function rewriteStateRefsToAppState(s:String, stateDecls:Array<{name:String, swiftType:String, defaultValue:String}>):String {
         var placeholder = "__APPSTATE__";
         for (sd in stateDecls) {
@@ -460,13 +509,23 @@ class SwiftGenerator {
         return StringTools.replace(s, placeholder, "appState.");
     }
 
-    /** Generate an @Observable AppState class for bridged state management. **/
+    /** Generate an @Observable AppState class for bridged state management.
+
+        Scalar stored properties carry a `didSet` that mirrors
+        Swift-binding writes (TextField / Toggle / Picker / Slider /
+        Stepper, …) back into the Haxe `State<T>` registry via
+        `HaxeBridgeC.syncState`, so Haxe action closures always read
+        fresh values. The `_applyingFromHaxe` flag suppresses the
+        echo when the write originated on the Haxe side (`set(_:_:)`
+        below) — without it every Haxe mutation would bounce once
+        through the bridge for nothing. **/
     static function generateAppState(stateDecls:Array<{name:String, swiftType:String, defaultValue:String}>):String {
         var buf = new StringBuf();
         buf.add("import Foundation\nimport Observation\n\n");
         buf.add("@Observable\n");
         buf.add("class AppState {\n");
         buf.add("    static let shared = AppState()\n\n");
+        buf.add("    @ObservationIgnored var _applyingFromHaxe = false\n\n");
         for (sd in stateDecls) {
             if (sd.swiftType.charAt(0) == "[") {
                 // Array types: computed property that queries hxcpp shared memory
@@ -485,10 +544,18 @@ class SwiftGenerator {
                 buf.add("    }\n");
                 buf.add('    var _${sd.name}Version: Int = 0\n\n');
             } else {
-                buf.add('    var ${sd.name}: ${sd.swiftType} = ${sd.defaultValue}\n');
+                var toString = switch (sd.swiftType) {
+                    case "String": sd.name;
+                    default: 'String(${sd.name})';
+                };
+                buf.add('    var ${sd.name}: ${sd.swiftType} = ${sd.defaultValue} {\n');
+                buf.add('        didSet { if !_applyingFromHaxe { HaxeBridgeC.syncState("${sd.name}", ${toString}) } }\n');
+                buf.add("    }\n");
             }
         }
         buf.add("\n    func set(_ key: String, _ value: String) {\n");
+        buf.add("        _applyingFromHaxe = true\n");
+        buf.add("        defer { _applyingFromHaxe = false }\n");
         buf.add("        switch key {\n");
         for (sd in stateDecls) {
             if (sd.swiftType.charAt(0) == "[") {
@@ -593,8 +660,13 @@ class SwiftGenerator {
         buf.add("void haxe_bridge_init(void);\n\n");
 
         if (hasRuntimeActions) {
-            buf.add("// Invoke a registered button action by ID\n");
+            buf.add("// Invoke a registered action closure by ID\n");
             buf.add("void haxe_bridge_invoke_action(int32_t actionId);\n\n");
+            buf.add("// Invoke a ForEach row action: the builder re-materialises the\n");
+            buf.add("// iteration values from the loop indices (outermost first, -1 unused)\n");
+            buf.add("void haxe_bridge_invoke_indexed_action(int32_t actionId, int32_t i0, int32_t i1);\n\n");
+            buf.add("// Write a Swift-binding-owned state value back to the Haxe mirror\n");
+            buf.add("void haxe_bridge_sync_state(const char* key, const char* value);\n\n");
             buf.add("// State callback: called by Haxe when State.set() is invoked\n");
             buf.add("typedef void (*haxe_state_callback_t)(const char* key, const char* value);\n");
             buf.add("void haxe_bridge_register_state_callback(haxe_state_callback_t callback);\n\n");
@@ -629,7 +701,7 @@ class SwiftGenerator {
         buf.add("#include <hxcpp.h>\n");
         buf.add('#include "${appClassName}.h"\n');
         if (hasRuntimeActions) {
-            buf.add('#include "sui/ui/Button.h"\n');
+            buf.add('#include "sui/state/Callbacks.h"\n');
         }
         buf.add('#include "sui/state/State.h"\n');
         buf.add("#include <string.h>\n");
@@ -707,9 +779,12 @@ class SwiftGenerator {
         if (hasRuntimeActions) {
             buf.add("        // Register state change forwarder (State.set() → Swift AppState)\n");
             buf.add("        haxe_bridge_register_state_fn(_bridge_state_forwarder);\n");
-            buf.add("        // Build view tree to register button actions\n");
+            buf.add("        // Build the full view tree so every action closure registers\n");
+            buf.add("        // itself in the Callbacks store (body + menu bar + settings).\n");
             buf.add('        auto app = ::${appClassName}_obj::__new();\n');
             buf.add("        app->body();\n");
+            buf.add("        app->commands();\n");
+            buf.add("        app->settings();\n");
         }
         buf.add("    } catch (::Dynamic _e) {\n");
         buf.add('        fprintf(stderr, "[sui] haxe_bridge_init: Haxe exception during boot\\n");\n');
@@ -719,15 +794,45 @@ class SwiftGenerator {
         buf.add("}\n\n");
 
         if (hasRuntimeActions) {
-            // invoke_action: calls into Haxe Button action registry
+            // invoke_action: dispatch into the Callbacks store
             buf.add("void haxe_bridge_invoke_action(int32_t actionId) {\n");
             buf.add("    HaxeBridgeScope _scope;\n");
             buf.add("    try {\n");
-            buf.add("        ::sui::ui::Button_obj::_invokeAction(actionId);\n");
+            buf.add("        ::sui::state::Callbacks_obj::run(actionId);\n");
             buf.add("    } catch (::Dynamic _e) {\n");
             buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_action: Haxe exception\\n");\n');
             buf.add("    } catch (...) {\n");
             buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_action: C++ exception\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n\n");
+
+            // invoke_indexed_action: ForEach row dispatch — the lifted
+            // builder re-materialises the iteration values from the
+            // live SwiftUI loop indices, then runs the user closure.
+            buf.add("void haxe_bridge_invoke_indexed_action(int32_t actionId, int32_t i0, int32_t i1) {\n");
+            buf.add("    HaxeBridgeScope _scope;\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::state::Callbacks_obj::runIndexed(actionId, (int)i0, (int)i1);\n");
+            buf.add("    } catch (::Dynamic _e) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_indexed_action: Haxe exception\\n");\n');
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_invoke_indexed_action: C++ exception\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n\n");
+
+            // sync_state: Swift binding wrote a value (TextField,
+            // Toggle, Picker, Slider, …) — mirror it into the Haxe
+            // State WITHOUT echoing back to Swift, so action closures
+            // running in Haxe read fresh values.
+            buf.add("void haxe_bridge_sync_state(const char* key, const char* value) {\n");
+            buf.add("    if (!key || !value) return;\n");
+            buf.add("    HaxeBridgeScope _scope;\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::state::State_obj::_applyFromSwift(::String(key), ::String(value));\n");
+            buf.add("    } catch (::Dynamic _e) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_sync_state: Haxe exception\\n");\n');
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] haxe_bridge_sync_state: C++ exception\\n");\n');
             buf.add("    }\n");
             buf.add("}\n\n");
         }
@@ -949,9 +1054,19 @@ class SwiftGenerator {
             buf.add("    static func registerCallbacks() {\n");
             buf.add("        haxe_bridge_register_state_callback(swiftStateCallback)\n");
             buf.add("    }\n\n");
-            buf.add("    /// Invoke a button action registered in the Haxe view tree.\n");
+            buf.add("    /// Invoke an action closure registered in the Haxe view tree.\n");
             buf.add("    static func invokeAction(_ id: Int) {\n");
             buf.add("        haxe_bridge_invoke_action(Int32(id))\n");
+            buf.add("    }\n\n");
+            buf.add("    /// Invoke a ForEach row action with the live loop indices\n");
+            buf.add("    /// (outermost first; pass -1 for unused slots).\n");
+            buf.add("    static func invokeIndexedAction(_ id: Int, _ i0: Int, _ i1: Int) {\n");
+            buf.add("        haxe_bridge_invoke_indexed_action(Int32(id), Int32(i0), Int32(i1))\n");
+            buf.add("    }\n\n");
+            buf.add("    /// Mirror a Swift-binding-owned state write into the Haxe side\n");
+            buf.add("    /// (no echo back to Swift). Called from AppState didSet hooks.\n");
+            buf.add("    static func syncState(_ key: String, _ value: String) {\n");
+            buf.add("        haxe_bridge_sync_state(key.cString(using: .utf8), value.cString(using: .utf8))\n");
             buf.add("    }\n\n");
         }
         // Shared-memory query wrappers — typed accessors
@@ -1121,8 +1236,11 @@ class SwiftGenerator {
     static var currentStateNames:Map<String, Bool> = new Map();
     /** Tracks whether the current app uses AdaptiveStack (needs @Environment horizontalSizeClass). **/
     static var needsHorizontalSizeClass:Bool = false;
-    /** Counter for button action IDs (must match Button._nextActionId at runtime). **/
-    static var nextActionId:Int = 0;
+    /** Stack of Swift loop-index variable names for the ForEach
+        levels currently being emitted, outermost first. Indexed
+        action dispatch (`Callbacks.indexed`) reads the innermost N
+        entries to pass live row indices to the lifted builder. **/
+    static var forEachIdxVars:Array<String> = [];
 
     static function walkFunc(expr:haxe.macro.Type.TypedExpr, indent:Int):String {
         if (expr == null) return "";
@@ -1352,20 +1470,15 @@ class SwiftGenerator {
 
         if (modifiers.length == 0) return baseCode;
 
-        // Append modifiers after base view
-        // Replace __LIFECYCLE_ACTION__ placeholders with actual IDs
-        // (assigned AFTER children, matching runtime registration order)
+        // Append modifiers after base view. Action ids are explicit
+        // in the typed AST (StateMacro assigned them), so there is
+        // no placeholder resolution or counter syncing here anymore.
         var trimmed = baseCode.rtrim();
         var pad = ind(indent);
         var buf = new StringBuf();
         buf.add(trimmed);
         for (mod in modifiers) {
-            var resolved = mod;
-            while (resolved.indexOf("__LIFECYCLE_ACTION__") != -1) {
-                var aid = nextActionId++;
-                resolved = StringTools.replace(resolved, "__LIFECYCLE_ACTION__", Std.string(aid));
-            }
-            buf.add('\n${pad}    .$resolved');
+            buf.add('\n${pad}    .$mod');
         }
         buf.add("\n");
         return buf.toString();
@@ -1481,28 +1594,10 @@ class SwiftGenerator {
 
             case "Button":
                 var label = if (args.length > 0) extractString(args[0]) else "";
-                var actionCode:String = null;
-
-                // Check for StateAction (args[2])
-                if (args.length > 2) {
-                    actionCode = stateActionToSwift(args[2]);
-                }
-
-                // If no StateAction, check if there's a runtime closure/function (args[1])
-                if (actionCode == null && args.length > 1) {
-                    var closureExpr = unwrap(args[1]);
-                    switch (closureExpr.expr) {
-                        case TConst(TNull):
-                            // null — no action
-                        default:
-                            // Any non-null function reference (closure, method ref, local var)
-                            // → invoke via bridge at runtime
-                            var aid = nextActionId++;
-                            needsRuntimeBridge = true;
-                            actionCode = 'Task.detached { HaxeBridgeC.invokeAction($aid) }';
-                    }
-                }
-
+                // The action is a closure wired by StateMacro —
+                // `Callbacks.reg(id, …)` outside ForEach rows,
+                // `Callbacks.indexed(id, n)` inside them.
+                var actionCode = if (args.length > 1) actionToSwift(args[1]) else null;
                 if (actionCode == null) actionCode = "// no action";
 
                 var buf = new StringBuf();
@@ -2110,31 +2205,43 @@ class SwiftGenerator {
         if (lambda != null) {
             var itemName = lambda.paramName != null && lambda.paramName != "" ? lambda.paramName : "item";
             var prev = currentItemBinding;
-            // Closure form: iterate directly over the array's elements
-            // so the Haxe-typed lambda parameter and the Swift binding
-            // refer to the same value (`color: String`, not the index).
-            // SwiftUI's `ForEach(_:id:_:)` requires the element type to
-            // be Hashable — `id: \.self` is the standard escape hatch.
+            // Closure form: iterate by index, binding the element to
+            // a `let` so the Haxe-typed lambda parameter still maps
+            // to a plain Swift value (`color: String`). The index
+            // variable is what makes row action dispatch possible —
+            // `Callbacks.indexed` builders re-materialise the element
+            // from it at tap time. The array is hoisted into a local
+            // so bridge-backed computed arrays are materialised once
+            // per body evaluation instead of once per row.
             currentItemBinding = {
                 paramId: lambda.paramId,
                 swiftExpr: itemName,
             };
+            var depth = forEachIdxVars.length;
+            var idxVar = '__i$depth';
+            var arrVar = '__arr$depth';
+            forEachIdxVars.push(idxVar);
             var buf = new StringBuf();
-            buf.add('${pad}ForEach(${arrayName}, id: \\.self) { ${itemName} in\n');
+            buf.add('${pad}let ${arrVar} = ${arrayName}\n');
+            buf.add('${pad}ForEach(0..<${arrVar}.count, id: \\.self) { ${idxVar} in\n');
+            buf.add('${pad}    let ${itemName} = ${arrVar}[${idxVar}]\n');
             buf.add(viewToSwift(lambda.body, indent + 1));
             buf.add('${pad}}\n');
+            forEachIdxVars.pop();
             currentItemBinding = prev;
             return buf.toString();
         }
 
-        // Legacy form
+        // Legacy form — the iteration variable IS the index.
         var itemName = if (args.length > 1) extractString(args[1]) else "item";
+        forEachIdxVars.push(itemName);
         var buf = new StringBuf();
         buf.add('${pad}ForEach(0..<${arrayName}.count, id: \\.self) { ${itemName} in\n');
         if (args.length > 2) {
             buf.add(viewToSwift(args[2], indent + 1));
         }
         buf.add('${pad}}\n');
+        forEachIdxVars.pop();
         return buf.toString();
     }
 
@@ -2155,10 +2262,12 @@ class SwiftGenerator {
             paramId: lambda.paramId,
             swiftExpr: itemName,
         };
+        forEachIdxVars.push(itemName);
         var buf = new StringBuf();
         buf.add('${pad}ForEach(0..<${arrayName}.count, id: \\.self) { ${itemName} in\n');
         buf.add(viewToSwift(lambda.body, indent + 1));
         buf.add('${pad}}\n');
+        forEachIdxVars.pop();
         currentItemBinding = prev;
         return buf.toString();
     }
@@ -2605,83 +2714,65 @@ class SwiftGenerator {
         return s != null ? s : "default";
     }
 
-    static function stateActionToSwift(expr:haxe.macro.Type.TypedExpr):String {
+    /** Emit the Swift dispatch for an action closure.
+
+        `StateMacro` rewrites every action call site to either
+        `Callbacks.reg(<id>, <closure>)` (outside ForEach row
+        templates — the closure registers itself in the runtime
+        store when the view tree is built) or
+        `Callbacks.indexed(<id>, <frames>)` (inside one — the
+        closure was lifted into a static builder re-materialising
+        the iteration values from the row indices). Here we read the
+        id back out of the typed AST and emit the matching bridge
+        dispatch — no parallel macro/runtime counters anywhere.
+
+        Dispatch runs on a detached task: hxcpp execution is
+        serialized by the bridge's global recursive_mutex, so a
+        long-running closure never blocks the main thread *inside*
+        Haxe — though main-thread bridge *reads* (array state) will
+        wait for it, same as the previous `BridgeCall*` emission. **/
+    static function actionToSwift(expr:haxe.macro.Type.TypedExpr):Null<String> {
+        if (expr == null) return null;
         var e = unwrap(expr);
         switch (e.expr) {
+            case TConst(TNull):
+                return null;
             case TCall(callee, args):
-                switch (callee.expr) {
-                    case TField(_, fa):
-                        switch (fa) {
-                            case FEnum(_, ef):
-                                var p0 = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else null;
-                                var p1 = if (args.length > 1) extractConstant(args[1]) else null;
-                                return switch (ef.name) {
-                                    case "Increment": '${p0} += ${p1 != null ? p1 : "1"}';
-                                    case "Decrement": '${p0} -= ${p1 != null ? p1 : "1"}';
-                                    case "SetValue": '${p0} = ${p1 != null ? p1 : "0"}';
-                                    case "Toggle": '${p0}.toggle()';
-                                    case "CustomSwift":
-                                        var code = if (args.length > 0) extractString(args[0]) else null;
-                                        if (code != null && StringTools.startsWith(code, SUI_ACTION_PREFIX)) {
-                                            // Bridged RunExpr — dispatch into a
-                                            // Task.detached invocation of the
-                                            // synthesised wrapper.
-                                            emitActionInvocation(code);
-                                        } else if (code != null) {
-                                            // Raw Swift escape hatch — prefix state
-                                            // refs with `appState.` so legacy
-                                            // `result = …`, `count[i] = …`,
-                                            // `if visible …` patterns still target
-                                            // the bridged store.
-                                            qualifyStateRefsInRawSwift(code);
-                                        } else {
-                                            "// custom";
-                                        }
-                                    case "BridgeCall":
-                                        var fnName = if (args.length > 1) extractString(args[1]) else "unknown";
-                                        var argStr = if (args.length > 2) extractBridgeArgs(args[2]) else "";
-                                        'Task.detached { let r = HaxeBridgeC.${fnName}(${argStr}); await MainActor.run { ${p0} = r } }';
-                                    case "BridgeCallLoading":
-                                        var loadingVal = if (args.length > 1) extractString(args[1]) else "Loading...";
-                                        var fnName = if (args.length > 2) extractString(args[2]) else "unknown";
-                                        var argStr = if (args.length > 3) extractBridgeArgs(args[3]) else "";
-                                        '${p0} = "${esc(loadingVal)}"; Task.detached { let r = HaxeBridgeC.${fnName}(${argStr}); await MainActor.run { ${p0} = r } }';
-                                    case "BridgeCallVoid":
-                                        // No state to write — the return value is
-                                        // intentionally dropped. Used by periodic ticks
-                                        // and other fire-and-forget bridge calls.
-                                        var fnName = if (args.length > 0) extractString(args[0]) else "unknown";
-                                        var argStr = if (args.length > 1) extractBridgeArgs(args[1]) else "";
-                                        'Task.detached { _ = HaxeBridgeC.${fnName}(${argStr}) }';
-                                    case "Animated":
-                                        var innerAction = if (args.length > 0) stateActionToSwift(args[0]) else null;
-                                        var curve = if (args.length > 1) resolveAnimationCurve(args[1]) else "default";
-                                        if (innerAction != null)
-                                            'withAnimation(.${curve}) { ${innerAction} }';
-                                        else
-                                            null;
-                                    case "IntervalLoop":
-                                        // `seconds * 1_000_000_000` keeps the call site
-                                        // expressed in seconds (`60`, `0.5`) instead of
-                                        // raw nanoseconds — Task.sleep takes nanos so we
-                                        // convert at codegen time.
-                                        var secs = if (args.length > 0) extractConstant(args[0]) else "60";
-                                        if (secs == null) secs = "60";
-                                        var innerAction = if (args.length > 1) stateActionToSwift(args[1]) else null;
-                                        if (innerAction != null)
-                                            'while !Task.isCancelled { try? await Task.sleep(nanoseconds: UInt64((${secs}) * 1_000_000_000)); ${innerAction} }';
-                                        else
-                                            null;
-                                    default: null;
+                var calU = unwrap(callee);
+                switch (calU.expr) {
+                    case TField(_, FStatic(clsRef, fieldRef)):
+                        var cls = clsRef.get();
+                        var fld = fieldRef.get().name;
+                        if (cls.name == "Callbacks" && cls.pack.join(".") == "sui.state") {
+                            var idStr = args.length > 0 ? extractConstant(args[0]) : null;
+                            if (idStr != null && fld == "reg") {
+                                needsRuntimeBridge = true;
+                                return 'Task.detached { HaxeBridgeC.invokeAction(${idStr}) }';
+                            }
+                            if (idStr != null && fld == "indexed") {
+                                needsRuntimeBridge = true;
+                                // The builder re-materialises the N innermost
+                                // ForEach levels it was lifted from; pass the
+                                // matching loop indices, outermost-first,
+                                // padding unused slots with -1.
+                                var framesStr = args.length > 1 ? extractConstant(args[1]) : "1";
+                                var n = Std.parseInt(framesStr);
+                                if (n == null || n < 1) n = 1;
+                                if (n > forEachIdxVars.length) {
+                                    Context.warning('[SwiftGen] ForEach action expects ${n} enclosing loop indices but only ${forEachIdxVars.length} are in scope.', e.pos);
+                                    n = forEachIdxVars.length;
                                 }
-                            default:
+                                var vars = forEachIdxVars.slice(forEachIdxVars.length - n);
+                                var i0 = vars.length > 0 ? vars[0] : "-1";
+                                var i1 = vars.length > 1 ? vars[1] : "-1";
+                                return 'Task.detached { HaxeBridgeC.invokeIndexedAction(${idStr}, ${i0}, ${i1}) }';
+                            }
                         }
                     default:
                 }
-            case TConst(TNull):
-                return null;
             default:
         }
+        Context.warning('[SwiftGen] Unrecognised action expression (${e.expr.getName()}) — action closures must live in an App/ViewComponent subclass so StateMacro can wire them.', e.pos);
         return null;
     }
 
@@ -2696,8 +2787,8 @@ class SwiftGenerator {
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "inspector" | "inspectorColumnWidth" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
-                 "onAppear" | "onDisappear" | "task" | "navigationDestination" |
-                 "onTapGesture" | "onDragGesture" | "tint" | "badge" | "tag" |
+                 "onAppear" | "onDisappear" | "task" | "every" | "navigationDestination" |
+                 "onTapGesture" | "onDragGesture" | "allowsHitTesting" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
                  "blur" | "scaleEffect" | "rotationEffect" | "offset" | "proportionalOffset" | "proportionalFrame" |
                  "brightness" | "contrast" | "saturation" | "grayscale" |
@@ -2808,23 +2899,37 @@ class SwiftGenerator {
                 'navigationDestination(for: String.self) { value in\n${contentSwift}${pad2}}';
 
             // --- Lifecycle modifiers (closures → bridge actions) ---
-            // Use __LIFECYCLE_ACTION__ placeholder, replaced after children are processed
+            // Action ids are explicit in the typed AST (Callbacks.reg),
+            // read back by actionToSwift.
             case "onAppear":
-                needsRuntimeBridge = true;
-                'onAppear { Task.detached { HaxeBridgeC.invokeAction(__LIFECYCLE_ACTION__) } }';
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'onAppear { ${actionCode != null ? actionCode : ""} }';
             case "onDisappear":
-                needsRuntimeBridge = true;
-                'onDisappear { Task.detached { HaxeBridgeC.invokeAction(__LIFECYCLE_ACTION__) } }';
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'onDisappear { ${actionCode != null ? actionCode : ""} }';
             case "task":
-                needsRuntimeBridge = true;
-                'task { HaxeBridgeC.invokeAction(__LIFECYCLE_ACTION__) }';
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'task { ${actionCode != null ? actionCode : ""} }';
+            case "every":
+                // Periodic re-dispatch for as long as the view stays
+                // attached — replaces StateAction.IntervalLoop. The
+                // `task` is cancelled automatically on detach.
+                // `seconds * 1_000_000_000` keeps the call site
+                // expressed in seconds; Task.sleep takes nanos.
+                var secs = if (args.length > 0) extractConstant(args[0]) else "60";
+                if (secs == null) secs = "60";
+                var actionCode = if (args.length > 1) actionToSwift(args[1]) else null;
+                'task { while !Task.isCancelled { try? await Task.sleep(nanoseconds: UInt64((${secs}) * 1_000_000_000)); ${actionCode != null ? actionCode : ""} } }';
 
             case "onTapGesture":
-                var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
                 if (actionCode != null)
                     'onTapGesture { ${actionCode} }';
                 else
                     'onTapGesture { }';
+            case "allowsHitTesting":
+                var v = if (args.length > 0) extractConstant(args[0]) else "true";
+                'allowsHitTesting($v)';
             case "onDragGesture":
                 // Args: (fnName, mode). The modifier wraps a SwiftUI
                 // DragGesture and dispatches the bridge fn at BOTH
@@ -2849,16 +2954,16 @@ class SwiftGenerator {
                 var stateName = if (args.length > 0) extractString(args[0]) else null;
                 if (stateName == null) stateName = "";
                 var qualified = qualifyStateName(stateName);
-                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else null;
+                var actionCode = if (args.length > 1) actionToSwift(args[1]) else null;
                 'onChange(of: ${qualified}) { _, _ in ${actionCode != null ? actionCode : ""} }';
             case "onAppearAction":
-                var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
                 if (actionCode != null)
                     'onAppear { ${actionCode} }';
                 else
                     'onAppear { }';
             case "taskAction":
-                var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
                 if (actionCode != null)
                     'task { ${actionCode} }';
                 else
@@ -2915,7 +3020,10 @@ class SwiftGenerator {
                 var pad2 = ind(indent + 2);
                 'toolbar {\n${pad}    ToolbarItem(placement: .${placement}) {\n${contentSwift}${pad2}}\n${pad}}';
             case "animation":
-                var curve = if (args.length > 0) extractString(args[0]) else "default";
+                // Curve arrives as an AnimationCurve enum value
+                // (`Spring`, `EaseInOut`, …); legacy string args
+                // still resolve through the same helper.
+                var curve = if (args.length > 0) resolveAnimationCurve(args[0]) else "default";
                 var value = if (args.length > 1) resolveModifierValue(args, 1, null) else null;
                 if (value != null)
                     'animation(.${curve != null ? curve : "default"}, value: ${value})';
@@ -3029,8 +3137,8 @@ class SwiftGenerator {
                 var contentSwift = if (args.length > 0) viewToSwift(args[0], indent + 2) else "";
                 'swipeActions {\n${contentSwift}${pad2}}';
             case "refreshable":
-                needsRuntimeBridge = true;
-                'refreshable { Task.detached { HaxeBridgeC.invokeAction(__LIFECYCLE_ACTION__) } }';
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'refreshable { ${actionCode != null ? actionCode : ""} }';
             case "listStyle":
                 var s = if (args.length > 0) extractString(args[0]) else "automatic";
                 'listStyle(.${s != null ? s : "automatic"})';
@@ -3054,10 +3162,10 @@ class SwiftGenerator {
 
             // --- Interaction ---
             case "onSubmit":
-                needsRuntimeBridge = true;
-                'onSubmit { Task.detached { HaxeBridgeC.invokeAction(__LIFECYCLE_ACTION__) } }';
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'onSubmit { ${actionCode != null ? actionCode : ""} }';
             case "onLongPressGesture":
-                var actionCode = if (args.length > 0) stateActionToSwift(args[0]) else null;
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
                 if (actionCode != null)
                     'onLongPressGesture { ${actionCode} }';
                 else
@@ -3099,7 +3207,7 @@ class SwiftGenerator {
                 var key = if (args.length > 0) extractString(args[0]) else "";
                 if (key == null) key = "";
                 var keyExpr = keyEquivalentToSwift(key);
-                var actionCode = if (args.length > 1) stateActionToSwift(args[1]) else "";
+                var actionCode = if (args.length > 1) actionToSwift(args[1]) else "";
                 'onKeyPress(${keyExpr}) { ${actionCode}; return .handled }';
 
             default:
@@ -3287,11 +3395,6 @@ class SwiftGenerator {
         bridged expressions. **/
     public static inline var SUI_BRIDGE_PREFIX = "\u{0001}SUIBRIDGE\u{0001}";
 
-    /** Prefix used when bridging a `StateAction.RunExpr(...)` — the
-        Swift codegen wraps the wrapper call in `Task.detached { … }`
-        instead of inlining the result. **/
-    public static inline var SUI_ACTION_PREFIX = "\u{0001}SUIACTION\u{0001}";
-
     /** Turn a sentinel-prefixed string into a Swift expression
         that invokes the bridged Haxe function. The sentinel
         encodes:
@@ -3324,49 +3427,6 @@ class SwiftGenerator {
         var subs = "";
         for (n in stateList) subs += '_ = appState.$n; ';
         return '{ ${subs}return ${bare} }()';
-    }
-
-    /** Turn an action sentinel into a Swift snippet that runs the
-        bridged wrapper inside a `Task.detached`. Sentinel format:
-            SUIACTION<funcName><stateRefs><lambdaParams><primReads>
-        - lambdaParams pass straight through (Int from ForEach);
-        - primReads come from `appState.<name>` so the synthesised
-          wrapper sees the live SwiftUI binding value rather than
-          the (possibly stale) Haxe mirror.
-        Side effects written by the wrapper still travel back to
-        Swift via the existing `swiftStateCallback →
-        DispatchQueue.main.async` pipeline. **/
-    static function emitActionInvocation(sentinel:String):String {
-        var rest = sentinel.substr(SUI_ACTION_PREFIX.length);
-        var parts = rest.split("\u{0001}");
-        var funcName = parts[0];
-        var lambdaList = parts.length > 2 && parts[2] != "" ? parts[2].split(",") : [];
-        var primList = parts.length > 3 && parts[3] != "" ? parts[3].split(",") : [];
-        var args:Array<String> = [];
-        for (p in lambdaList) args.push(p);
-        for (p in primList) args.push('appState.${p}');
-        var callArgs = args.length > 0 ? args.join(", ") : '""';
-        return 'Task.detached { _ = HaxeBridgeC.${funcName}(${callArgs}) }';
-    }
-
-    static function extractBridgeArgs(expr:haxe.macro.Type.TypedExpr):String {
-        if (expr == null) return "";
-        var e = unwrap(expr);
-        switch (e.expr) {
-            case TArrayDecl(elements):
-                var parts:Array<String> = [];
-                for (el in elements) {
-                    var c = extractConstant(el);
-                    if (c != null) parts.push(c);
-                }
-                return parts.join(", ");
-            default:
-                var s = extractString(expr);
-                if (s != null) return '"${esc(s)}"';
-                var c = extractConstant(expr);
-                if (c != null) return c;
-                return "";
-        }
     }
 
     /** Extract a `this.fieldName` reference → returns the field name. **/
@@ -3681,15 +3741,14 @@ class SwiftGenerator {
         return name;
     }
 
-    /** Prefix `appState.` in a raw Swift fragment supplied by
-        `StateAction.CustomSwift(...)`. This is the *only* surviving
-        client of the legacy text-pass: typed paths (Text.bind,
-        ForEach.byIndex, modifier bridges, BridgeCall* / Increment /
-        SetValue / Toggle) emit `appState.X` directly via
-        `qualifyStateName`. CustomSwift is the escape hatch where
-        users write raw Swift, so we still scan known shapes —
-        `name = `, `\(name)`, subscripts, comparisons — and patch
-        them. Anything outside those shapes is left untouched. **/
+    /** Prefix `appState.` in a raw Swift fragment. The *only*
+        surviving client of the legacy text-pass is the deprecated
+        `Text.withState("{name}")` template: every typed path
+        (Text.bind, ForEach.byIndex, modifier bridges, action
+        dispatch) emits `appState.X` directly via `qualifyStateName`.
+        We still scan the known shapes — `name = `, `\(name)`,
+        subscripts, comparisons — and patch them; anything outside
+        those shapes is left untouched. **/
     static function qualifyStateRefsInRawSwift(code:String):String {
         if (code == null || code == "") return code;
         if (!needsRuntimeBridge) return code;

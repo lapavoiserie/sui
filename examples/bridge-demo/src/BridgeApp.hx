@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 /**
     Demonstrates the C++ bridge: Swift UI calling Haxe business logic.
@@ -40,10 +39,8 @@ class BridgeApp extends App {
             Text.bind(result.value)
                 .font(FontStyle.Title2)
                 .padding(),
-            new Button("Greet from Haxe", null,
-                StateAction.CustomSwift('result = HaxeBridgeC.greet("World")')),
-            new Button("Fibonacci(20)", null,
-                StateAction.CustomSwift('result = "fib(20) = \\(HaxeBridgeC.fibonacci(20))"')),
+            new Button("Greet from Haxe", () -> result.value = greet("World")),
+            new Button("Fibonacci(20)", () -> result.value = 'fib(20) = ${fibonacci(20)}'),
         ]);
     }
 }

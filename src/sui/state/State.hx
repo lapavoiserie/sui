@@ -137,33 +137,6 @@ class State<T> {
         onChange = callback;
     }
 
-    // ── Action builders (return StateAction for declarative UI) ──────
-
-    /** Create an increment action: `count.inc(1)` → `count += 1` in Swift. **/
-    public inline function inc(amount:Int):Action {
-        return StateAction.Increment(this, amount);
-    }
-
-    /** Create a decrement action: `count.dec(1)` → `count -= 1` in Swift. **/
-    public inline function dec(amount:Int):Action {
-        return StateAction.Decrement(this, amount);
-    }
-
-    /** Create a set action: `scale.setTo(1.5)` → `scale = 1.5` in Swift. **/
-    public inline function setTo(val:Dynamic):Action {
-        return StateAction.SetValue(this, val);
-    }
-
-    /** Create a toggle action: `visible.tog()` → `visible.toggle()` in Swift. **/
-    public inline function tog():Action {
-        return StateAction.Toggle(this);
-    }
-
-    /** Create an append action: `items.appendAction("new")` → `items.append("new")` in Swift. **/
-    public inline function appendAction(val:Dynamic):Action {
-        return StateAction.Append(this, val);
-    }
-
     // ── Shared-memory query API (called from C bridge) ──────────────
 
     /** Get array length for a named state. Returns -1 if not found or not an array. **/
@@ -265,6 +238,39 @@ class State<T> {
         if (val == null) return null;
         if (Std.isOfType(val, Array)) return cast val;
         return null;
+    }
+
+    /** Apply a value written by a SwiftUI binding (TextField, Toggle,
+        Picker, Slider, …) to the Haxe-side mirror WITHOUT notifying
+        Swift back — the write originated there. Called from the C
+        bridge (`haxe_bridge_sync_state`) whenever an `AppState`
+        stored property's `didSet` fires.
+
+        This is what lets action closures running in Haxe read fresh
+        values: before this hook, a state owned by a SwiftUI binding
+        (e.g. the text of a TextField) only existed on the Swift side
+        and `state.value` reads in Haxe saw the stale initial value. **/
+    public static function _applyFromSwift(stateName:String, raw:String):Void {
+        if (stateName == null) return;
+        var state:Dynamic = _registry.get(stateName);
+        if (state == null) return;
+        var s:State<Dynamic> = state;
+        var current:Dynamic = s._value;
+        // Infer the target type from the current value. Order
+        // matters: on hxcpp `Bool` and `Int` both satisfy broader
+        // checks, so test the narrowest types first. Arrays and
+        // objects are never written through scalar bindings.
+        var parsed:Dynamic =
+            if (Std.isOfType(current, Bool)) raw == "true"
+            else if (Std.isOfType(current, Int)) {
+                var i = Std.parseInt(raw);
+                if (i != null) i else Std.int(Std.parseFloat(raw));
+            }
+            else if (Std.isOfType(current, Float)) Std.parseFloat(raw)
+            else if (Std.isOfType(current, String)) raw
+            else return;
+        s._value = parsed;
+        if (s.onChange != null) s.onChange(parsed);
     }
 
     /**

@@ -14,18 +14,22 @@ struct ContentView: View {
                         .foregroundStyle(Color(suiHex: appState.colors[i]) ?? Color.primary)
                     Text("\(appState.todos[i])")
                 }
+                    .onTapGesture { Task.detached { HaxeBridgeC.invokeIndexedAction(337946475, i, -1) } }
             }
-            ForEach(appState.todos, id: \.self) { item in
+            let __arr0 = appState.todos
+            ForEach(0..<__arr0.count, id: \.self) { __i0 in
+                let item = __arr0[__i0]
                 Text("\(item)")
+                    .onTapGesture { Task.detached { HaxeBridgeC.invokeIndexedAction(838190797, __i0, -1) } }
             }
             Button("Inc") {
-                appState.count += 1
+                Task.detached { HaxeBridgeC.invokeAction(1463985449) }
             }
             Button("Reset") {
-                appState.count = 0
+                Task.detached { HaxeBridgeC.invokeAction(1850389800) }
             }
             Button("Toggle") {
-                appState.isVisible.toggle()
+                Task.detached { HaxeBridgeC.invokeAction(1397807425) }
             }
         }
             .sheet(isPresented: $appState.sheetOpen) {

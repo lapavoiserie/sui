@@ -69,15 +69,19 @@ enum ViewModifier {
     Overlay(content:sui.View);
 
     // Animation
-    Animation(curve:String, value:Dynamic);
+    Animation(curve:sui.state.AnimationCurve, value:Dynamic);
     Transition(style:String);
 
     // Lifecycle
-    OnAppear(actionId:Int);
-    OnDisappear(actionId:Int);
-    TaskOnAppear(actionId:Int);
+    OnAppear(action:sui.state.StateAction);
+    OnDisappear(action:sui.state.StateAction);
+    TaskOnAppear(action:sui.state.StateAction);
     OnAppearAction(action:sui.state.StateAction);
     TaskAction(action:sui.state.StateAction);
+    /** Run the action every `seconds` for as long as the view stays
+        attached — SwiftUI `task { while !Task.isCancelled { sleep;
+        … } }`. Replaces the old `StateAction.IntervalLoop`. **/
+    Every(seconds:Float, action:sui.state.StateAction);
 
     // Gestures
     OnTapGesture(action:sui.state.StateAction);
@@ -87,6 +91,11 @@ enum ViewModifier {
         all-Float [0..1] except `mode` which is a String discriminator
         the bridge uses to route the gesture (e.g. "week" vs "day"). **/
     OnDragGesture(fnName:String, mode:String);
+    /** SwiftUI `.allowsHitTesting(enabled)` — when false, touches
+        / clicks fall through to the view below in the ZStack.
+        Useful for decorative overlays that shouldn't capture
+        gestures intended for a backdrop. **/
+    AllowsHitTesting(enabled:Bool);
 
     // Appearance
     Tint(color:ColorValue);
@@ -119,7 +128,7 @@ enum ViewModifier {
 
     // List
     SwipeActions(content:sui.View);
-    Refreshable(actionId:Int);
+    Refreshable(action:sui.state.StateAction);
     ListStyle(style:String);
 
     // Layout
@@ -132,7 +141,7 @@ enum ViewModifier {
     Help(text:String);
 
     // Interaction
-    OnSubmit(actionId:Int);
+    OnSubmit(action:sui.state.StateAction);
     OnLongPressGesture(action:sui.state.StateAction);
     /** SwiftUI `.onChange(of:_:)` — fires a StateAction when the
         named state value changes. Used to react to Picker / TextField

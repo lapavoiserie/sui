@@ -45,21 +45,23 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# Test 4: Generated Swift has @State for State<T> fields
+# Test 4: Action closures force bridge mode — AppState is generated
+# with didSet write-back hooks (Swift bindings → Haxe mirror).
 echo ""
-echo "--- Test 4: @State generation ---"
-if grep -q "@State private var count: Int = 0" build/swift/ContentView.swift; then
-    echo "PASS: @State declaration generated"
+echo "--- Test 4: AppState generation + write-back ---"
+if grep -q "@Bindable var appState = AppState.shared" build/swift/ContentView.swift \
+   && grep -q 'HaxeBridgeC.syncState("count", String(count))' build/swift/AppState.swift; then
+    echo "PASS: AppState + syncState didSet generated"
     PASS=$((PASS + 1))
 else
-    echo "FAIL: @State declaration not found"
+    echo "FAIL: AppState/syncState not found"
     FAIL=$((FAIL + 1))
 fi
 
 # Test 5: State interpolation in Text
 echo ""
 echo "--- Test 5: State interpolation ---"
-if grep -q 'Text("Value: \\(count)")' build/swift/ContentView.swift; then
+if grep -q 'Text("Value: \\(appState.count)")' build/swift/ContentView.swift; then
     echo "PASS: State interpolation generated"
     PASS=$((PASS + 1))
 else
@@ -67,14 +69,24 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-# Test 6: StateAction on buttons
+# Test 6: Action closures — Swift dispatches by explicit id and the
+# SAME id is registered on the Haxe side (Callbacks.reg in the C++).
 echo ""
-echo "--- Test 6: StateAction generation ---"
-if grep -q "count -= 1" build/swift/ContentView.swift && grep -q "count += 1" build/swift/ContentView.swift; then
-    echo "PASS: StateAction code generated"
+echo "--- Test 6: Action closure dispatch + id match ---"
+IDS=$(grep -o 'HaxeBridgeC.invokeAction([0-9]*)' build/swift/ContentView.swift | grep -o '[0-9]*')
+MATCH=1
+if [ -z "$IDS" ]; then MATCH=0; fi
+for id in $IDS; do
+    if ! grep -q "Callbacks_obj::reg(.*$id" build/cpp/src/TestSwiftGen.cpp; then
+        echo "MISSING runtime registration for action id $id"
+        MATCH=0
+    fi
+done
+if [ $MATCH -eq 1 ]; then
+    echo "PASS: every Swift action id has a Haxe-side registration"
     PASS=$((PASS + 1))
 else
-    echo "FAIL: StateAction code not found"
+    echo "FAIL: action id mismatch between Swift and Haxe"
     FAIL=$((FAIL + 1))
 fi
 

@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 /**
     Exercises sui's typed-expression emission paths:
@@ -14,9 +13,10 @@ import sui.state.StateAction;
       Haxe and lands as `appState.<name>[i]` in Swift.
     - Closure-form `new ForEach(arr, item -> body)` iterating
       elements.
-    - Conditional bool state, `Increment`/`SetValue` actions, a
-      `sheet` binding — all in bridge mode so `qualifyStateName`
-      adds the `appState.` prefix at every emission site.
+    - Conditional bool state, action closures (plain + ForEach row
+      builders), a `sheet` binding — all in bridge mode so
+      `qualifyStateName` adds the `appState.` prefix at every
+      emission site.
 
     `@:expose static noop` forces `needsRuntimeBridge = true` so
     every emitter goes through the bridge codepath; without an
@@ -61,22 +61,27 @@ class TestTypedExpressions extends App {
             Text.bind('Count: ${count.value}'),
             // Ternary on bool state
             Text.bind(isVisible.value ? "shown" : "hidden"),
-            // ForEach.byIndex with parallel-array subscript
+            // ForEach.byIndex with parallel-array subscript + a row
+            // action closure (lifted into an indexed builder — the
+            // Swift side dispatches the live loop index).
             ForEach.byIndex(todos, i ->
                 new HStack(null, 8, [
                     Image.systemImage("circle.fill")
                         .foregroundHex(colors.value[i]),
                     Text.bind(todos.value[i])
                 ])
+                    .onTapGesture(() -> count.value = i)
             ),
-            // Closure form iterating elements
+            // Closure form iterating elements, with a row action that
+            // captures the element (re-materialised by the builder).
             new ForEach(todos, item ->
                 new Text(item)
+                    .onTapGesture(() -> name.value = item)
             ),
-            // Typed StateActions
-            new Button("Inc", null, StateAction.Increment("count", 1)),
-            new Button("Reset", null, StateAction.SetValue("count", 0)),
-            new Button("Toggle", null, StateAction.Toggle("isVisible")),
+            // Action closures (previously StateAction variants)
+            new Button("Inc", () -> count.value++),
+            new Button("Reset", () -> count.value = 0),
+            new Button("Toggle", () -> isVisible.value = !isVisible.value),
         ])
             .sheet("sheetOpen", new Text("Modal"));
     }

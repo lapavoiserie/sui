@@ -6,7 +6,7 @@ import haxe.macro.Expr;
 import haxe.macro.ExprTools;
 
 /**
-    Build macro for App subclasses that:
+    Build macro for App / ViewComponent subclasses that:
     1. Transforms `@:state` fields into `State<T>` fields with
        constructor initialisation.
     2. Walks every method body to find calls to *bridged modifiers*
@@ -20,6 +20,21 @@ import haxe.macro.ExprTools;
        replaced with a sentinel-encoded string that the Swift
        generator dispatches into a `HaxeBridgeC.<funcName>(args)`
        call.
+    3. Wires every *action closure* (Button actions, `.onTapGesture`,
+       `.onChange`, lifecycle closures, …) to the runtime dispatch
+       store with a stable compile-time id:
+       - outside `ForEach` row templates the call site becomes
+         `Callbacks.reg(<id>, <closure>)` — registration happens when
+         the view tree is built and Swift dispatches
+         `HaxeBridgeC.invokeAction(<id>)`;
+       - inside a `ForEach` row template (which never executes at
+         runtime — SwiftUI iterates on its side) the closure is
+         lifted into a static *builder* `(__i0, __i1) -> (() -> Void)`
+         that re-materialises the iteration values from the row
+         indices. The call site becomes the inert marker
+         `Callbacks.indexed(<id>, <frames>)` and Swift dispatches
+         `HaxeBridgeC.invokeIndexedAction(<id>, i0, i1)` with the
+         live loop indices.
 
     The user writes plain Haxe; the macro takes care of everything.
 **/
@@ -50,7 +65,34 @@ class StateMacro {
         "proportionalFrame" => "Float",
     ];
 
+    /** View methods whose argument at the given index is an action
+        closure (`() -> Void`) that must be wired to the runtime
+        dispatch store. Mirrors the emission sites in
+        `SwiftGenerator.modToSwift`. **/
+    static final ACTION_MODIFIERS = [
+        "onTapGesture" => 0,
+        "onLongPressGesture" => 0,
+        "onChange" => 1,
+        "onKeyPress" => 1,
+        "onAppearAction" => 0,
+        "taskAction" => 0,
+        "every" => 1,
+        "onAppear" => 0,
+        "onDisappear" => 0,
+        "task" => 0,
+        "onSubmit" => 0,
+        "refreshable" => 0,
+    ];
+
     static var synthesisedExprs:Map<String, SynthesisedExpr>;
+    /** Builders lifted from action closures inside ForEach row
+        templates, in walk order. Each entry carries the static
+        function field to append plus its registration id. **/
+    static var synthesisedBuilders:Array<{id:Int, fnName:String, field:Field}>;
+    /** Occurrence counter per closure source text, used to salt the
+        stable action id so two identical closures at different call
+        sites get distinct ids. **/
+    static var actionIdOccurrences:Map<String, Int>;
     /** Map state field name → inner type T of `State<T>`. The
         Swift binding lives on `appState.<name>`; for value-typed
         bindings (String / Int / Float / Bool) the walker passes
@@ -60,10 +102,23 @@ class StateMacro {
         the Haxe side (`App.instance.<name>.value`). **/
     static var stateFieldTypes:Map<String, ComplexType>;
     static var stateFieldNames:Map<String, Bool>;
+    /** Non-static members of the class being built (methods and
+        plain fields). Builders lifted from ForEach action closures
+        are static, so references to these are qualified through
+        `<ClassName>.instance` just like state fields. **/
+    static var instanceMemberNames:Map<String, Bool>;
     static var className:String;
+    /** Set whenever a synthesised wrapper or builder qualifies a
+        state reference to `<ClassName>.instance.<field>` — triggers
+        synthesis of the `instance` static if the user didn't
+        declare one. **/
+    static var needsInstance:Bool = false;
 
     public static function build():Array<Field> {
         synthesisedExprs = new Map();
+        synthesisedBuilders = [];
+        actionIdOccurrences = new Map();
+        needsInstance = false;
         stateFieldNames = new Map();
         stateFieldTypes = new Map();
         className = {
@@ -74,6 +129,14 @@ class StateMacro {
         var fields = Context.getBuildFields();
         var stateInits:Array<Expr> = [];
         var newFields:Array<Field> = [];
+
+        // Collect non-static member names for builder qualification.
+        instanceMemberNames = new Map();
+        for (field in fields) {
+            if (field.name == "new") continue;
+            var isStatic = field.access != null && field.access.indexOf(AStatic) != -1;
+            if (!isStatic) instanceMemberNames.set(field.name, true);
+        }
 
         // First pass: collect every state-typed field name and its
         // inner type T (both `@:state var x:T` and manual `var
@@ -154,7 +217,50 @@ class StateMacro {
             stateInits.push(macro $i{fieldName} = new sui.state.State($defaultExpr, $nameExpr));
         }
 
-        if (stateInits.length > 0) {
+        // Walk every method body, replacing bridged-modifier calls
+        // with sentinel strings, wiring action closures to the
+        // runtime dispatch store and synthesising wrappers/builders.
+        // Runs BEFORE constructor injection so the walk results
+        // (builder registrations, `instance` synthesis) can be
+        // injected alongside the state inits.
+        for (f in newFields) {
+            switch (f.kind) {
+                case FFun(func) if (func.expr != null):
+                    func.expr = walk(func.expr, new Map(), []);
+                default:
+            }
+        }
+
+        var ctorInjects:Array<Expr> = [];
+
+        // Synthesise a static `instance` when generated code
+        // references `<ClassName>.instance` (state refs qualified
+        // inside synthesised wrappers and ForEach action builders)
+        // and the user didn't declare one themselves.
+        if (needsInstance) {
+            var hasInstance = false;
+            for (f in fields) if (f.name == "instance") { hasInstance = true; break; }
+            if (!hasInstance) {
+                newFields.push({
+                    name: "instance",
+                    access: [APublic, AStatic],
+                    kind: FVar(TPath({pack: [], name: className}), null),
+                    pos: Context.currentPos(),
+                    doc: "Synthesised by StateMacro — the app/component singleton that qualified state references resolve through.",
+                });
+                ctorInjects.push(macro instance = this);
+            }
+        }
+
+        for (e in stateInits) ctorInjects.push(e);
+
+        // Builder registrations run from the constructor — the view
+        // tree is built once at boot, so the ctor always runs before
+        // any dispatch can arrive from Swift.
+        for (b in synthesisedBuilders)
+            ctorInjects.push(macro sui.state.Callbacks.registerIndexed($v{b.id}, $i{b.fnName}));
+
+        if (ctorInjects.length > 0) {
             var ctorFound = false;
             for (f in newFields) {
                 if (f.name == "new") {
@@ -162,7 +268,7 @@ class StateMacro {
                     switch (f.kind) {
                         case FFun(func):
                             var existingBody = func.expr;
-                            var allExprs:Array<Expr> = stateInits.copy();
+                            var allExprs:Array<Expr> = ctorInjects.copy();
                             if (existingBody != null) allExprs.push(existingBody);
                             func.expr = macro $b{allExprs};
                         default:
@@ -173,7 +279,7 @@ class StateMacro {
 
             if (!ctorFound) {
                 var allExprs:Array<Expr> = [macro super()];
-                for (e in stateInits) allExprs.push(e);
+                for (e in ctorInjects) allExprs.push(e);
                 newFields.push({
                     name: "new",
                     access: [APublic],
@@ -187,15 +293,8 @@ class StateMacro {
             }
         }
 
-        // Walk every method body, replacing bridged-modifier calls
-        // with sentinel strings and synthesising wrappers.
-        for (f in newFields) {
-            switch (f.kind) {
-                case FFun(func) if (func.expr != null):
-                    func.expr = walk(func.expr, new Map());
-                default:
-            }
-        }
+        // Append the lifted ForEach action builders.
+        for (b in synthesisedBuilders) newFields.push(b.field);
 
         // Append the synthesised wrapper functions. Parameter
         // order: lambda params (Int) first, then primitive state
@@ -230,27 +329,28 @@ class StateMacro {
     }
 
     /** Walk an Expr tree, tracking lambda-param scope (from
-        ForEach legacy `"i"` form and closure form), and rewrite:
+        ForEach legacy `"i"` form, closure form and `byIndex`) plus
+        the stack of enclosing ForEach frames, and rewrite:
         - bridged-modifier calls with a complex argument
-        - `StateAction.RunExpr(expr)` invocations
-        Both flows synthesise an `@:expose static` wrapper on the
-        App class and replace the call site with a sentinel string. **/
-    static function walk(e:Expr, scope:Map<String, Bool>):Expr {
+        - action-closure call sites (Button / action modifiers)
+        Bridged modifiers synthesise an `@:expose static` wrapper on
+        the App class and replace the call site with a sentinel
+        string; action closures are wired through
+        `sui.state.Callbacks` (see class doc). **/
+    static function walk(e:Expr, scope:Map<String, Bool>, frames:Array<ForEachFrame>):Expr {
         return switch (e.expr) {
-            // StateAction.RunExpr(expr) → synthesise + sentinel.
-            case ECall({expr: EField({expr: EConst(CIdent("StateAction"))}, "RunExpr")}, [innerExpr]):
-                synthesiseRunExpr(innerExpr, scope, e.pos);
             // ForEach legacy form: ENew("ForEach", [arr, "i", body])
             case ENew(t, args) if (t.name == "ForEach" && args.length == 3):
                 switch (args[1].expr) {
                     case EConst(CString(idx)):
                         var newScope = copyScope(scope);
                         newScope.set(idx, true);
-                        var newArr = walk(args[0], scope);
-                        var newBody = walk(args[2], newScope);
+                        var newFrames = frames.concat([{param: idx, isIndex: true, arr: args[0], pos: e.pos}]);
+                        var newArr = walk(args[0], scope, frames);
+                        var newBody = walk(args[2], newScope, newFrames);
                         {expr: ENew(t, [newArr, args[1], newBody]), pos: e.pos};
                     default:
-                        defaultRecurse(e, scope);
+                        defaultRecurse(e, scope, frames);
                 }
             // ForEach closure form: ENew("ForEach", [arr, item -> body])
             case ENew(t, args) if (t.name == "ForEach" && args.length == 2):
@@ -258,66 +358,215 @@ class StateMacro {
                     case EFunction(kind, fn):
                         var newScope = copyScope(scope);
                         for (a in fn.args) newScope.set(a.name, true);
-                        var newArr = walk(args[0], scope);
-                        var newFn:Function = {args: fn.args, ret: fn.ret, expr: walk(fn.expr, newScope)};
+                        var newFrames = frames;
+                        if (fn.args.length == 1)
+                            newFrames = frames.concat([{param: fn.args[0].name, isIndex: false, arr: args[0], pos: e.pos}]);
+                        var newArr = walk(args[0], scope, frames);
+                        var newFn:Function = {args: fn.args, ret: fn.ret, expr: walk(fn.expr, newScope, newFrames)};
                         var newLambda:Expr = {expr: EFunction(kind, newFn), pos: args[1].pos};
                         {expr: ENew(t, [newArr, newLambda]), pos: e.pos};
                     default:
-                        defaultRecurse(e, scope);
+                        defaultRecurse(e, scope, frames);
                 }
+            // ForEach.byIndex(arr, i -> body) — the lambda param IS the index.
+            case ECall(callee = {expr: EField(_, "byIndex")}, args)
+                if (args.length == 2 && isForEachReceiver(callee)):
+                switch (args[1].expr) {
+                    case EFunction(kind, fn) if (fn.args.length == 1):
+                        var newScope = copyScope(scope);
+                        newScope.set(fn.args[0].name, true);
+                        var newFrames = frames.concat([{param: fn.args[0].name, isIndex: true, arr: args[0], pos: e.pos}]);
+                        var newArr = walk(args[0], scope, frames);
+                        var newFn:Function = {args: fn.args, ret: fn.ret, expr: walk(fn.expr, newScope, newFrames)};
+                        var newLambda:Expr = {expr: EFunction(kind, newFn), pos: args[1].pos};
+                        {expr: ECall(callee, [newArr, newLambda]), pos: e.pos};
+                    default:
+                        defaultRecurse(e, scope, frames);
+                }
+            // Button construction: new Button(label, action)
+            case ENew(t, args) if (t.name == "Button" && args.length >= 2):
+                var newArgs = [walk(args[0], scope, frames), wrapAction(args[1], scope, frames)];
+                for (i in 2...args.length) newArgs.push(walk(args[i], scope, frames));
+                {expr: ENew(t, newArgs), pos: e.pos};
+            // Button.withView(labelView, action)
+            case ECall(callee = {expr: EField({expr: EConst(CIdent("Button"))}, "withView")}, args) if (args.length >= 2):
+                var newArgs = [walk(args[0], scope, frames), wrapAction(args[1], scope, frames)];
+                for (i in 2...args.length) newArgs.push(walk(args[i], scope, frames));
+                {expr: ECall(callee, newArgs), pos: e.pos};
+            // Action-taking view modifiers: .onTapGesture(cb), .onChange(name, cb), …
+            case ECall(callee = {expr: EField(_, modName)}, args)
+                if (ACTION_MODIFIERS.exists(modName) && args.length > ACTION_MODIFIERS.get(modName)):
+                var actionIdx = ACTION_MODIFIERS.get(modName);
+                var newReceiver = walkCallee(callee, scope, frames);
+                var newArgs = [for (i in 0...args.length)
+                    i == actionIdx ? wrapAction(args[i], scope, frames) : walk(args[i], scope, frames)];
+                {expr: ECall(newReceiver, newArgs), pos: e.pos};
             // Bridged single-arg modifier: <view>.foregroundHex(<arg>)
             case ECall(callee, args) if (args.length == 1 && isBridgedModifierCallee(callee, BRIDGED_MODIFIERS)):
                 var arg = args[0];
-                var newReceiver = walkCallee(callee, scope);
+                var newReceiver = walkCallee(callee, scope, frames);
                 var retType = lookupReturnType(callee, BRIDGED_MODIFIERS);
-                var newArg = maybeBridge(arg, scope, retType);
+                var newArg = maybeBridge(arg, scope, frames, retType);
                 {expr: ECall(newReceiver, [newArg]), pos: e.pos};
             // Bridged multi-arg modifier: <view>.proportionalOffset(<x>, <y>)
             case ECall(callee, args) if (isBridgedModifierCallee(callee, BRIDGED_MODIFIERS_MULTI)):
-                var newReceiver = walkCallee(callee, scope);
+                var newReceiver = walkCallee(callee, scope, frames);
                 var retType = lookupReturnType(callee, BRIDGED_MODIFIERS_MULTI);
-                var newArgs = [for (a in args) maybeBridge(a, scope, retType)];
+                var newArgs = [for (a in args) maybeBridge(a, scope, frames, retType)];
                 {expr: ECall(newReceiver, newArgs), pos: e.pos};
             // Generic recursion with scope-aware EFunction handling.
             case EFunction(kind, fn):
                 var newScope = copyScope(scope);
                 for (a in fn.args) newScope.set(a.name, true);
-                var newFn:Function = {args: fn.args, ret: fn.ret, expr: walk(fn.expr, newScope)};
+                var newFn:Function = {args: fn.args, ret: fn.ret, expr: walk(fn.expr, newScope, frames)};
                 {expr: EFunction(kind, newFn), pos: e.pos};
             default:
-                defaultRecurse(e, scope);
+                defaultRecurse(e, scope, frames);
         };
     }
 
-    /** Synthesise a wrapper for a `StateAction.RunExpr(...)` and
-        return the rewritten `StateAction.CustomSwift(<sentinel>)`
-        node. The sentinel uses the `SUIACTION` prefix so the Swift
-        code generator emits a `Task.detached { _ = HaxeBridgeC.X(args) }`
-        instead of a value-returning expression. **/
-    static function synthesiseRunExpr(innerExpr:Expr, scope:Map<String, Bool>, pos:Position):Expr {
-        var lambdaParams = collectLambdaParams(innerExpr, scope);
-        var primReads = collectPrimitiveStateReads(innerExpr, scope);
-        var qualified = qualifyAndLiftStateRefs(innerExpr, scope, primReads);
-        var hash = hashExpr(innerExpr);
-        var funcName = '_sui_action_$hash';
-        if (!synthesisedExprs.exists(funcName)) {
-            synthesisedExprs.set(funcName, {
-                expr: macro {
-                    $e{qualified};
-                    "";
-                },
-                pos: pos,
-                params: lambdaParams,
-                primReads: primReads,
-            });
+    /** True when `callee` is a static access on the `ForEach` class
+        (`ForEach.byIndex` or `sui.ui.ForEach.byIndex`). **/
+    static function isForEachReceiver(callee:Expr):Bool {
+        return switch (callee.expr) {
+            case EField(recv, _):
+                switch (recv.expr) {
+                    case EConst(CIdent("ForEach")): true;
+                    case EField(_, "ForEach"): true;
+                    default: false;
+                }
+            default: false;
+        };
+    }
+
+    /** Wire an action argument to the runtime dispatch store.
+
+        Outside a ForEach row template:
+            `<closure>` → `Callbacks.reg(<id>, <closure>)`
+        Registration happens when the view tree is built; the Swift
+        side dispatches `invokeAction(<id>)` with the same id, read
+        back from the typed AST by SwiftGenerator — no parallel
+        counters.
+
+        Inside one (or two nested) ForEach row templates the closure
+        is lifted into a static builder
+        `(__i0:Int, __i1:Int) -> (() -> Void)` on this class. The
+        builder re-declares each frame's iteration value from the
+        row indices (Haxe's own closure-capture machinery does the
+        rest — multi-statement bodies, captures of states via
+        `<ClassName>.instance`, partial application all work), and
+        the call site becomes the inert marker
+        `Callbacks.indexed(<id>, <frames>)`.
+
+        Constraints inside row templates: the closure may reference
+        the iteration params, `@:state` fields and statics — but not
+        instance members or locals of the enclosing method (the
+        builder is static and runs at tap time). **/
+    static function wrapAction(arg:Expr, scope:Map<String, Bool>, frames:Array<ForEachFrame>):Expr {
+        switch (arg.expr) {
+            case EConst(CIdent("null")): return arg;
+            default:
         }
-        // sentinel: SUIACTION<funcName><stateRefs (arrays/objects)><lambdaParams><primReadsCSV>
-        var arrayStateRefs = collectStateRefs(innerExpr, scope).filter(n -> !arrContains(primReads, n));
-        var stateList = arrayStateRefs.join(",");
-        var paramList = lambdaParams.join(",");
-        var primList = [for (p in primReads) p.name].join(",");
-        var sentinel = "\u{0001}SUIACTION\u{0001}" + funcName + "\u{0001}" + stateList + "\u{0001}" + paramList + "\u{0001}" + primList;
-        return macro StateAction.CustomSwift($v{sentinel});
+        var walked = walk(arg, scope, frames);
+        var id = stableActionId(arg);
+
+        if (frames.length == 0)
+            return macro @:pos(arg.pos) sui.state.Callbacks.reg($v{id}, $walked);
+
+        if (frames.length > 2)
+            Context.error("[sui] Action closures support at most two nested ForEach levels", arg.pos);
+
+        // Re-declare each frame's iteration value from the builder's
+        // index parameters, outermost first.
+        var decls:Array<Expr> = [];
+        for (j in 0...frames.length) {
+            var f = frames[j];
+            var idxIdent:Expr = {expr: EConst(CIdent('__i$j')), pos: arg.pos};
+            if (f.isIndex) {
+                decls.push({
+                    expr: EVars([{name: f.param, type: macro :Int, expr: idxIdent}]),
+                    pos: arg.pos,
+                });
+            } else {
+                var stateName = stateNameOfExpr(f.arr);
+                if (stateName == null)
+                    Context.error("[sui] Action closures inside a closure-form ForEach require the iterated array to be a @:state field", arg.pos);
+                needsInstance = true;
+                var arrAccess = {
+                    var clsExpr:Expr = {expr: EConst(CIdent(className)), pos: arg.pos};
+                    var instExpr:Expr = {expr: EField(clsExpr, "instance"), pos: arg.pos};
+                    var fieldExpr:Expr = {expr: EField(instExpr, stateName), pos: arg.pos};
+                    var valueExpr:Expr = {expr: EField(fieldExpr, "value"), pos: arg.pos};
+                    {expr: EArray(valueExpr, idxIdent), pos: arg.pos};
+                };
+                decls.push({
+                    expr: EVars([{name: f.param, type: null, expr: arrAccess}]),
+                    pos: arg.pos,
+                });
+            }
+        }
+
+        // Qualify bare state refs inside the closure so the static
+        // builder resolves them through `<ClassName>.instance`.
+        // Frame params (and any other lambda params in scope) are
+        // skipped — they're builder locals now.
+        var qualified = qualifyStateRefs(walked, scope);
+
+        var fnName = '_sui_cb_${StringTools.hex(id, 8).toLowerCase()}';
+        var bodyExprs:Array<Expr> = decls.copy();
+        bodyExprs.push(macro @:pos(arg.pos) return $qualified);
+
+        synthesisedBuilders.push({
+            id: id,
+            fnName: fnName,
+            field: {
+                name: fnName,
+                access: [APublic, AStatic],
+                kind: FFun({
+                    args: [
+                        {name: "__i0", type: macro :Int},
+                        {name: "__i1", type: macro :Int},
+                    ],
+                    ret: macro :() -> Void,
+                    expr: macro $b{bodyExprs},
+                }),
+                pos: arg.pos,
+                doc: "Synthesised by StateMacro — builder for a ForEach row action closure.",
+            },
+        });
+
+        return macro @:pos(arg.pos) sui.state.Callbacks.indexed($v{id}, $v{frames.length});
+    }
+
+    /** Resolve a state-field name from an expression that references
+        it — bare ident (`todos`) or `this.todos`. **/
+    static function stateNameOfExpr(e:Expr):Null<String> {
+        if (e == null) return null;
+        return switch (e.expr) {
+            case EConst(CIdent(name)) if (stateFieldNames.exists(name)): name;
+            case EField({expr: EConst(CIdent("this"))}, name) if (stateFieldNames.exists(name)): name;
+            case EParenthesis(inner): stateNameOfExpr(inner);
+            default: null;
+        };
+    }
+
+    /** Stable 31-bit id for an action call site: content hash of the
+        closure source, salted with the class name and an occurrence
+        counter so identical closures at different call sites stay
+        distinct. Content-derived (not a global counter) so partial
+        rebuilds under the compilation server can't shift ids between
+        cached and re-typed modules. **/
+    static function stableActionId(arg:Expr):Int {
+        var src = className + "::" + ExprTools.toString(arg);
+        var n = actionIdOccurrences.exists(src) ? actionIdOccurrences.get(src) : 0;
+        actionIdOccurrences.set(src, n + 1);
+        var salted = src + "#" + n;
+        var h:Int = 0x811c9dc5;
+        for (i in 0...salted.length) {
+            h = (h ^ salted.charCodeAt(i)) & 0xffffffff;
+            h = (h * 16777619) & 0xffffffff;
+        }
+        return h & 0x7fffffff;
     }
 
     /** Find every `<stateName>.value` read in `e` where `stateName`
@@ -362,6 +611,7 @@ class StateMacro {
                 // Qualify bare state ref (non-lifted) → ClassName.instance.X.
                 case EConst(CIdent(name))
                     if (stateFieldNames.exists(name) && !scope.exists(name) && !isLifted(name)):
+                    needsInstance = true;
                     var clsExpr:Expr = {expr: EConst(CIdent(className)), pos: node.pos};
                     var instExpr:Expr = {expr: EField(clsExpr, "instance"), pos: node.pos};
                     {expr: EField(instExpr, name), pos: node.pos};
@@ -375,18 +625,18 @@ class StateMacro {
     }
 
     /** Recurse into immediate children with the same scope. **/
-    static function defaultRecurse(e:Expr, scope:Map<String, Bool>):Expr {
-        return ExprTools.map(e, child -> walk(child, scope));
+    static function defaultRecurse(e:Expr, scope:Map<String, Bool>, frames:Array<ForEachFrame>):Expr {
+        return ExprTools.map(e, child -> walk(child, scope, frames));
     }
 
     /** Walk the receiver chain of a modifier call. The callee for
         `x.foo` is `EField(x, "foo")`; we recurse into `x`. **/
-    static function walkCallee(callee:Expr, scope:Map<String, Bool>):Expr {
+    static function walkCallee(callee:Expr, scope:Map<String, Bool>, frames:Array<ForEachFrame>):Expr {
         return switch (callee.expr) {
             case EField(target, fieldName):
-                {expr: EField(walk(target, scope), fieldName), pos: callee.pos};
+                {expr: EField(walk(target, scope, frames), fieldName), pos: callee.pos};
             default:
-                walk(callee, scope);
+                walk(callee, scope, frames);
         };
     }
 
@@ -407,8 +657,8 @@ class StateMacro {
     /** If the argument is simple, leave it for the existing typed
         codepath; otherwise capture it for bridging with the given
         return type. **/
-    static function maybeBridge(arg:Expr, scope:Map<String, Bool>, retType:String):Expr {
-        if (isSimpleExpr(arg, scope)) return walk(arg, scope);
+    static function maybeBridge(arg:Expr, scope:Map<String, Bool>, frames:Array<ForEachFrame>, retType:String):Expr {
+        if (isSimpleExpr(arg, scope)) return walk(arg, scope, frames);
         var lambdaParams = collectLambdaParams(arg, scope);
         var primReads = collectPrimitiveStateReads(arg, scope);
         var stateRefs = collectStateRefs(arg, scope);
@@ -509,12 +759,43 @@ class StateMacro {
         synthesised function as parameters). **/
     static function qualifyStateRefs(e:Expr, scope:Map<String, Bool>):Expr {
         return switch (e.expr) {
-            case EConst(CIdent(name)) if (stateFieldNames.exists(name) && !scope.exists(name)):
+            case EConst(CIdent(name))
+                if ((stateFieldNames.exists(name) || instanceMemberNames.exists(name))
+                    && !scope.exists(name)):
+                needsInstance = true;
                 var clsExpr:Expr = {expr: EConst(CIdent(className)), pos: e.pos};
                 var instExpr:Expr = {expr: EField(clsExpr, "instance"), pos: e.pos};
                 {expr: EField(instExpr, name), pos: e.pos};
-            // Don't descend into nested closures (they have their own scope).
-            case EFunction(_, _): e;
+            // DO descend into nested closures here — unlike the
+            // wrapper path, the ForEach action builders need state
+            // refs inside the lifted closure body qualified too
+            // (the closure executes in a static context). Lambda
+            // params shadow via `scope`.
+            case EFunction(kind, fn):
+                var newScope = copyScope(scope);
+                for (a in fn.args) newScope.set(a.name, true);
+                var newFn:Function = {args: fn.args, ret: fn.ret, expr: fn.expr == null ? null : qualifyStateRefs(fn.expr, newScope)};
+                {expr: EFunction(kind, newFn), pos: e.pos};
+            // Locals declared in a block shadow members for the
+            // statements that follow.
+            case EBlock(stmts):
+                var blockScope = copyScope(scope);
+                var newStmts:Array<Expr> = [];
+                for (s in stmts) {
+                    newStmts.push(qualifyStateRefs(s, blockScope));
+                    switch (s.expr) {
+                        case EVars(vars):
+                            for (v in vars) blockScope.set(v.name, true);
+                        default:
+                    }
+                }
+                {expr: EBlock(newStmts), pos: e.pos};
+            case EVars(vars):
+                {expr: EVars([for (v in vars) {
+                    name: v.name,
+                    type: v.type,
+                    expr: v.expr == null ? null : qualifyStateRefs(v.expr, scope),
+                }]), pos: e.pos};
             default:
                 ExprTools.map(e, child -> qualifyStateRefs(child, scope));
         };
@@ -590,5 +871,17 @@ typedef SynthesisedExpr = {
     ?primReads:Array<{name:String, type:ComplexType}>,
     ?returnType:ComplexType,
     ?isAction:Bool,
+};
+
+/** One enclosing ForEach level at an action call site. `param` is
+    the iteration variable's name; `isIndex` is true for `byIndex` /
+    legacy string form (the param is the Int index) and false for the
+    closure form (the param is the array element, re-materialised by
+    the builder from the iterated state array `arr`). **/
+typedef ForEachFrame = {
+    param:String,
+    isIndex:Bool,
+    arr:Null<Expr>,
+    pos:Position,
 };
 #end

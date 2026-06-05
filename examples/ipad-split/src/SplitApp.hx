@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class SplitApp extends App {
     static function main() {}
@@ -21,13 +20,13 @@ class SplitApp extends App {
             // Sidebar
             new List([
                 new Section("Fruits", [
-                    new Button("Apple", null, StateAction.SetValue("selectedItem", "Apple")),
-                    new Button("Banana", null, StateAction.SetValue("selectedItem", "Banana")),
-                    new Button("Cherry", null, StateAction.SetValue("selectedItem", "Cherry"))
+                    new Button("Apple", () -> selectedItem.value = "Apple"),
+                    new Button("Banana", () -> selectedItem.value = "Banana"),
+                    new Button("Cherry", () -> selectedItem.value = "Cherry")
                 ]),
                 new Section("Veggies", [
-                    new Button("Carrot", null, StateAction.SetValue("selectedItem", "Carrot")),
-                    new Button("Broccoli", null, StateAction.SetValue("selectedItem", "Broccoli"))
+                    new Button("Carrot", () -> selectedItem.value = "Carrot"),
+                    new Button("Broccoli", () -> selectedItem.value = "Broccoli")
                 ])
             ]).navigationTitle("Items"),
             // Detail

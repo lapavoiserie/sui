@@ -1,21 +1,21 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var count: Int = 0
+    @Bindable var appState = AppState.shared
 
     var body: some View {
         VStack {
             Text("Hello")
                 .font(.largeTitle)
                 .padding()
-            Text("Value: \(count)")
+            Text("Value: \(appState.count)")
                 .bold()
             HStack(spacing: 10) {
                 Button("-") {
-                    count -= 1
+                    Task.detached { HaxeBridgeC.invokeAction(457868577) }
                 }
                 Button("+") {
-                    count += 1
+                    Task.detached { HaxeBridgeC.invokeAction(1479726225) }
                 }
             }
             Spacer()

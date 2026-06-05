@@ -1,7 +1,6 @@
 import sui.App;
 import sui.View;
 import sui.ui.*;
-import sui.state.StateAction;
 
 /**
     Demonstrates image effect modifiers: brightness, contrast,
@@ -73,9 +72,12 @@ class FiltersApp extends App {
                     ])
                 ]),
                 new Section("", [
-                    new Button("Reset All", null, StateAction.CustomSwift(
-                        "brightnessVal = 0; contrastVal = 1; saturationVal = 1; grayscaleVal = 0"
-                    ))
+                    new Button("Reset All", () -> {
+                        brightnessVal.value = 0;
+                        contrastVal.value = 1;
+                        saturationVal.value = 1;
+                        grayscaleVal.value = 0;
+                    })
                 ])
             ])
         ]);

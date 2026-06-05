@@ -1,7 +1,6 @@
 import sui.App;
 import sui.View;
 import sui.ui.*;
-import sui.state.StateAction;
 
 /**
     Demonstrates view-returning function calls:
@@ -23,9 +22,9 @@ class BuilderApp extends App {
     /** Instance method returning a View — inlined by the macro. **/
     function buildControls():View {
         return new HStack(null, 20, [
-            new Button("-", null, count.dec(1)),
-            new Button("+", null, count.inc(1)),
-            new Button("Reset", null, count.setTo(0))
+            new Button("-", () -> count.value--),
+            new Button("+", () -> count.value++),
+            new Button("Reset", () -> count.value = 0)
         ]);
     }
 

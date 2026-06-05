@@ -27,6 +27,7 @@ package sui;
     new StarRating("Movie:", "userRating")
     ```
 **/
+@:autoBuild(sui.macros.StateMacro.build())
 class ViewComponent extends View {
     override public function body():View {
         return new View();

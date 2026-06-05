@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 import sui.state.Observable;
 
 class TodoItem extends Observable {
@@ -36,8 +35,14 @@ class TodoApp extends App {
                 new HStack(null, 8, [
                     new TextField("New item...", "newItemText")
                         .textFieldStyle(TextFieldStyleValue.RoundedBorder),
-                    new Button("Add", null,
-                        StateAction.CustomSwift('if !newItemText.isEmpty { todos.append(TodoItem(title: newItemText, completed: false)); newItemText = "" }'))
+                    new Button("Add", () -> {
+                        // newItemText is fresh here: the TextField's
+                        // Swift binding writes back to the Haxe mirror.
+                        if (newItemText.value != "") {
+                            todos.value = todos.value.concat([new TodoItem(newItemText.value, false)]);
+                            newItemText.value = "";
+                        }
+                    })
                 ]).padding(),
                 new List([
                     ForEach.byIndex(todos, i ->
@@ -45,8 +50,10 @@ class TodoApp extends App {
                             Text.bind(todos.value[i].title)
                                 .font(FontStyle.Body),
                             new Spacer(),
-                            new Button("Done", null,
-                                StateAction.CustomSwift("todos[i].completed.toggle()"))
+                            new Button("Done", () -> {
+                                todos.value[i].completed = !todos.value[i].completed;
+                                todos.value = todos.value; // re-assign to notify SwiftUI
+                            })
                         ])
                     )
                 ])

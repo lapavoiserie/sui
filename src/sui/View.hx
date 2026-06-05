@@ -251,8 +251,14 @@ class View {
         return this;
     }
 
-    /** Animate changes. Curve: "default", "easeIn", "easeOut", "easeInOut", "spring", "linear", "bouncy". **/
-    public function animation(curve:String, ?value:sui.state.StateOr<Float>):View {
+    /** Animate changes of `value` (a `State<T>` field) with the
+        given curve — SwiftUI's `.animation(_, value:)`. This is the
+        replacement for the old `StateAction.Animated(action, curve)`
+        wrapper: instead of animating *one mutation*, the view
+        declares which state drives its animation, and every change
+        of that state animates — including changes coming back from
+        Haxe through the bridge. **/
+    public function animation(curve:sui.state.AnimationCurve, ?value:Dynamic):View {
         modifierChain.push(ViewModifier.Animation(curve, value));
         return this;
     }
@@ -308,6 +314,15 @@ class View {
         `proportionalOffset`. **/
     public function onDragGesture(fnName:String, mode:String):View {
         modifierChain.push(ViewModifier.OnDragGesture(fnName, mode));
+        return this;
+    }
+
+    /** SwiftUI's `.allowsHitTesting(enabled)`. Passing `false`
+        lets touches drop through to the view stacked below —
+        the way to expose a backdrop drag gesture beneath
+        decorative event blocks. **/
+    public function allowsHitTesting(enabled:Bool):View {
+        modifierChain.push(ViewModifier.AllowsHitTesting(enabled));
         return this;
     }
 
@@ -396,9 +411,7 @@ class View {
 
     /** Add pull-to-refresh to a list. **/
     public function refreshable(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.Refreshable(actionId));
+        modifierChain.push(ViewModifier.Refreshable(action));
         return this;
     }
 
@@ -459,9 +472,7 @@ class View {
 
     /** Run a closure on form/text field submit. **/
     public function onSubmit(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnSubmit(actionId));
+        modifierChain.push(ViewModifier.OnSubmit(action));
         return this;
     }
 
@@ -506,39 +517,50 @@ class View {
         return this;
     }
 
-    /** Run a StateAction when the view appears. **/
+    /** Run an action when the view appears (synchronous variant —
+        same emission as `onAppear`). **/
     public function onAppearAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.OnAppearAction(action));
         return this;
     }
 
-    /** Run a StateAction as an async task when the view appears. **/
+    /** Run an action as an async task when the view appears. **/
     public function taskAction(action:sui.state.StateAction):View {
         modifierChain.push(ViewModifier.TaskAction(action));
         return this;
     }
 
+    /** Run the action every `seconds` for as long as the view stays
+        attached — the replacement for the old
+        `StateAction.IntervalLoop`:
+
+        ```haxe
+        rootView.every(60, () -> tickNowLine());
+        ```
+
+        Compiles to a SwiftUI `.task` whose body sleeps and
+        re-dispatches until the view goes away (the task is
+        cancelled automatically on detach). **/
+    public function every(seconds:Float, action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.Every(seconds, action));
+        return this;
+    }
+
     /** Run a closure when the view appears. Runs in Haxe via the bridge. **/
     public function onAppear(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnAppear(actionId));
+        modifierChain.push(ViewModifier.OnAppear(action));
         return this;
     }
 
     /** Run a closure when the view disappears. Runs in Haxe via the bridge. **/
     public function onDisappear(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.OnDisappear(actionId));
+        modifierChain.push(ViewModifier.OnDisappear(action));
         return this;
     }
 
     /** Run an async closure when the view appears. Runs in Haxe via the bridge. **/
     public function task(action:() -> Void):View {
-        var actionId = sui.ui.Button._nextActionId++;
-        sui.ui.Button._actionRegistry.set(actionId, action);
-        modifierChain.push(ViewModifier.TaskOnAppear(actionId));
+        modifierChain.push(ViewModifier.TaskOnAppear(action));
         return this;
     }
 }

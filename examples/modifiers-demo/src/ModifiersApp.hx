@@ -2,7 +2,6 @@ import sui.App;
 import sui.View;
 import sui.ui.*;
 import sui.state.State;
-import sui.state.StateAction;
 
 class ModifiersApp extends App {
     static function main() {}
@@ -42,8 +41,8 @@ class ModifiersApp extends App {
                         .font(FontStyle.Caption)
                 ]),
                 new Section("Actions", [
-                    new Button("Show Sheet", null, StateAction.SetValue("showSheet", true)),
-                    new Button("Show Alert", null, StateAction.SetValue("showAlert", true))
+                    new Button("Show Sheet", () -> showSheet.value = true),
+                    new Button("Show Alert", () -> showAlert.value = true)
                 ])
             ])
             .navigationTitle("Settings")
