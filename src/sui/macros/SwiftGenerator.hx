@@ -2798,7 +2798,7 @@ class SwiftGenerator {
                  "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "inspector" | "inspectorColumnWidth" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
                  "onAppear" | "onDisappear" | "task" | "every" | "navigationDestination" |
-                 "onTapGesture" | "onDragGesture" | "allowsHitTesting" | "tint" | "badge" | "tag" |
+                 "onTapGesture" | "onTapGestureGreedy" | "onDragGesture" | "allowsHitTesting" | "tint" | "badge" | "tag" |
                  "onAppearAction" | "taskAction" | "toolbarItem" |
                  "blur" | "scaleEffect" | "rotationEffect" | "offset" | "proportionalOffset" | "proportionalFrame" |
                  "brightness" | "contrast" | "saturation" | "grayscale" |
@@ -2937,6 +2937,13 @@ class SwiftGenerator {
                     'onTapGesture { ${actionCode} }';
                 else
                     'onTapGesture { }';
+            case "onTapGestureGreedy":
+                // minimumDistance: 0 claims the gesture immediately, so a
+                // sibling backdrop DragGesture below never fires on this
+                // view's area; a release within ~10pt is the tap, longer
+                // travel is absorbed (future home of per-block drag-move).
+                var actionCode = if (args.length > 0) actionToSwift(args[0]) else null;
+                'gesture(DragGesture(minimumDistance: 0).onEnded { v in if v.translation.width * v.translation.width + v.translation.height * v.translation.height < 100 { ${actionCode != null ? actionCode : ""} } })';
             case "allowsHitTesting":
                 var v = if (args.length > 0) extractConstant(args[0]) else "true";
                 'allowsHitTesting($v)';

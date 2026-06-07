@@ -85,6 +85,9 @@ enum ViewModifier {
 
     // Gestures
     OnTapGesture(action:sui.state.StateAction);
+    /** Greedy tap — claims the gesture before underlying sibling
+        DragGestures; releases within ~10pt count as the tap. **/
+    OnTapGestureGreedy(action:sui.state.StateAction);
     /** Drag gesture, dispatched to a @:expose bridge fn with the
         normalised start + end coordinates (relative to the
         enclosing GeometryReader). Args: `(mode, sx, sy, ex, ey)`

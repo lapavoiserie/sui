@@ -286,6 +286,19 @@ class View {
         return this;
     }
 
+    /** Tap gesture that wins the recognition race against DragGestures
+        attached to sibling views BELOW this one (e.g. a drag-to-create
+        backdrop under positioned event blocks). Emits a
+        `DragGesture(minimumDistance: 0)` that claims the gesture
+        immediately, then treats any release within ~10pt as the tap —
+        tolerant of the small pointer travel of a real-world mouse
+        click, which makes a plain `.onTapGesture` lose to the
+        backdrop's drag. Longer drags are absorbed without action. **/
+    public function onTapGestureGreedy(action:sui.state.StateAction):View {
+        modifierChain.push(ViewModifier.OnTapGestureGreedy(action));
+        return this;
+    }
+
     /** Attach a SwiftUI `DragGesture` and route its release event to
         a `@:expose` Haxe bridge function. The bridge receives the
         drag's start + end coordinates as normalised fractions of

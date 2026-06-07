@@ -71,6 +71,7 @@ class StateMacro {
         `SwiftGenerator.modToSwift`. **/
     static final ACTION_MODIFIERS = [
         "onTapGesture" => 0,
+        "onTapGestureGreedy" => 0,
         "onLongPressGesture" => 0,
         "onChange" => 1,
         "onKeyPress" => 1,
