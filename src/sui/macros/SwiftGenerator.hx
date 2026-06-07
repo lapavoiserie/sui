@@ -1883,7 +1883,14 @@ class SwiftGenerator {
                 var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "";
                 if (binding == null || binding == "") binding = "date";
                 needsIsoDateHelper = true;
-                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoFormat($$0) }), displayedComponents: .date)\n';
+                // `.environment(\.timeZone, UTC)` pins the control to the
+                // same frame of reference as the UTC-anchored formatter
+                // behind the Binding. Without it the picker DISPLAYS the
+                // parsed Date in the system zone while the round-trip
+                // string carries bare components — the user sees (and
+                // edits) values shifted by the zone offset relative to
+                // the bound state.
+                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoFormat($$0) }), displayedComponents: .date).environment(\\.timeZone, TimeZone(identifier: "UTC")!)\n';
 
             case "IsoTimePicker":
                 // Native DatePicker pinned to `.hourAndMinute` mode
@@ -1895,7 +1902,10 @@ class SwiftGenerator {
                 var binding = if (args.length > 1) qualifyStateName(extractString(args[1])) else "";
                 if (binding == null || binding == "") binding = "time";
                 needsIsoTimeHelper = true;
-                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoTimeParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoTimeFormat($$0) }), displayedComponents: .hourAndMinute)\n';
+                // Same UTC pin as IsoDatePicker — the HH:mm string is bare
+                // wall-time components; the control must not reinterpret
+                // them through the system zone.
+                return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoTimeParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoTimeFormat($$0) }), displayedComponents: .hourAndMinute).environment(\\.timeZone, TimeZone(identifier: "UTC")!)\n';
 
             case "Slider":
                 var binding = if (args.length > 0) qualifyStateName(extractString(args[0])) else "value";
