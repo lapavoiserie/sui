@@ -78,6 +78,13 @@ class TestTypedExpressions extends App {
                 new Text(item)
                     .onTapGesture(() -> name.value = item)
             ),
+            // Button.withView: an icon-labelled button (regression
+            // guard — withView used to drop its label view and emit a
+            // blank Button("")).
+            Button.withView(
+              Image.systemImage("gear").foregroundColor(ColorValue.Secondary),
+              () -> count.value = 0
+            ),
             // Action closures (previously StateAction variants)
             new Button("Inc", () -> count.value++),
             new Button("Reset", () -> count.value = 0),

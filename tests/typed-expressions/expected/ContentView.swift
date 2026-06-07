@@ -22,11 +22,17 @@ struct ContentView: View {
                 Text("\(item)")
                     .onTapGesture { Task.detached { HaxeBridgeC.invokeIndexedAction(838190797, __i0, -1) } }
             }
+            Button {
+                Task.detached { HaxeBridgeC.invokeAction(1850389800) }
+            } label: {
+                    Image(systemName: "gear")
+                        .foregroundStyle(.secondary)
+            }
             Button("Inc") {
                 Task.detached { HaxeBridgeC.invokeAction(1463985449) }
             }
             Button("Reset") {
-                Task.detached { HaxeBridgeC.invokeAction(1850389800) }
+                Task.detached { HaxeBridgeC.invokeAction(1867167419) }
             }
             Button("Toggle") {
                 Task.detached { HaxeBridgeC.invokeAction(1397807425) }

@@ -2259,6 +2259,22 @@ class SwiftGenerator {
         where the typed Haxe lambda param maps to the Swift loop var
         (Int), so subscripts `arr.value[i]` and `otherArr.value[i]`
         compile straight through the typed walker into `appState.arr[i]`. **/
+    /** `Button.withView(labelView, action)` → SwiftUI
+        `Button(action: { … }) { <labelView> }`. The action (args[1])
+        was wired to the runtime store by StateMacro, same as a plain
+        Button; the label (args[0]) is any view. **/
+    static function buttonWithViewToSwift(args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
+        var pad = ind(indent);
+        var actionCode = if (args.length > 1) actionToSwift(args[1]) else null;
+        var buf = new StringBuf();
+        buf.add('${pad}Button {\n');
+        buf.add('${pad}    ${actionCode != null ? actionCode : "// no action"}\n');
+        buf.add('${pad}} label: {\n');
+        buf.add(viewToSwift(args[0], indent + 2));
+        buf.add('${pad}}\n');
+        return buf.toString();
+    }
+
     static function forEachByIndexToSwift(args:Array<haxe.macro.Type.TypedExpr>, indent:Int):String {
         var pad = ind(indent);
         var arrayName = qualifyStateName(resolveStateName(args[0]));
@@ -2572,6 +2588,17 @@ class SwiftGenerator {
                         // so the lambda param is the Int index (not the element).
                         if (cls.name == "ForEach" && field.name == "byIndex" && args.length >= 2) {
                             return forEachByIndexToSwift(args, indent);
+                        }
+
+                        // Special case: Button.withView(labelView, action) —
+                        // a button whose label is an arbitrary view (icon,
+                        // stack, …). Emit the SwiftUI action/label form.
+                        // Without this the generic inliner walks withView's
+                        // body (`new Button("", action)`) and drops the
+                        // labelView entirely, yielding an invisible
+                        // blank-label Button("").
+                        if (cls.name == "Button" && field.name == "withView" && args.length >= 1) {
+                            return buttonWithViewToSwift(args, indent);
                         }
 
                         // Special case: Text.bind(expr) — walk the typed
