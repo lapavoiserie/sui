@@ -170,6 +170,14 @@ class View {
         return this;
     }
 
+    /** Apply a SwiftUI ToggleStyle. `Button` renders the toggle as a
+        highlight-when-on button (the "day pill" look); `Switch` is the
+        default slider; `Checkbox` is the macOS box. **/
+    public function toggleStyle(style:ToggleStyleValue):View {
+        modifierChain.push(ViewModifier.ToggleStyle(style));
+        return this;
+    }
+
     /** Apply a SwiftUI ButtonStyle. The most useful values for visual
         hierarchy are `BorderedProminent` (the "filled" CTA look) and
         `Bordered` (a thin outline). Use `Plain` to strip the default
@@ -633,6 +641,19 @@ enum TextFieldStyleValue {
     Automatic;
     RoundedBorder;
     Plain;
+}
+
+enum ToggleStyleValue {
+    Automatic;
+    /** Highlight-when-on button — the "day pill" look (SwiftUI `.button`).
+        Named `Pill` rather than `Button` to avoid colliding with the
+        `sui.ui.Button` view class, whose unqualified name would otherwise
+        clash since module enum constructors are imported unqualified. **/
+    Pill;
+    /** The default slider switch (SwiftUI `.switch`). **/
+    Switch;
+    /** macOS checkbox (SwiftUI `.checkbox`). **/
+    Checkbox;
 }
 
 enum ButtonStyleValue {

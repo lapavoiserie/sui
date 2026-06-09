@@ -47,6 +47,7 @@ enum ViewModifier {
 
     // Styles
     TextFieldStyle(style:sui.View.TextFieldStyleValue);
+    ToggleStyle(style:sui.View.ToggleStyleValue);
     ButtonStyle(style:sui.View.ButtonStyleValue);
 
     // Presentation

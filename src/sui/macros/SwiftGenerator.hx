@@ -2925,8 +2925,17 @@ class SwiftGenerator {
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'buttonStyle(.${e != null ? camel(e) : "automatic"})';
             case "toggleStyle":
+                // Explicit mapping: the `Pill` constructor (renamed from
+                // `Button` to dodge the sui.ui.Button class clash) maps to
+                // SwiftUI's `.button`; the rest pass through.
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
-                'toggleStyle(.${e != null ? camel(e) : "automatic"})';
+                var ts = switch (e) {
+                    case "Pill": "button";
+                    case "Switch": "switch";
+                    case "Checkbox": "checkbox";
+                    default: "automatic";
+                };
+                'toggleStyle(.$ts)';
             case "pickerStyle":
                 var e = if (args.length > 0) extractEnumName(args[0]) else null;
                 'pickerStyle(.${e != null ? camel(e) : "automatic"})';
