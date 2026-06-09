@@ -168,6 +168,30 @@ new ScrollView([
 |-----------|------|---------|-------------|
 | `content` | `Array<View>` | required | Scrollable child views |
 
+## GeometryReader
+
+Reports its parent-proposed size to its content, so children can size or position themselves by fractions of the container rather than fixed pixels. Maps to SwiftUI's `GeometryReader`.
+
+Unlike most layout views, `GeometryReader` **claims the full space** its parent offers and positions its child at `.topLeading`. Inside it, the `.proportionalOffset(x, y)` and `.proportionalFrame(w, h)` modifiers interpret their arguments as `0…1` fractions of the measured size — ideal for an overlay like a "now" line that must track the rendered height of its container.
+
+```haxe
+// A red line positioned partway down its container by a state fraction
+new GeometryReader(
+    new Rectangle()
+        .frame(null, 2)
+        .foregroundColor(ColorValue.Red)
+        .proportionalOffset(0.0, nowMinuteFrac) // 0…1 of measured height
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `content` | `View` | The single child laid out in the proposed space |
+
+> `.proportionalOffset` / `.proportionalFrame` read the geometry proxy directly, so they **only compile inside a `GeometryReader`** — using them in a standalone view is an error.
+
 ## ConditionalView
 
 Conditionally renders views based on state. Maps to SwiftUI's `if/else` in a `@ViewBuilder`.

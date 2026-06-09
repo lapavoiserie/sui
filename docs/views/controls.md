@@ -123,6 +123,49 @@ new Slider("volume", 0.0, 100.0)
 | `rangeMin` | `Float` | Minimum value |
 | `rangeMax` | `Float` | Maximum value |
 
+## Stepper
+
+An increment/decrement control bound to an `Int` `@State`.
+
+```haxe
+new Stepper("Quantity", "quantity", 1, 10)
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | `String` | Row label (shown by `Form`/`List`) |
+| `valueBinding` | `String` | Name of the `@State var` (Int) to bind to |
+| `minValue` / `maxValue` | `Int` | Inclusive range |
+
+The label is **static** — it does not reflect the bound value. To show the running value, pair the Stepper with a bound `Text`:
+
+```haxe
+new HStack(null, 12, [
+  Text.bind('Every ${interval.value}'),
+  new Stepper("", "interval", 1, 99),
+])
+```
+
+## IsoDatePicker / IsoTimePicker
+
+Native date and time wheels that bind to a **`State<String>`** instead of a `Date`, so the Haxe side keeps a plain ISO string. `IsoDatePicker` round-trips `YYYY-MM-DD`; `IsoTimePicker` round-trips `HH:mm`. Sui emits a `Binding<Date>` adapter (shared `suiIsoParse`/`suiIsoFormat` helpers) so SwiftUI shows a real picker while the state stays a string.
+
+```haxe
+new IsoDatePicker("Start", "editorStartDateIso")
+new IsoTimePicker("Start time", "editorStartTime").labelsHidden()
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `label` | `String` | Row label — pass `""` and add `.labelsHidden()` when an HStack already shows the field name |
+| `isoStateName` | `String` | Name of the `State<String>` to bind to (`YYYY-MM-DD` for date, `HH:mm` for time) |
+
+> **UTC-pinned by design.** The formatters are anchored to **UTC**, not the device's local time zone. This is deliberate: the picker displays exactly the wall-clock value held in the string, with no implicit local-offset shift. Store wall-clock values in the string and convert to/from real UTC instants yourself at the API boundary — otherwise an event authored at 09:00 can render an hour off across a DST edge.
+
 ## ShareLink
 
 A button that triggers the system share sheet — macOS Share menu on Mac, `UIActivityViewController` on iOS / iPadOS / visionOS. Maps to SwiftUI's `ShareLink(item:)`.

@@ -140,7 +140,25 @@ new Image("photo").blur(blurAmount)
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
 | `.textFieldStyle(style)` | `style: TextFieldStyleValue` | `.Automatic`, `.RoundedBorder`, `.Plain` |
+| `.buttonStyle(style)` | `style: ButtonStyleValue` | `.Automatic`, `.Plain`, `.Borderless`, `.Bordered`, `.BorderedProminent`, `.Link` |
+| `.pickerStyle(style)` | `style: PickerStyleValue` | `.Automatic`, `.Inline`, `.Menu`, `.Palette`, `.Segmented` (the macOS switcher), `.Wheel` (iOS only) |
+| `.toggleStyle(style)` | `style: ToggleStyleValue` | `.Automatic`, `.Pill`, `.Switch`, `.Checkbox` |
 | `.listStyle(style)` | `style: String` | `"inset"`, `"grouped"`, `"plain"`, `"sidebar"` |
+
+**`ButtonStyleValue.BorderedProminent`** is the filled call-to-action look; `.Bordered` is a thin outline; `.Plain` / `.Borderless` strip the chrome (handy inside lists, sidebars and tappable cells).
+
+**`ToggleStyleValue.Pill`** renders a `Toggle` as a highlight-when-on button — the "day pill" / segmented-choice look — and maps to SwiftUI's `.button` toggle style. It is named `Pill` rather than `Button` on purpose: enum constructors are imported unqualified, so a `Button` constructor would collide with the `sui.ui.Button` view class (and `Button.withView(...)` would then resolve to the enum value). `.Switch` is the default slider; `.Checkbox` is the macOS box.
+
+```haxe
+new Button("Save", saveAction)
+    .buttonStyle(ButtonStyleValue.BorderedProminent)
+
+new Picker("View", "viewMode", [/* … */])
+    .pickerStyle(PickerStyleValue.Segmented)
+
+// A row of weekday "pills"
+new Toggle("Mon", "dowMon").toggleStyle(ToggleStyleValue.Pill)
+```
 
 ## Presentation
 
@@ -182,6 +200,7 @@ new VStack([...])
 | Modifier | Parameters | Description |
 |----------|-----------|-------------|
 | `.onTapGesture(action)` | `action: () -> Void` | Runs a closure when tapped |
+| `.onTapGestureGreedy(action)` | `action: () -> Void` | Like `.onTapGesture`, but wins the recognition race against a `DragGesture` on a sibling *below* it (e.g. tappable blocks over a drag-to-create backdrop) |
 | `.onLongPressGesture(action)` | `action: () -> Void` | Runs a closure on long press |
 | `.onKeyPress(key, action)` | `key: String`, `action: () -> Void` | Runs a closure when the named key is pressed while the view (or a descendant) has focus. |
 
@@ -199,6 +218,15 @@ new VStack([...])
 ```
 
 `onKeyPress` uses the same `key` strings as `.keyboardShortcut` — see the [Keyboard section below](#keyboard) for the full list. The action runs only when the view (or a descendant) has keyboard focus; the handler returns `.handled` so SwiftUI stops bubbling the event up the focus chain.
+
+### Greedy taps over a drag backdrop
+
+A plain `.onTapGesture` can *lose* to a `DragGesture` attached to a view stacked underneath it — the classic case being tappable blocks positioned over a drag-to-create backdrop, where a real mouse click travels a few points and the backdrop's drag claims it first. `.onTapGestureGreedy` emits a `DragGesture(minimumDistance: 0)` that claims the gesture immediately and treats any release within ~10pt as a tap (longer drags are absorbed without firing). Reach for it only when something below is competing for the same touch; otherwise `.onTapGesture` is cheaper.
+
+```haxe
+// Event block sitting on top of a drag-to-create grid
+eventBlock.onTapGestureGreedy(() -> openEditor(event.id))
+```
 
 ## Keyboard
 
