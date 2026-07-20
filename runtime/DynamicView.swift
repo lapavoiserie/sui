@@ -151,6 +151,9 @@ struct DynamicView: View {
         case "Slider":
             DynamicSlider(node: node)
 
+        case "ChoicePicker":
+            DynamicPicker(node: node)
+
         case "Icon":
             // A2UI icon name, interpreted as an SF Symbol (best effort). Icons
             // carry no colour prop, so they take the theme accent (a brand
@@ -347,6 +350,72 @@ struct DynamicSlider: View {
                 }
         }
     }
+}
+
+/// A choice picker bound to an Array<String> of selected values. A single-select
+/// (mutuallyExclusive) surface renders as a native Picker; multipleSelection as
+/// a checkable Menu. Edits write the new array back through the data bridge.
+struct DynamicPicker: View {
+    let node: ViewNode
+    @State private var selected: [String]
+
+    init(node: ViewNode) {
+        self.node = node
+        _selected = State(initialValue: parseStringArray(node.property("selected")))
+    }
+
+    var body: some View {
+        let options = parsePickerOptions(node.property("options"))
+        let label = node.property("label")
+        return Group {
+            if node.property("variant") == "multipleSelection" {
+                Menu {
+                    ForEach(options, id: \.value) { opt in
+                        Button { toggle(opt.value) } label: {
+                            Label(opt.label, systemImage: selected.contains(opt.value) ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    let names = options.filter { selected.contains($0.value) }.map(\.label)
+                    Text(names.isEmpty ? label : names.joined(separator: ", "))
+                }
+            } else {
+                Picker(label, selection: singleSelection) {
+                    ForEach(options, id: \.value) { opt in
+                        Text(opt.label).tag(opt.value)
+                    }
+                }
+            }
+        }
+    }
+
+    private var singleSelection: Binding<String> {
+        Binding(get: { selected.first ?? "" }, set: { selected = [$0]; write() })
+    }
+
+    private func toggle(_ value: String) {
+        if let i = selected.firstIndex(of: value) { selected.remove(at: i) } else { selected.append(value) }
+        write()
+    }
+
+    private func write() {
+        let json = (try? JSONSerialization.data(withJSONObject: selected))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        viewnode_set_data(node.property("path"), json)
+    }
+}
+
+private func parsePickerOptions(_ json: String) -> [(label: String, value: String)] {
+    guard let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] else { return [] }
+    return arr.map { (
+        label: ($0["label"] as? String) ?? ($0["value"] as? String) ?? "",
+        value: ($0["value"] as? String) ?? ""
+    ) }
+}
+
+private func parseStringArray(_ json: String) -> [String] {
+    guard let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [Any] else { return [] }
+    return arr.compactMap { $0 as? String }
 }
 
 // MARK: - Canvas drawing
