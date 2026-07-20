@@ -495,8 +495,11 @@ struct HotReloadRootView: View {
         // instead of tearing everything down every time.
         let _ = reloadCount
         let root = ViewNode(pointer: viewnode_get_root())
+        // Tint native controls with the theme accent (surface primaryColor).
+        let accent = Color(suiHex: String(cString: viewnode_theme_accent()))
         DynamicView(node: root)
             .id(root.id)
+            .tint(accent)
             .onReceive(pollTimer) { _ in
                 if viewnode_poll() != 0 { reloadCount += 1 }
             }

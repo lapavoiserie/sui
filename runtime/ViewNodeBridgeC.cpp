@@ -86,6 +86,18 @@ void viewnode_set_data(const char* path, const char* value) {
     hx::SetTopOfStack((int*)0, false);
 }
 
+// The theme accent (primaryColor hex) to tint native controls with.
+const char* viewnode_theme_accent(void) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getAccent().__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
 // Get root view node (returns opaque pointer)
 void* viewnode_get_root(void) {
     int dummy = 0;

@@ -70,6 +70,18 @@ class ViewNodeBridge {
         if (_dataSink != null) _dataSink(path, value);
     }
 
+    /** The theme accent (e.g. a surface's primaryColor, hex) that the native
+        host tints controls with. "" means use the platform default. **/
+    static var _accent:String = "";
+
+    public static function setAccent(hex:String):Void {
+        _accent = hex != null ? hex : "";
+    }
+
+    public static function getAccent():String {
+        return _accent;
+    }
+
     /** Get the root view node. Returns an opaque pointer. **/
     public static function getRoot():View {
         return _root;
