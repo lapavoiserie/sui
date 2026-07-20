@@ -340,8 +340,10 @@ struct DynamicCanvas: View {
             let t = CGAffineTransform(a: sx, b: 0, c: 0, d: sy,
                                       tx: (size.width - vw * sx) / 2,
                                       ty: (size.height - vh * sy) / 2)
+            // The "primary" token resolves to the surface theme's primaryColor.
+            let primary = spec["primary"] as? String ?? ""
             for op in (spec["ops"] as? [[String: Any]] ?? []) {
-                drawCanvasOp(op, &ctx, t)
+                drawCanvasOp(op, &ctx, t, primary)
             }
         }
     }
@@ -354,12 +356,14 @@ private func cnum(_ v: Any?) -> CGFloat? {
 private func cf(_ op: [String: Any], _ k: String, _ d: CGFloat = 0) -> CGFloat { cnum(op[k]) ?? d }
 private func cscale(_ t: CGAffineTransform) -> CGFloat { sqrt(abs(t.a * t.d - t.b * t.c)) }
 
-// A colour is a hex "#RRGGBB" or a semantic theme token.
-private func canvasColor(_ op: [String: Any], _ key: String) -> Color? {
+// A colour is a hex "#RRGGBB" or a semantic theme token. `primary` resolves to
+// the surface theme's primaryColor (falling back to the system accent); the
+// neutral tokens stay as adaptive system colours so drawings track light/dark.
+private func canvasColor(_ op: [String: Any], _ key: String, _ primary: String) -> Color? {
     guard let s = op[key] as? String, !s.isEmpty else { return nil }
     if s.hasPrefix("#") { return Color(suiHex: s) }
     switch s {
-    case "primary":   return .accentColor
+    case "primary":   return primary.hasPrefix("#") ? (Color(suiHex: primary) ?? .accentColor) : .accentColor
     case "onPrimary": return .white
     case "surface":   return Color(white: 0.5).opacity(0.12)
     case "onSurface": return .primary
@@ -379,37 +383,37 @@ private func canvasStroke(_ op: [String: Any], _ t: CGAffineTransform) -> Stroke
     return StrokeStyle(lineWidth: cf(op, "strokeWidth", 1) * cscale(t), lineCap: cap)
 }
 
-private func paintCanvas(_ ctx: inout GraphicsContext, _ path: Path, _ op: [String: Any], _ t: CGAffineTransform) {
+private func paintCanvas(_ ctx: inout GraphicsContext, _ path: Path, _ op: [String: Any], _ t: CGAffineTransform, _ primary: String) {
     ctx.opacity = Double(cf(op, "opacity", 1))
-    if let fill = canvasColor(op, "fill") { ctx.fill(path, with: .color(fill)) }
-    if let stroke = canvasColor(op, "stroke") { ctx.stroke(path, with: .color(stroke), style: canvasStroke(op, t)) }
+    if let fill = canvasColor(op, "fill", primary) { ctx.fill(path, with: .color(fill)) }
+    if let stroke = canvasColor(op, "stroke", primary) { ctx.stroke(path, with: .color(stroke), style: canvasStroke(op, t)) }
     ctx.opacity = 1
 }
 
 // Coordinates are in viewBox space; each op's Path is built there then mapped to
 // screen with `t` (so lines stay crisp and arcs stay circular under affine).
-private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t: CGAffineTransform) {
+private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t: CGAffineTransform, _ primary: String) {
     switch op["op"] as? String {
     case "rect":
         let r = CGRect(x: cf(op, "x"), y: cf(op, "y"), width: cf(op, "w"), height: cf(op, "h"))
         let rx = cf(op, "rx")
-        paintCanvas(&ctx, (rx > 0 ? Path(roundedRect: r, cornerRadius: rx) : Path(r)).applying(t), op, t)
+        paintCanvas(&ctx, (rx > 0 ? Path(roundedRect: r, cornerRadius: rx) : Path(r)).applying(t), op, t, primary)
 
     case "line":
         var p = Path()
         p.move(to: CGPoint(x: cf(op, "x1"), y: cf(op, "y1")))
         p.addLine(to: CGPoint(x: cf(op, "x2"), y: cf(op, "y2")))
-        paintCanvas(&ctx, p.applying(t), op, t)
+        paintCanvas(&ctx, p.applying(t), op, t, primary)
 
     case "circle":
         let r = cf(op, "r")
         let rect = CGRect(x: cf(op, "cx") - r, y: cf(op, "cy") - r, width: 2 * r, height: 2 * r)
-        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, primary)
 
     case "ellipse":
         let rx = cf(op, "rx"), ry = cf(op, "ry")
         let rect = CGRect(x: cf(op, "cx") - rx, y: cf(op, "cy") - ry, width: 2 * rx, height: 2 * ry)
-        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, primary)
 
     case "arc":
         // A2UI: degrees, 0° at 3 o'clock, clockwise positive.
@@ -421,7 +425,7 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
                  startAngle: .degrees(cf(op, "start")), endAngle: .degrees(cf(op, "end")),
                  clockwise: false)
         if close { p.closeSubpath() }
-        paintCanvas(&ctx, p.applying(t), op, t)
+        paintCanvas(&ctx, p.applying(t), op, t, primary)
 
     case "polyline":
         let pts = op["points"] as? [[Any]] ?? []
@@ -432,13 +436,13 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
             if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
         }
         if op["closed"] as? Bool ?? false { p.closeSubpath() }
-        paintCanvas(&ctx, p.applying(t), op, t)
+        paintCanvas(&ctx, p.applying(t), op, t, primary)
 
     case "text":
         let size = cf(op, "size", 12) * cscale(t)
         let weight: Font.Weight = cf(op, "weight", 400) >= 600 ? .bold : .regular
         var text = Text(op["text"] as? String ?? "").font(.system(size: size, weight: weight))
-        if let fill = canvasColor(op, "fill") { text = text.foregroundColor(fill) }
+        if let fill = canvasColor(op, "fill", primary) { text = text.foregroundColor(fill) }
         let anchor: UnitPoint
         switch op["anchor"] as? String {
         case "middle": anchor = .center
@@ -455,7 +459,7 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
         if let rot = cnum(op["rotate"]) { gt = gt.rotated(by: rot * .pi / 180) }
         if let sc = cnum(op["scale"]) { gt = gt.scaledBy(x: sc, y: sc) }
         let child = gt.concatenating(t)
-        for sub in (op["ops"] as? [[String: Any]] ?? []) { drawCanvasOp(sub, &ctx, child) }
+        for sub in (op["ops"] as? [[String: Any]] ?? []) { drawCanvasOp(sub, &ctx, child, primary) }
 
     default:
         break
