@@ -48,6 +48,11 @@ struct ViewNode: Identifiable {
         return viewnode_get_button_action_id(ptr)
     }
 
+    func invokeAction() {
+        guard let ptr = pointer else { return }
+        viewnode_invoke_action(ptr)
+    }
+
     func property(_ key: String) -> String {
         guard let ptr = pointer else { return "" }
         return String(cString: viewnode_get_property(ptr, key))
@@ -66,6 +71,11 @@ struct ViewNode: Identifiable {
     func modifierFloat(at index: Int, param: Int = 0) -> Double {
         guard let ptr = pointer else { return 0 }
         return viewnode_modifier_float(ptr, Int32(index), Int32(param))
+    }
+
+    func modifierString(at index: Int, param: Int = 0) -> String {
+        guard let ptr = pointer else { return "" }
+        return String(cString: viewnode_modifier_string(ptr, Int32(index), Int32(param)))
     }
 }
 
@@ -107,11 +117,8 @@ struct DynamicView: View {
             Text(node.textContent)
 
         case "Button":
-            let actionId = node.buttonActionId
             Button(node.buttonLabel) {
-                if actionId >= 0 {
-                    haxe_bridge_invoke_action(actionId)
-                }
+                node.invokeAction()
             }
 
         case "Spacer":
@@ -173,15 +180,29 @@ struct DynamicView: View {
             switch modType {
             case "Padding":
                 let value = node.modifierFloat(at: i)
-                result = AnyView(result.padding(value > 0 ? CGFloat(value) : nil))
+                result = value > 0 ? AnyView(result.padding(CGFloat(value))) : AnyView(result.padding())
 
             case "PaddingDefault":
                 result = AnyView(result.padding())
 
             case "Font":
-                let styleStr = node.modifierType(at: i)
-                // Simplified — map common font styles
-                result = AnyView(result.font(.body))
+                // sui's Font(FontStyle) — param 0 is the FontStyle enum name.
+                let font: Font
+                switch node.modifierString(at: i, param: 0) {
+                case "LargeTitle":   font = .largeTitle
+                case "Title":        font = .title
+                case "Title2":       font = .title2
+                case "Title3":       font = .title3
+                case "Headline":     font = .headline
+                case "Subheadline":  font = .subheadline
+                case "Body":         font = .body
+                case "Callout":      font = .callout
+                case "Footnote":     font = .footnote
+                case "Caption":      font = .caption
+                case "Caption2":     font = .caption2
+                default:             font = .body
+                }
+                result = AnyView(result.font(font))
 
             case "Bold":
                 result = AnyView(result.bold())
@@ -232,13 +253,31 @@ struct DynamicView: View {
 
 /// The root view used in hot reload mode.
 /// Watches for .cppia file changes and triggers re-render.
+// Boots the hxcpp runtime + registers the app exactly once, before the first
+// view-tree traversal. A global `let` is initialised lazily and thread-safely
+// on first access (Swift dispatch_once semantics), so referencing it at the
+// top of `body` guarantees `viewnode_get_root()` sees an initialised runtime.
+private let _suiRuntimeBooted: Bool = {
+    viewnode_boot()
+    return true
+}()
+
 struct HotReloadRootView: View {
     @State private var reloadCount = 0
+
+    // Pump the app's poll delegate on the main thread (drains the WS queue).
+    private let pollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+
+    // Boot the runtime before the first body evaluation reads the view tree.
+    init() { _ = _suiRuntimeBooted }
 
     var body: some View {
         let root = ViewNode(pointer: viewnode_get_root())
         DynamicView(node: root)
             .id(reloadCount) // force re-render on reload
+            .onReceive(pollTimer) { _ in
+                if viewnode_poll() != 0 { reloadCount += 1 }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
                 reloadCount += 1
             }

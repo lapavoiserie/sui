@@ -82,6 +82,9 @@ class Build {
             Sys.setCwd(cwd);
             // Pass platform define for conditional compilation (#if sui_ios, #if sui_macos, #if sui_visionos)
             var haxeArgs = ["build.hxml", "-D", 'sui_$platform'];
+            // Dynamic renderer: SwiftGenerator emits SuiBootC.cpp and force-keeps
+            // the bridge classes only under this define.
+            if (hotReload) { haxeArgs.push("-D"); haxeArgs.push("sui_hot_reload"); }
             // For non-macOS targets, tell hxcpp to cross-compile for the correct platform
             if (platform == "ios") {
                 haxeArgs.push("-D");
@@ -109,8 +112,12 @@ class Build {
 
         // Auto-detect bridge app: macro generates HaxeBridgeC.cpp when bridge is needed
         var isBridgeApp = FileSystem.exists('$swiftGenDir/HaxeBridgeC.cpp');
+        // The dynamic (hot-reload) renderer needs the same native-bridge scaffold
+        // — hxcpp static lib + a compiled C bridge — even when the app has no
+        // action closures (so no HaxeBridgeC.cpp). Treat both the same way.
+        var nativeBridge = isBridgeApp || hotReload;
 
-        if (isBridgeApp) {
+        if (nativeBridge) {
             ensureDirectory('$buildDir/lib');
 
             if (needsRecompile || !FileSystem.exists('$buildDir/lib/libhaxe.a')) {
@@ -166,22 +173,38 @@ class Build {
                 clangArgs.push("-isysroot");
                 clangArgs.push(getSdkPath(sdk));
             }
-            clangArgs.push('$swiftGenDir/HaxeBridgeC.cpp');
-            clangArgs.push("-o");
-            clangArgs.push('$buildDir/lib/HaxeBridgeC.o');
-            var clangResult = Sys.command("clang++", clangArgs);
-            if (clangResult != 0) {
-                Sys.println("Error: C++ bridge compilation failed.");
-                Sys.exit(1);
+            // The C++ bridge sources to compile into the static library:
+            //   - HaxeBridgeC.cpp   — static bridge (@:expose fns, action dispatch)
+            //   - ViewNodeBridgeC.cpp + SuiBootC.cpp — dynamic renderer + bootstrap
+            var libPath = getLibPath();
+            var bridgeSources:Array<{src:String, obj:String}> = [];
+            if (isBridgeApp)
+                bridgeSources.push({src: '$swiftGenDir/HaxeBridgeC.cpp', obj: '$buildDir/lib/HaxeBridgeC.o'});
+            if (hotReload) {
+                bridgeSources.push({src: '$libPath/runtime/ViewNodeBridgeC.cpp', obj: '$buildDir/lib/ViewNodeBridgeC.o'});
+                bridgeSources.push({src: '$swiftGenDir/SuiBootC.cpp', obj: '$buildDir/lib/SuiBootC.o'});
             }
-
-            // Add bridge object to the static library
-            Sys.command("ar", ["rcs", '$buildDir/lib/libhaxe.a', '$buildDir/lib/HaxeBridgeC.o']);
+            for (bs in bridgeSources) {
+                if (!FileSystem.exists(bs.src)) {
+                    Sys.println('Error: expected C++ bridge source missing: ${bs.src}');
+                    Sys.exit(1);
+                }
+                var cargs = clangArgs.copy();
+                cargs.push(bs.src);
+                cargs.push("-o");
+                cargs.push(bs.obj);
+                if (Sys.command("clang++", cargs) != 0) {
+                    Sys.println('Error: C++ bridge compilation failed for ${bs.src}.');
+                    Sys.exit(1);
+                }
+                // Add the bridge object to the static library
+                Sys.command("ar", ["rcs", '$buildDir/lib/libhaxe.a', bs.obj]);
+            }
         }
 
         // Step N: Assemble Xcode project
-        var stepNum = isBridgeApp ? 3 : 2;
-        var totalSteps = isBridgeApp ? 4 : 3;
+        var stepNum = nativeBridge ? 3 : 2;
+        var totalSteps = nativeBridge ? 4 : 3;
         Sys.println('[$stepNum/$totalSteps] Assembling Xcode project...');
 
         // Copy Swift files (skip .cpp/.h for bridge — they're in the static lib)
@@ -203,11 +226,25 @@ class Build {
             copyHotReloadFiles(buildDir);
         }
 
+        // Umbrella bridging header: Xcode exposes exactly one bridging header to
+        // Swift, but a hot-reload app may need both the static bridge (actions)
+        // and the dynamic ViewNode bridge. Generate one that includes whichever
+        // headers are present.
+        if (nativeBridge) {
+            var umbrella = new StringBuf();
+            umbrella.add("// AUTO-GENERATED — Swift ↔ hxcpp bridging umbrella header.\n");
+            if (FileSystem.exists('$buildDir/Sources/HaxeBridgeC.h'))
+                umbrella.add("#include \"HaxeBridgeC.h\"\n");
+            if (FileSystem.exists('$buildDir/Sources/ViewNodeBridgeC.h'))
+                umbrella.add("#include \"ViewNodeBridgeC.h\"\n");
+            File.saveContent('$buildDir/Sources/SuiBridging.h', umbrella.toString());
+        }
+
         // Copy user-provided Swift files from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
 
         // Generate project.yml
-        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, isBridgeApp));
+        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge));
 
         if (xcodeOnly) {
             runXcodegen(buildDir);
@@ -386,9 +423,11 @@ class Build {
             var content = File.getContent(contentView);
             // Replace the body of MainScreen with HotReloadRootView
             // The generated ContentView has a MainScreen() function — wrap it
+            // App.swift instantiates ContentView() — replace the generated
+            // static view with one that hosts the runtime DynamicView renderer.
             var hotReloadWrapper = "// Hot reload mode — uses DynamicView renderer\n"
                 + "import SwiftUI\n\n"
-                + "struct MainScreen: View {\n"
+                + "struct ContentView: View {\n"
                 + "    var body: some View {\n"
                 + "        HotReloadRootView()\n"
                 + "    }\n"
@@ -627,7 +666,7 @@ class Build {
         };
     }
 
-    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, isBridgeApp:Bool = false):String {
+    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false):String {
         var pk = platformKey(platform);
         var dt = deploymentTarget(platform);
 
@@ -640,8 +679,8 @@ class Build {
         }
 
         var bridge = "";
-        if (isBridgeApp) {
-            bridge = '      SWIFT_OBJC_BRIDGING_HEADER: Sources/HaxeBridgeC.h
+        if (nativeBridge) {
+            bridge = '      SWIFT_OBJC_BRIDGING_HEADER: Sources/SuiBridging.h
       LIBRARY_SEARCH_PATHS:
         - "$$(PROJECT_DIR)/lib"
       OTHER_LDFLAGS:

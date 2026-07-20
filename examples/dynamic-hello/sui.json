@@ -1,0 +1,5 @@
+{
+    "appName": "DynamicHello",
+    "bundleIdentifier": "com.sui.dynamichello",
+    "bundleIdPrefix": "com.sui"
+}

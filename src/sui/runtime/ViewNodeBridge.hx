@@ -12,7 +12,12 @@ import sui.modifiers.ViewModifier;
 
     Used by `mui watch` for hot reload — the native host stays running
     while the .cppia script is reloaded with new view code.
+
+    `@:keep` — every method here is reached only from the C bridge via
+    reflection, so DCE would otherwise strip the class in a dynamic-render
+    build whose Haxe never references it directly.
 **/
+@:keep
 class ViewNodeBridge {
     /** The root view tree, rebuilt on each reload. **/
     static var _root:View = null;
@@ -31,6 +36,25 @@ class ViewNodeBridge {
         if (_app != null) {
             _root = _app.body();
         }
+    }
+
+    /** Optional per-frame delegate: pumps an external source (e.g. a WebSocket
+        queue) on the main thread and reports whether the tree should rebuild. **/
+    static var _poll:Void->Bool = null;
+
+    /** Register the poll delegate (called by a dynamic app that streams its UI
+        from a live source rather than a fixed body()). **/
+    public static function setPoll(f:Void->Bool):Void {
+        _poll = f;
+    }
+
+    /** Pump the poll delegate and rebuild if it reports a change. Returns true
+        when the tree changed, so the native host can trigger a re-render. **/
+    public static function poll():Bool {
+        if (_poll == null) return false;
+        var changed = _poll();
+        if (changed) rebuild();
+        return changed;
     }
 
     /** Get the root view node. Returns an opaque pointer. **/
@@ -158,5 +182,18 @@ class ViewNodeBridge {
         if (node == null) return -1;
         var id:Dynamic = Reflect.field(node, "actionId");
         return id != null ? cast(id, Int) : -1;
+    }
+
+    /** Invoke a Button's action closure directly.
+
+        The static bridge routes taps through an integer id into the Callbacks
+        store because a Haxe closure captured by a Swift/ARC closure is invisible
+        to the hxcpp GC. The dynamic renderer has no such problem: it holds the
+        live view tree (`_root`, a GC root), so the closure sitting on the node
+        stays reachable. So we just call it — no id, no Callbacks indirection. **/
+    public static function invokeButtonAction(node:View):Void {
+        if (node == null) return;
+        var action:Dynamic = Reflect.field(node, "action");
+        if (action != null) action();
     }
 }
