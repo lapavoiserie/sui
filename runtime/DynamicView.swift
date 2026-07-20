@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// Recursively renders a Haxe view tree at runtime.
 /// Used by `mui watch` for hot reload — the Swift host stays running
@@ -144,12 +145,24 @@ struct DynamicView: View {
         case "TextField":
             DynamicTextField(node: node)
 
+        case "Canvas":
+            DynamicCanvas(node: node)
+
         case "Image":
-            let name = node.property("systemName")
-            if !name.isEmpty {
-                Image(systemName: name)
+            let url = node.property("url")
+            if !url.isEmpty, let u = URL(string: url) {
+                AsyncImage(url: u) { img in
+                    img.resizable().scaledToFit()
+                } placeholder: {
+                    ProgressView()
+                }
             } else {
-                Image(node.property("name"))
+                let name = node.property("systemName")
+                if !name.isEmpty {
+                    Image(systemName: name)
+                } else {
+                    Image(node.property("name"))
+                }
             }
 
         case "ProgressView":
@@ -297,6 +310,155 @@ struct DynamicCheckBox: View {
             .onChange(of: on) { _, newValue in
                 viewnode_set_data(node.property("path"), newValue ? "true" : "false")
             }
+    }
+}
+
+// MARK: - Canvas drawing
+
+/// Interprets an A2UI Canvas spec — `{viewBox, ops, fit}`, delivered as JSON on
+/// the "canvas" property — into native SwiftUI drawing. One interpreter renders
+/// every Canvas-based component (gauges, sparklines, charts): the drawing logic
+/// lives once, server-side, and each op is replayed here through a GraphicsContext.
+struct DynamicCanvas: View {
+    let node: ViewNode
+
+    var body: some View {
+        let json = node.property("canvas")
+        let spec = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any]
+        return Canvas { ctx, size in
+            guard let spec = spec,
+                  let vb = spec["viewBox"] as? [String: Any],
+                  let vw = cnum(vb["w"]), let vh = cnum(vb["h"]), vw > 0, vh > 0
+            else { return }
+            let sx: CGFloat, sy: CGFloat
+            switch spec["fit"] as? String {
+            case "stretch": sx = size.width / vw; sy = size.height / vh
+            case "cover":   let s = max(size.width / vw, size.height / vh); sx = s; sy = s
+            default:        let s = min(size.width / vw, size.height / vh); sx = s; sy = s // contain
+            }
+            // viewBox → allocated box: uniform (or stretch) scale, centered.
+            let t = CGAffineTransform(a: sx, b: 0, c: 0, d: sy,
+                                      tx: (size.width - vw * sx) / 2,
+                                      ty: (size.height - vh * sy) / 2)
+            for op in (spec["ops"] as? [[String: Any]] ?? []) {
+                drawCanvasOp(op, &ctx, t)
+            }
+        }
+    }
+}
+
+private func cnum(_ v: Any?) -> CGFloat? {
+    if let n = v as? NSNumber { return CGFloat(n.doubleValue) }
+    return nil
+}
+private func cf(_ op: [String: Any], _ k: String, _ d: CGFloat = 0) -> CGFloat { cnum(op[k]) ?? d }
+private func cscale(_ t: CGAffineTransform) -> CGFloat { sqrt(abs(t.a * t.d - t.b * t.c)) }
+
+// A colour is a hex "#RRGGBB" or a semantic theme token.
+private func canvasColor(_ op: [String: Any], _ key: String) -> Color? {
+    guard let s = op[key] as? String, !s.isEmpty else { return nil }
+    if s.hasPrefix("#") { return Color(suiHex: s) }
+    switch s {
+    case "primary":   return .accentColor
+    case "onPrimary": return .white
+    case "surface":   return Color(white: 0.5).opacity(0.12)
+    case "onSurface": return .primary
+    case "border":    return .gray.opacity(0.5)
+    case "muted":     return .secondary
+    default:          return .primary
+    }
+}
+
+private func canvasStroke(_ op: [String: Any], _ t: CGAffineTransform) -> StrokeStyle {
+    let cap: CGLineCap
+    switch op["cap"] as? String {
+    case "round":  cap = .round
+    case "square": cap = .square
+    default:       cap = .butt
+    }
+    return StrokeStyle(lineWidth: cf(op, "strokeWidth", 1) * cscale(t), lineCap: cap)
+}
+
+private func paintCanvas(_ ctx: inout GraphicsContext, _ path: Path, _ op: [String: Any], _ t: CGAffineTransform) {
+    ctx.opacity = Double(cf(op, "opacity", 1))
+    if let fill = canvasColor(op, "fill") { ctx.fill(path, with: .color(fill)) }
+    if let stroke = canvasColor(op, "stroke") { ctx.stroke(path, with: .color(stroke), style: canvasStroke(op, t)) }
+    ctx.opacity = 1
+}
+
+// Coordinates are in viewBox space; each op's Path is built there then mapped to
+// screen with `t` (so lines stay crisp and arcs stay circular under affine).
+private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t: CGAffineTransform) {
+    switch op["op"] as? String {
+    case "rect":
+        let r = CGRect(x: cf(op, "x"), y: cf(op, "y"), width: cf(op, "w"), height: cf(op, "h"))
+        let rx = cf(op, "rx")
+        paintCanvas(&ctx, (rx > 0 ? Path(roundedRect: r, cornerRadius: rx) : Path(r)).applying(t), op, t)
+
+    case "line":
+        var p = Path()
+        p.move(to: CGPoint(x: cf(op, "x1"), y: cf(op, "y1")))
+        p.addLine(to: CGPoint(x: cf(op, "x2"), y: cf(op, "y2")))
+        paintCanvas(&ctx, p.applying(t), op, t)
+
+    case "circle":
+        let r = cf(op, "r")
+        let rect = CGRect(x: cf(op, "cx") - r, y: cf(op, "cy") - r, width: 2 * r, height: 2 * r)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t)
+
+    case "ellipse":
+        let rx = cf(op, "rx"), ry = cf(op, "ry")
+        let rect = CGRect(x: cf(op, "cx") - rx, y: cf(op, "cy") - ry, width: 2 * rx, height: 2 * ry)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t)
+
+    case "arc":
+        // A2UI: degrees, 0° at 3 o'clock, clockwise positive.
+        let c = CGPoint(x: cf(op, "cx"), y: cf(op, "cy"))
+        let close = op["close"] as? Bool ?? false
+        var p = Path()
+        if close { p.move(to: c) }
+        p.addArc(center: c, radius: cf(op, "r"),
+                 startAngle: .degrees(cf(op, "start")), endAngle: .degrees(cf(op, "end")),
+                 clockwise: false)
+        if close { p.closeSubpath() }
+        paintCanvas(&ctx, p.applying(t), op, t)
+
+    case "polyline":
+        let pts = op["points"] as? [[Any]] ?? []
+        var p = Path()
+        for (i, pt) in pts.enumerated() {
+            let x = cnum(pt.first) ?? 0
+            let y = cnum(pt.count > 1 ? pt[1] : nil) ?? 0
+            if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        if op["closed"] as? Bool ?? false { p.closeSubpath() }
+        paintCanvas(&ctx, p.applying(t), op, t)
+
+    case "text":
+        let size = cf(op, "size", 12) * cscale(t)
+        let weight: Font.Weight = cf(op, "weight", 400) >= 600 ? .bold : .regular
+        var text = Text(op["text"] as? String ?? "").font(.system(size: size, weight: weight))
+        if let fill = canvasColor(op, "fill") { text = text.foregroundColor(fill) }
+        let anchor: UnitPoint
+        switch op["anchor"] as? String {
+        case "middle": anchor = .center
+        case "end":    anchor = .trailing
+        default:       anchor = .leading
+        }
+        ctx.draw(text, at: CGPoint(x: cf(op, "x"), y: cf(op, "y")).applying(t), anchor: anchor)
+
+    case "group":
+        var gt = CGAffineTransform.identity
+        if let tr = op["translate"] as? [Any], tr.count >= 2 {
+            gt = gt.translatedBy(x: cnum(tr[0]) ?? 0, y: cnum(tr[1]) ?? 0)
+        }
+        if let rot = cnum(op["rotate"]) { gt = gt.rotated(by: rot * .pi / 180) }
+        if let sc = cnum(op["scale"]) { gt = gt.scaledBy(x: sc, y: sc) }
+        let child = gt.concatenating(t)
+        for sub in (op["ops"] as? [[String: Any]] ?? []) { drawCanvasOp(sub, &ctx, child) }
+
+    default:
+        break
     }
 }
 
