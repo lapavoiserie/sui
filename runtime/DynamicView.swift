@@ -148,6 +148,16 @@ struct DynamicView: View {
         case "Canvas":
             DynamicCanvas(node: node)
 
+        case "Slider":
+            DynamicSlider(node: node)
+
+        case "Icon":
+            // A2UI icon name, interpreted as an SF Symbol (best effort). Icons
+            // carry no colour prop, so they take the theme accent (a brand
+            // element) — `.tint` only reaches interactive controls, not Images.
+            Image(systemName: node.property("name"))
+                .foregroundStyle(Color(suiHex: String(cString: viewnode_theme_accent())) ?? .primary)
+
         case "Image":
             let url = node.property("url")
             if !url.isEmpty, let u = URL(string: url) {
@@ -310,6 +320,32 @@ struct DynamicCheckBox: View {
             .onChange(of: on) { _, newValue in
                 viewnode_set_data(node.property("path"), newValue ? "true" : "false")
             }
+    }
+}
+
+/// An editable slider bound to a numeric data-model value (label + min/max).
+struct DynamicSlider: View {
+    let node: ViewNode
+    @State private var value: Double
+
+    init(node: ViewNode) {
+        self.node = node
+        _value = State(initialValue: Double(node.property("value")) ?? 0)
+    }
+
+    var body: some View {
+        let lo = Double(node.property("min")) ?? 0
+        let hi = Double(node.property("max")) ?? 100
+        let label = node.property("label")
+        return VStack(alignment: .leading, spacing: 2) {
+            if !label.isEmpty { Text(label).font(.caption).foregroundStyle(.secondary) }
+            Slider(value: $value, in: lo...Swift.max(hi, lo + 0.0001))
+                .onChange(of: value) { _, v in
+                    // Whole numbers write without a trailing ".0".
+                    let s = v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v)
+                    viewnode_set_data(node.property("path"), s)
+                }
+        }
     }
 }
 
