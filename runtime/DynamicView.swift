@@ -12,7 +12,18 @@ import SwiftUI
 /// Opaque wrapper around a Haxe View pointer from the bridge.
 struct ViewNode: Identifiable {
     let pointer: UnsafeMutableRawPointer?
-    let id = UUID()
+
+    // Stable identity across rebuilds: the app tags each node with a "nodeId"
+    // property (e.g. its A2UI component id). Without it, fall back to the
+    // pointer — unstable across rebuilds, but such nodes carry no view state to
+    // preserve. A stable id lets SwiftUI diff the tree and keep input focus/text
+    // through a rebuild instead of tearing everything down.
+    var id: String {
+        let nid = property("nodeId")
+        if !nid.isEmpty { return nid }
+        if let p = pointer { return "ptr-\(UInt(bitPattern: p))" }
+        return "nil"
+    }
 
     var viewType: String {
         guard let ptr = pointer else { return "" }
@@ -127,13 +138,11 @@ struct DynamicView: View {
         case "Divider":
             Divider()
 
-        case "Toggle":
-            // Toggle requires state binding — simplified for now
-            Text("[Toggle: \(node.property("label"))]")
+        case "Toggle", "CheckBox":
+            DynamicCheckBox(node: node)
 
         case "TextField":
-            // TextField requires state binding — simplified for now
-            Text("[TextField: \(node.property("placeholder"))]")
+            DynamicTextField(node: node)
 
         case "Image":
             let name = node.property("systemName")
@@ -249,6 +258,48 @@ struct DynamicView: View {
     }
 }
 
+// MARK: - Editable inputs
+
+/// An editable text input. Its @State survives rebuilds (the node carries a
+/// stable id), so typing stays smooth; each edit writes back through the data
+/// bridge, and any bound mirror text re-renders on the next poll.
+struct DynamicTextField: View {
+    let node: ViewNode
+    @State private var text: String
+
+    init(node: ViewNode) {
+        self.node = node
+        _text = State(initialValue: node.property("value"))
+    }
+
+    var body: some View {
+        let label = node.property("label")
+        return TextField(label, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .onChange(of: text) { _, newValue in
+                viewnode_set_data(node.property("path"), newValue)
+            }
+    }
+}
+
+/// An editable checkbox (rendered as a Toggle). Same stable-id contract.
+struct DynamicCheckBox: View {
+    let node: ViewNode
+    @State private var on: Bool
+
+    init(node: ViewNode) {
+        self.node = node
+        _on = State(initialValue: node.property("value") == "true")
+    }
+
+    var body: some View {
+        Toggle(node.property("label"), isOn: $on)
+            .onChange(of: on) { _, newValue in
+                viewnode_set_data(node.property("path"), newValue ? "true" : "false")
+            }
+    }
+}
+
 // MARK: - Hot Reload Root View
 
 /// The root view used in hot reload mode.
@@ -272,9 +323,14 @@ struct HotReloadRootView: View {
     init() { _ = _suiRuntimeBooted }
 
     var body: some View {
+        // Read reloadCount so a poll-driven bump re-evaluates body (re-reads the
+        // tree) — but do NOT use it as identity. The tree keeps a stable id, so
+        // SwiftUI diffs it and preserves input focus/text across rebuilds
+        // instead of tearing everything down every time.
+        let _ = reloadCount
         let root = ViewNode(pointer: viewnode_get_root())
         DynamicView(node: root)
-            .id(reloadCount) // force re-render on reload
+            .id(root.id)
             .onReceive(pollTimer) { _ in
                 if viewnode_poll() != 0 { reloadCount += 1 }
             }

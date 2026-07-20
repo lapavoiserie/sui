@@ -57,6 +57,19 @@ class ViewNodeBridge {
         return changed;
     }
 
+    /** Optional sink for input edits: a native control (TextField, Toggle…)
+        writes a value at a data-model path back into the app. **/
+    static var _dataSink:(String, String) -> Void = null;
+
+    public static function setDataSink(f:(String, String) -> Void):Void {
+        _dataSink = f;
+    }
+
+    /** Called from the C bridge when a native input changes. **/
+    public static function setData(path:String, value:String):Void {
+        if (_dataSink != null) _dataSink(path, value);
+    }
+
     /** Get the root view node. Returns an opaque pointer. **/
     public static function getRoot():View {
         return _root;

@@ -76,6 +76,16 @@ int32_t viewnode_poll(void) {
     return result;
 }
 
+// A native input changed: write value at data-model path back into the app.
+void viewnode_set_data(const char* path, const char* value) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::setData(::String(path), ::String(value));
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+}
+
 // Get root view node (returns opaque pointer)
 void* viewnode_get_root(void) {
     int dummy = 0;

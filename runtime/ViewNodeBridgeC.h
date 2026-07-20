@@ -21,6 +21,9 @@ void* viewnode_get_root(void);
 // thread; returns non-zero if the view tree changed and should be re-rendered.
 int32_t viewnode_poll(void);
 
+// A native input changed: write `value` at data-model `path` back into the app.
+void viewnode_set_data(const char* path, const char* value);
+
 // --- Action dispatch (dynamic renderer) ---
 // Invoke a registered action closure by its compile-time id. Routes to the
 // same sui.state.Callbacks store the static bridge uses, so buttons built at
