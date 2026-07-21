@@ -711,6 +711,15 @@ class Build {
                 bridge += '        - "$f"\n';
         }
 
+        // iOS/visionOS: connecting to a device's LAN (e.g. a local dev server)
+        // triggers the iOS 14+ local-network privacy prompt; without a usage
+        // description the connection is denied. macOS doesn't gate this.
+        var networking = "";
+        if (platform != "macos") {
+            networking = '      INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Connect to a local development server on your network."
+';
+        }
+
         var packagesBlock = "";
         var depsBlock = "    dependencies: []\n";
         if (config.swiftPackages != null && config.swiftPackages.length > 0) {
@@ -743,7 +752,7 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-$signing$bridge$depsBlock';
+$networking$signing$bridge$depsBlock';
     }
 }
 

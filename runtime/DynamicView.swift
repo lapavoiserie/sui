@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import AVKit
+import AVFoundation
 
 /// Recursively renders a Haxe view tree at runtime.
 /// Used by `mui watch` for hot reload — the Swift host stays running
@@ -495,7 +496,17 @@ struct DynamicVideo: View {
     var body: some View {
         Group {
             if let player = player {
-                VideoPlayer(player: player).frame(minHeight: 220)
+                VideoPlayer(player: player)
+                    .frame(minHeight: 220)
+                    .onAppear {
+                        // iOS won't start playback without an active playback
+                        // audio session — macOS doesn't require it.
+                        #if os(iOS)
+                        try? AVAudioSession.sharedInstance().setCategory(.playback)
+                        try? AVAudioSession.sharedInstance().setActive(true)
+                        #endif
+                        player.play()
+                    }
             } else {
                 Text("Vidéo indisponible").foregroundStyle(.secondary)
             }
