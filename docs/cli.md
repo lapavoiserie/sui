@@ -37,6 +37,7 @@ haxelib run sui <command> [options]
 | `--release` | Build in Release configuration |
 | `--verbose` / `-v` | Show xcodebuild output |
 | `--xcode-only` | Generate Xcode project without building |
+| `--watch` | Build the [dynamic renderer](dynamic-renderer.md) (runtime tree walk) instead of compiled Swift |
 
 ## Examples
 
