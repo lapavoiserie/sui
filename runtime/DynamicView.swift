@@ -481,31 +481,39 @@ struct DynamicModal: View {
 /// lane) are draggable between them. Only the drop returns to the app, as the
 /// onDrop action with a {card, lane, index} context; the app moves the card and
 /// re-renders. lanes/cards/dropAction arrive as JSON on properties.
+private struct BoardLane: Identifiable { let id: String; let title: String }
+private struct BoardCard: Identifiable { let id: String; let label: String; let lane: String }
+
 struct DynamicBoard: View {
     let node: ViewNode
+    // Shared namespace so a card matched by id animates (FLIP) as it moves from
+    // one lane's stack to another's when the app re-renders after a drop.
+    @Namespace private var ns
 
     var body: some View {
-        let lanes = parseObjArray(node.property("lanes"))
-        let cards = parseObjArray(node.property("cards"))
+        let lanes = parseBoardLanes(node.property("lanes"))
+        let cards = parseBoardCards(node.property("cards"))
         let dropAction = node.property("dropAction")
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(lanes.indices, id: \.self) { i in
-                    lane(lanes[i], cards: cards, dropAction: dropAction)
+                ForEach(lanes) { lane in
+                    laneView(lane, cards: cards.filter { $0.lane == lane.id }, dropAction: dropAction)
                 }
             }
             .padding(8)
         }
     }
 
-    private func lane(_ lane: [String: Any], cards: [[String: Any]], dropAction: String) -> some View {
-        let laneId = lane["id"] as? String ?? ""
-        let laneCards = cards.filter { ($0["lane"] as? String) == laneId }
-        return VStack(alignment: .leading, spacing: 8) {
-            Text((lane["title"] as? String ?? "").uppercased())
-                .font(.caption2).foregroundStyle(.secondary)
-            ForEach(laneCards.indices, id: \.self) { i in
-                card(laneCards[i])
+    private func laneView(_ lane: BoardLane, cards: [BoardCard], dropAction: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(lane.title.uppercased()).font(.caption2).foregroundStyle(.secondary)
+            ForEach(cards) { card in
+                Text(card.label)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
+                    .matchedGeometryEffect(id: card.id, in: ns)
+                    .draggable(card.id)
             }
             Spacer(minLength: 0)
         }
@@ -515,25 +523,25 @@ struct DynamicBoard: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
         .dropDestination(for: String.self) { items, _ in
             guard let cardId = items.first else { return false }
-            let extra: [String: Any] = ["card": cardId, "lane": laneId, "index": laneCards.count]
+            let extra: [String: Any] = ["card": cardId, "lane": lane.id, "index": cards.count]
             let json = (try? JSONSerialization.data(withJSONObject: extra))
                 .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             viewnode_fire_action(dropAction, json)
             return true
         }
     }
-
-    private func card(_ card: [String: Any]) -> some View {
-        Text(card["label"] as? String ?? "")
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
-            .draggable(card["id"] as? String ?? "")
-    }
 }
 
 private func parseObjArray(_ json: String) -> [[String: Any]] {
     (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] ?? []
+}
+private func parseBoardLanes(_ json: String) -> [BoardLane] {
+    parseObjArray(json).map { BoardLane(id: $0["id"] as? String ?? "", title: $0["title"] as? String ?? "") }
+}
+private func parseBoardCards(_ json: String) -> [BoardCard] {
+    parseObjArray(json).map {
+        BoardCard(id: $0["id"] as? String ?? "", label: $0["label"] as? String ?? "", lane: $0["lane"] as? String ?? "")
+    }
 }
 
 // MARK: - Canvas drawing
@@ -563,10 +571,10 @@ struct DynamicCanvas: View {
             let t = CGAffineTransform(a: sx, b: 0, c: 0, d: sy,
                                       tx: (size.width - vw * sx) / 2,
                                       ty: (size.height - vh * sy) / 2)
-            // The "primary" token resolves to the surface theme's primaryColor.
-            let primary = spec["primary"] as? String ?? ""
+            // Semantic colour tokens resolved from the surface theme.
+            let theme = spec["theme"] as? [String: Any] ?? [:]
             for op in (spec["ops"] as? [[String: Any]] ?? []) {
-                drawCanvasOp(op, &ctx, t, primary)
+                drawCanvasOp(op, &ctx, t, theme)
             }
         }
     }
@@ -579,14 +587,15 @@ private func cnum(_ v: Any?) -> CGFloat? {
 private func cf(_ op: [String: Any], _ k: String, _ d: CGFloat = 0) -> CGFloat { cnum(op[k]) ?? d }
 private func cscale(_ t: CGAffineTransform) -> CGFloat { sqrt(abs(t.a * t.d - t.b * t.c)) }
 
-// A colour is a hex "#RRGGBB" or a semantic theme token. `primary` resolves to
-// the surface theme's primaryColor (falling back to the system accent); the
-// neutral tokens stay as adaptive system colours so drawings track light/dark.
-private func canvasColor(_ op: [String: Any], _ key: String, _ primary: String) -> Color? {
+// A colour is a hex "#RRGGBB" or a semantic token. A token first resolves to a
+// surface-theme override (hex), then falls back to an adaptive system colour so
+// untethered drawings still track light/dark.
+private func canvasColor(_ op: [String: Any], _ key: String, _ theme: [String: Any]) -> Color? {
     guard let s = op[key] as? String, !s.isEmpty else { return nil }
     if s.hasPrefix("#") { return Color(suiHex: s) }
+    if let hex = theme[s] as? String, hex.hasPrefix("#") { return Color(suiHex: hex) }
     switch s {
-    case "primary":   return primary.hasPrefix("#") ? (Color(suiHex: primary) ?? .accentColor) : .accentColor
+    case "primary":   return .accentColor
     case "onPrimary": return .white
     case "surface":   return Color(white: 0.5).opacity(0.12)
     case "onSurface": return .primary
@@ -606,37 +615,37 @@ private func canvasStroke(_ op: [String: Any], _ t: CGAffineTransform) -> Stroke
     return StrokeStyle(lineWidth: cf(op, "strokeWidth", 1) * cscale(t), lineCap: cap)
 }
 
-private func paintCanvas(_ ctx: inout GraphicsContext, _ path: Path, _ op: [String: Any], _ t: CGAffineTransform, _ primary: String) {
+private func paintCanvas(_ ctx: inout GraphicsContext, _ path: Path, _ op: [String: Any], _ t: CGAffineTransform, _ theme: [String: Any]) {
     ctx.opacity = Double(cf(op, "opacity", 1))
-    if let fill = canvasColor(op, "fill", primary) { ctx.fill(path, with: .color(fill)) }
-    if let stroke = canvasColor(op, "stroke", primary) { ctx.stroke(path, with: .color(stroke), style: canvasStroke(op, t)) }
+    if let fill = canvasColor(op, "fill", theme) { ctx.fill(path, with: .color(fill)) }
+    if let stroke = canvasColor(op, "stroke", theme) { ctx.stroke(path, with: .color(stroke), style: canvasStroke(op, t)) }
     ctx.opacity = 1
 }
 
 // Coordinates are in viewBox space; each op's Path is built there then mapped to
 // screen with `t` (so lines stay crisp and arcs stay circular under affine).
-private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t: CGAffineTransform, _ primary: String) {
+private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t: CGAffineTransform, _ theme: [String: Any]) {
     switch op["op"] as? String {
     case "rect":
         let r = CGRect(x: cf(op, "x"), y: cf(op, "y"), width: cf(op, "w"), height: cf(op, "h"))
         let rx = cf(op, "rx")
-        paintCanvas(&ctx, (rx > 0 ? Path(roundedRect: r, cornerRadius: rx) : Path(r)).applying(t), op, t, primary)
+        paintCanvas(&ctx, (rx > 0 ? Path(roundedRect: r, cornerRadius: rx) : Path(r)).applying(t), op, t, theme)
 
     case "line":
         var p = Path()
         p.move(to: CGPoint(x: cf(op, "x1"), y: cf(op, "y1")))
         p.addLine(to: CGPoint(x: cf(op, "x2"), y: cf(op, "y2")))
-        paintCanvas(&ctx, p.applying(t), op, t, primary)
+        paintCanvas(&ctx, p.applying(t), op, t, theme)
 
     case "circle":
         let r = cf(op, "r")
         let rect = CGRect(x: cf(op, "cx") - r, y: cf(op, "cy") - r, width: 2 * r, height: 2 * r)
-        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, primary)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, theme)
 
     case "ellipse":
         let rx = cf(op, "rx"), ry = cf(op, "ry")
         let rect = CGRect(x: cf(op, "cx") - rx, y: cf(op, "cy") - ry, width: 2 * rx, height: 2 * ry)
-        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, primary)
+        paintCanvas(&ctx, Path(ellipseIn: rect).applying(t), op, t, theme)
 
     case "arc":
         // A2UI: degrees, 0° at 3 o'clock, clockwise positive.
@@ -648,7 +657,7 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
                  startAngle: .degrees(cf(op, "start")), endAngle: .degrees(cf(op, "end")),
                  clockwise: false)
         if close { p.closeSubpath() }
-        paintCanvas(&ctx, p.applying(t), op, t, primary)
+        paintCanvas(&ctx, p.applying(t), op, t, theme)
 
     case "polyline":
         let pts = op["points"] as? [[Any]] ?? []
@@ -659,13 +668,13 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
             if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
         }
         if op["closed"] as? Bool ?? false { p.closeSubpath() }
-        paintCanvas(&ctx, p.applying(t), op, t, primary)
+        paintCanvas(&ctx, p.applying(t), op, t, theme)
 
     case "text":
         let size = cf(op, "size", 12) * cscale(t)
         let weight: Font.Weight = cf(op, "weight", 400) >= 600 ? .bold : .regular
         var text = Text(op["text"] as? String ?? "").font(.system(size: size, weight: weight))
-        if let fill = canvasColor(op, "fill", primary) { text = text.foregroundColor(fill) }
+        if let fill = canvasColor(op, "fill", theme) { text = text.foregroundColor(fill) }
         let anchor: UnitPoint
         switch op["anchor"] as? String {
         case "middle": anchor = .center
@@ -682,7 +691,7 @@ private func drawCanvasOp(_ op: [String: Any], _ ctx: inout GraphicsContext, _ t
         if let rot = cnum(op["rotate"]) { gt = gt.rotated(by: rot * .pi / 180) }
         if let sc = cnum(op["scale"]) { gt = gt.scaledBy(x: sc, y: sc) }
         let child = gt.concatenating(t)
-        for sub in (op["ops"] as? [[String: Any]] ?? []) { drawCanvasOp(sub, &ctx, child, primary) }
+        for sub in (op["ops"] as? [[String: Any]] ?? []) { drawCanvasOp(sub, &ctx, child, theme) }
 
     default:
         break
@@ -724,10 +733,13 @@ struct HotReloadRootView: View {
             .id(root.id)
             .tint(accent)
             .onReceive(pollTimer) { _ in
-                if viewnode_poll() != 0 { reloadCount += 1 }
+                // Animate tree updates: with stable node identities, SwiftUI
+                // interpolates layout changes (a card moving lanes, a list
+                // reordering) instead of snapping.
+                if viewnode_poll() != 0 { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { reloadCount += 1 } }
             }
             .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
-                reloadCount += 1
+                withAnimation { reloadCount += 1 }
             }
     }
 }
