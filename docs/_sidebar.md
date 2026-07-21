@@ -17,6 +17,7 @@
 - [Components](components.md)
 - [Animations](animations.md)
 - [Bridge](bridge.md)
+- [Dynamic Renderer](dynamic-renderer.md)
 - [Native Extensions](native-extensions.md)
 - [CLI Reference](cli.md)
 - [Platforms](platforms.md)

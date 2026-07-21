@@ -24,6 +24,15 @@ class SwiftGenerator {
     /** Hook into the Haxe compiler. Called via --macro in build.hxml. **/
     public static function register() {
         #if macro
+        // Dynamic renderer (hot reload): the native host reaches ViewNodeBridge
+        // and the Callbacks store only through the generated C bridge — via
+        // reflection and direct C++ symbols — never from Haxe. Nothing imports
+        // them, so force the modules into the compilation (getModule) and past
+        // DCE (both classes are @:keep) so their C++ symbols exist to link.
+        if (Context.defined("sui_hot_reload")) {
+            Context.getModule("sui.runtime.ViewNodeBridge");
+            Context.getModule("sui.state.Callbacks");
+        }
         var outputDir = Context.defined("swift-output") ? Context.definedValue("swift-output") : "build/swift";
 
         Context.onGenerate(function(types:Array<haxe.macro.Type>) {
@@ -138,6 +147,13 @@ class SwiftGenerator {
     // ── Main generation ─────────────────────────────────────────────
 
     static function generateSwift(cls:haxe.macro.Type.ClassType, outputDir:String, ?modelTypes:Map<String, haxe.macro.Type.ClassType>, ?componentTypes:Map<String, haxe.macro.Type.ClassType>):Void {
+        // Dynamic renderer (hot reload): the static Swift↔C bridge is entirely
+        // bypassed — the DynamicView renderer drives everything through the
+        // ViewNode bridge, and actions dispatch straight to the live tree's
+        // closures. So we suppress the static bridge files (which would also
+        // clash: duplicate haxe_bridge_invoke_action, references to an AppState
+        // that isn't generated when there's no @:state).
+        var dynamicMode = Context.defined("sui_hot_reload");
         var className = cls.name;
         var appName = className;
         var bundleId = 'com.example.${className.toLowerCase()}';
@@ -254,7 +270,7 @@ class SwiftGenerator {
         appSwift.add("@main\n");
         appSwift.add('struct ${className}App: App {\n');
         appSwift.add("    init() {\n");
-        if (needsRuntimeBridge) {
+        if (needsRuntimeBridge && !dynamicMode) {
             // Register the swift-side state callback BEFORE the
             // runtime boots. `HaxeRuntime.initialize()` calls
             // `haxe_bridge_init`, which itself constructs the
@@ -432,16 +448,26 @@ class SwiftGenerator {
         }
         sys.io.File.saveContent('$outputDir/ContentView.swift', contentWithModels.toString());
 
-        // Write bridge files if bridge is needed (explicit @:bridge or runtime closures)
-        if (needsRuntimeBridge || bridgeFunctions.length > 0) {
+        // Write bridge files if bridge is needed (explicit @:bridge or runtime
+        // closures) — but never in dynamic mode, where the ViewNode bridge and
+        // direct closure dispatch replace the static bridge entirely.
+        if ((needsRuntimeBridge || bridgeFunctions.length > 0) && !dynamicMode) {
             sys.io.File.saveContent('$outputDir/HaxeBridgeC.h', generateBridgeHeader(bridgeFunctions, needsRuntimeBridge));
             sys.io.File.saveContent('$outputDir/HaxeBridgeC.cpp', generateBridgeCpp(className, bridgeFunctions, needsRuntimeBridge));
             sys.io.File.saveContent('$outputDir/HaxeBridgeC.swift', generateBridgeSwift(className, bridgeFunctions, needsRuntimeBridge));
         }
 
-        // Generate AppState.swift for bridged apps with state
-        if (needsRuntimeBridge && stateDecls.length > 0) {
+        // Generate AppState.swift for bridged apps with state (static bridge only)
+        if (needsRuntimeBridge && stateDecls.length > 0 && !dynamicMode) {
             sys.io.File.saveContent('$outputDir/AppState.swift', generateAppState(stateDecls));
+        }
+
+        // Hot-reload / dynamic renderer: emit the runtime bootstrap. This file
+        // is the only per-app knowledge the dynamic bridge needs — the concrete
+        // app class to instantiate — so the macro (which knows it) generates it;
+        // the boot logic itself is a fixed framework template.
+        if (Context.defined("sui_hot_reload")) {
+            sys.io.File.saveContent('$outputDir/SuiBootC.cpp', generateBootCpp(cls));
         }
 
         // Generate Swift structs for ViewComponent subclasses
@@ -454,6 +480,42 @@ class SwiftGenerator {
                 }
             }
         }
+    }
+
+    /** Emit the C bootstrap for a dynamic-render / hot-reload build.
+
+        Boots the hxcpp runtime once, instantiates the concrete app, and
+        registers it with `ViewNodeBridge` so native renderers can traverse the
+        tree through the C bridge. The app class is the only per-app knowledge;
+        instantiation uses the direct hxcpp symbol (as the static bridge does),
+        which is more robust than reflection and forces the app + ViewNodeBridge
+        symbols to be linked. Mirrors the boot sequence of `haxe_bridge_init`. **/
+    static function generateBootCpp(cls:haxe.macro.Type.ClassType):String {
+        var name = cls.name;
+        var headerPath = cls.pack.length > 0 ? cls.pack.join("/") + "/" + name + ".h" : name + ".h";
+        var cppSym = "::" + (cls.pack.length > 0 ? cls.pack.join("::") + "::" : "") + name + "_obj";
+        var buf = new StringBuf();
+        buf.add("// AUTO-GENERATED by sui.macros.SwiftGenerator — do not edit.\n");
+        buf.add("// Runtime bootstrap for the dynamic (hot-reload) renderer:\n");
+        buf.add("// boots hxcpp, builds the app, hands it to ViewNodeBridge.\n");
+        buf.add("#include <hxcpp.h>\n");
+        buf.add('#include <$headerPath>\n');
+        buf.add("#include <sui/runtime/ViewNodeBridge.h>\n\n");
+        buf.add("extern \"C\" void viewnode_boot(void) {\n");
+        buf.add("    static bool _hxcppBooted = false;\n");
+        buf.add("    int dummy = 0;\n");
+        buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+        buf.add("    try {\n");
+        buf.add("        if (!_hxcppBooted) { hx::Boot(); __boot_all(); _hxcppBooted = true; }\n");
+        buf.add('        auto app = $cppSym::__new();\n');
+        buf.add("        ::sui::runtime::ViewNodeBridge_obj::setApp(app);\n");
+        buf.add("    } catch (::Dynamic _e) {\n");
+        buf.add('        fprintf(stderr, "[sui] viewnode_boot: Haxe exception during boot\\n");\n');
+        buf.add("    } catch (...) {\n");
+        buf.add('        fprintf(stderr, "[sui] viewnode_boot: C++ exception during boot\\n");\n');
+        buf.add("    }\n");
+        buf.add("}\n");
+        return buf.toString();
     }
 
     /** Rewrite the bare state names produced by the one surviving
