@@ -154,6 +154,12 @@ struct DynamicView: View {
         case "ChoicePicker":
             DynamicPicker(node: node)
 
+        case "Tabs":
+            DynamicTabs(node: node)
+
+        case "Modal":
+            DynamicModal(node: node)
+
         case "Icon":
             // A2UI icon name, interpreted as an SF Symbol (best effort). Icons
             // carry no colour prop, so they take the theme accent (a brand
@@ -416,6 +422,54 @@ private func parsePickerOptions(_ json: String) -> [(label: String, value: Strin
 private func parseStringArray(_ json: String) -> [String] {
     guard let arr = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [Any] else { return [] }
     return arr.compactMap { $0 as? String }
+}
+
+/// Tabs — the tab contents are this node's children; the titles are a parallel
+/// JSON array on the "titles" property.
+struct DynamicTabs: View {
+    let node: ViewNode
+    @State private var selection = 0
+
+    var body: some View {
+        let titles = parseStringArray(node.property("titles"))
+        let children = node.children
+        return TabView(selection: $selection) {
+            ForEach(Array(children.enumerated()), id: \.offset) { idx, child in
+                DynamicView(node: child)
+                    .tabItem { Text(idx < titles.count ? titles[idx] : "Tab \(idx + 1)") }
+                    .tag(idx)
+            }
+        }
+    }
+}
+
+/// Modal — child[0] is the trigger, child[1] the content. Tapping the trigger
+/// presents the content in a sheet.
+struct DynamicModal: View {
+    let node: ViewNode
+    @State private var presented = false
+
+    var body: some View {
+        let children = node.children
+        let trigger = children.first ?? ViewNode(pointer: nil)
+        let content = children.count > 1 ? children[1] : ViewNode(pointer: nil)
+        // The trigger renders as-is; a clear overlay on top captures the tap and
+        // opens the modal (A2UI: the trigger opens it). This avoids nesting the
+        // trigger — often itself a Button — inside another control.
+        return DynamicView(node: trigger)
+            .overlay(
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { presented = true }
+            )
+            .sheet(isPresented: $presented) {
+                VStack(spacing: 16) {
+                    DynamicView(node: content)
+                    Button("Close") { presented = false }
+                }
+                .padding()
+            }
+    }
 }
 
 // MARK: - Canvas drawing
