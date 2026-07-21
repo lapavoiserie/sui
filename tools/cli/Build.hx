@@ -462,12 +462,19 @@ class Build {
                     packages.push({url: pkg.url, from: pkg.from, product: pkg.product});
                 }
             }
+            var frameworks:Array<String> = null;
+            if (json.frameworks != null) {
+                frameworks = [];
+                var fw:Array<Dynamic> = json.frameworks;
+                for (f in fw) frameworks.push(Std.string(f));
+            }
             return {
                 appName: json.appName,
                 bundleIdentifier: json.bundleIdentifier,
                 bundleIdPrefix: json.bundleIdPrefix != null ? json.bundleIdPrefix : "com.example",
                 teamId: json.teamId,
                 swiftPackages: packages,
+                frameworks: frameworks,
             };
         }
 
@@ -678,15 +685,30 @@ class Build {
 ';
         }
 
+        // Compose the target settings: the native-bridge scaffold (bridging
+        // header + hxcpp static lib) plus any system frameworks the *app*
+        // declares in sui.json — dependencies belong to the app, not the core.
+        var ldflags:Array<String> = [];
+        if (nativeBridge) {
+            ldflags.push("-lhaxe");
+            ldflags.push("-lc++");
+        }
+        if (config.frameworks != null)
+            for (fw in config.frameworks) {
+                ldflags.push("-framework");
+                ldflags.push(fw);
+            }
         var bridge = "";
         if (nativeBridge) {
-            bridge = '      SWIFT_OBJC_BRIDGING_HEADER: Sources/SuiBridging.h
+            bridge += '      SWIFT_OBJC_BRIDGING_HEADER: Sources/SuiBridging.h
       LIBRARY_SEARCH_PATHS:
         - "$$(PROJECT_DIR)/lib"
-      OTHER_LDFLAGS:
-        - "-lhaxe"
-        - "-lc++"
 ';
+        }
+        if (ldflags.length > 0) {
+            bridge += "      OTHER_LDFLAGS:\n";
+            for (f in ldflags)
+                bridge += '        - "$f"\n';
         }
 
         var packagesBlock = "";
@@ -731,6 +753,9 @@ typedef ProjectConfig = {
     bundleIdPrefix:String,
     ?teamId:String,
     ?swiftPackages:Array<SwiftPackage>,
+    /** System frameworks the app links (e.g. ["AVKit"]) — declared per-app in
+        sui.json, not baked into the framework. */
+    ?frameworks:Array<String>,
 }
 
 typedef SwiftPackage = {

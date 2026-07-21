@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import AVKit
 
 /// Recursively renders a Haxe view tree at runtime.
 /// Used by `mui watch` for hot reload — the Swift host stays running
@@ -169,6 +170,9 @@ struct DynamicView: View {
             // element) — `.tint` only reaches interactive controls, not Images.
             Image(systemName: node.property("name"))
                 .foregroundStyle(Color(suiHex: String(cString: viewnode_theme_accent())) ?? .primary)
+
+        case "Video":
+            DynamicVideo(node: node)
 
         case "Image":
             let url = node.property("url")
@@ -472,6 +476,30 @@ struct DynamicModal: View {
                 }
                 .padding()
             }
+    }
+}
+
+/// Video — an AVKit player over the A2UI url. The player is held in @State so
+/// playback survives re-renders (the node keeps a stable id).
+struct DynamicVideo: View {
+    let node: ViewNode
+    @State private var player: AVPlayer?
+
+    init(node: ViewNode) {
+        self.node = node
+        if let u = URL(string: node.property("url")) {
+            _player = State(initialValue: AVPlayer(url: u))
+        }
+    }
+
+    var body: some View {
+        Group {
+            if let player = player {
+                VideoPlayer(player: player).frame(minHeight: 220)
+            } else {
+                Text("Vidéo indisponible").foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
