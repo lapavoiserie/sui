@@ -148,6 +148,9 @@ struct DynamicView: View {
         case "Canvas":
             DynamicCanvas(node: node)
 
+        case "Board":
+            DynamicBoard(node: node)
+
         case "Slider":
             DynamicSlider(node: node)
 
@@ -470,6 +473,67 @@ struct DynamicModal: View {
                 .padding()
             }
     }
+}
+
+// MARK: - Board (drag-and-drop)
+
+/// Board — the behaviour axis. Lanes are columns; cards (each tagged with a
+/// lane) are draggable between them. Only the drop returns to the app, as the
+/// onDrop action with a {card, lane, index} context; the app moves the card and
+/// re-renders. lanes/cards/dropAction arrive as JSON on properties.
+struct DynamicBoard: View {
+    let node: ViewNode
+
+    var body: some View {
+        let lanes = parseObjArray(node.property("lanes"))
+        let cards = parseObjArray(node.property("cards"))
+        let dropAction = node.property("dropAction")
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(lanes.indices, id: \.self) { i in
+                    lane(lanes[i], cards: cards, dropAction: dropAction)
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private func lane(_ lane: [String: Any], cards: [[String: Any]], dropAction: String) -> some View {
+        let laneId = lane["id"] as? String ?? ""
+        let laneCards = cards.filter { ($0["lane"] as? String) == laneId }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text((lane["title"] as? String ?? "").uppercased())
+                .font(.caption2).foregroundStyle(.secondary)
+            ForEach(laneCards.indices, id: \.self) { i in
+                card(laneCards[i])
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(width: 190, alignment: .top)
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.12)))
+        .dropDestination(for: String.self) { items, _ in
+            guard let cardId = items.first else { return false }
+            let extra: [String: Any] = ["card": cardId, "lane": laneId, "index": laneCards.count]
+            let json = (try? JSONSerialization.data(withJSONObject: extra))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            viewnode_fire_action(dropAction, json)
+            return true
+        }
+    }
+
+    private func card(_ card: [String: Any]) -> some View {
+        Text(card["label"] as? String ?? "")
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
+            .draggable(card["id"] as? String ?? "")
+    }
+}
+
+private func parseObjArray(_ json: String) -> [[String: Any]] {
+    (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String: Any]] ?? []
 }
 
 // MARK: - Canvas drawing

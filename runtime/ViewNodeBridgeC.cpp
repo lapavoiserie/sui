@@ -98,6 +98,16 @@ const char* viewnode_theme_accent(void) {
     return result;
 }
 
+// Fire a named action with a JSON extra-context.
+void viewnode_fire_action(const char* name, const char* extraJson) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::fireAction(::String(name), ::String(extraJson));
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+}
+
 // Get root view node (returns opaque pointer)
 void* viewnode_get_root(void) {
     int dummy = 0;

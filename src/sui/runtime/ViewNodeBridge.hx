@@ -82,6 +82,20 @@ class ViewNodeBridge {
         return _accent;
     }
 
+    /** Optional sink for renderer-originated actions carrying an extra context
+        as JSON (e.g. a Board drop's {card, lane, index}). **/
+    static var _actionSink:(String, String) -> Void = null;
+
+    public static function setActionSink(f:(String, String) -> Void):Void {
+        _actionSink = f;
+    }
+
+    /** Called from the C bridge when the renderer fires an action (name + a JSON
+        extra-context object). **/
+    public static function fireAction(name:String, extraJson:String):Void {
+        if (_actionSink != null) _actionSink(name, extraJson);
+    }
+
     /** Get the root view node. Returns an opaque pointer. **/
     public static function getRoot():View {
         return _root;

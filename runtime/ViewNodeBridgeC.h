@@ -27,6 +27,9 @@ void viewnode_set_data(const char* path, const char* value);
 // The theme accent (primaryColor hex) to tint native controls with ("" = default).
 const char* viewnode_theme_accent(void);
 
+// Fire a named action with a JSON extra-context (e.g. a Board drop's payload).
+void viewnode_fire_action(const char* name, const char* extraJson);
+
 // --- Action dispatch (dynamic renderer) ---
 // Invoke a registered action closure by its compile-time id. Routes to the
 // same sui.state.Callbacks store the static bridge uses, so buttons built at
