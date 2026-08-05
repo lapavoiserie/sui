@@ -57,6 +57,28 @@ public function new() {
 }
 ```
 
+## What backs it
+
+`State<T>` extends [`rui.state.State`](https://lapavoiserie.github.io/rui/#/state), the
+reactive core shared with the other La Pavoiserie backends (`aui`, `wui`, `cui`, `qui`).
+A read inside a `rui` effect registers a dependency, and a write re-runs the effects that
+read it — on top of the Swift notification you already had.
+
+Two things are specific to sui and worth knowing:
+
+- **The Swift push is unconditional.** The shared core skips a write whose value compares
+  equal; sui mirrors *every* application write to `AppState` anyway. An `Array` can be
+  mutated in place, so equality proves nothing, and arrays cross the bridge as an empty
+  string whose only job is to bump Swift's version counter and trigger a re-read from
+  shared memory. Skipping it would silently freeze the UI on
+  `todos.set(sameArrayMutatedInPlace)`.
+- **`applyExternal(value)`** is the path a value takes when it comes *from* SwiftUI — a
+  `TextField`, `Toggle`, `Picker` or `Slider` binding. It reaches Haxe effects and
+  `onValueChanged`, but is **not** pushed back to Swift, which already holds it. The C
+  bridge's `_applyFromSwift` now routes through it.
+
+`onValueChanged(callback)` stays yours: it fires whichever side wrote the value.
+
 ## Pages
 
 - **[State & Actions](state/state-and-actions.md)** &mdash; `State<T>`, action closures, `Text.bind`
