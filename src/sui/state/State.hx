@@ -64,21 +64,17 @@ void _hxsui_notify_swift(const char* key, const char* value) {
 }
 ')
 #end
-class State<T> {
-    /** Read or write the state value. Writing triggers Swift notification. **/
-    public var value(get, set):T;
-
-    public var name:String;
-
-    private var _value:T;
+class State<T> extends rui.state.State<T> {
+    /** `value`, `get()`, `peek()` and `name` come from `rui.state.State`, the
+        reactive core shared with the other La Pavoiserie backends. Writing
+        still notifies Swift — see the `set` override below. **/
     private var onChange:Null<T->Void>;
 
     /** Registry of State instances by name, for shared-memory bridge queries. **/
     private static var _registry:Map<String, Dynamic> = new Map();
 
     public function new(initialValue:T, ?name:String) {
-        this._value = initialValue;
-        this.name = name != null ? name : "";
+        super(initialValue, name);
         if (this.name != "")
             _registry.set(this.name, this);
         // Push the initial value across the bridge so AppState's
@@ -94,48 +90,59 @@ class State<T> {
         // an empty string — that bumps the version counter on the
         // Swift side and triggers a fresh read.
         #if cpp
-        if (this.name != "") {
-            var k = this.name;
-            var v = if (Std.isOfType(initialValue, Array)) ""
-                else if (Std.isOfType(initialValue, Float)) _formatFloatPosix(cast initialValue)
-                else Std.string(initialValue);
-            untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
-        }
+        if (this.name != "")
+            notifySwift(initialValue);
         #end
     }
 
-    function get_value():T {
-        return _value;
-    }
+    /**
+        Write from application code: updates the shared reactive core, then
+        mirrors the value to Swift.
 
-    function set_value(newValue:T):T {
-        _value = newValue;
+        Unlike the other backends, the Swift push is **unconditional** — it runs
+        even when the value compares equal. An `Array` can be mutated in place,
+        so equality proves nothing, and arrays cross the bridge as an empty
+        string whose only job is to bump Swift's version counter and trigger a
+        fresh read from shared memory. Skipping that would silently stop the UI
+        from updating for `todos.set(sameArrayMutatedInPlace)`.
+    **/
+    override public function set(newValue:T):Void {
+        super.set(newValue);
+        #if cpp
+        notifySwift(newValue);
+        #end
         if (onChange != null) {
             onChange(newValue);
         }
-        #if cpp
-        var k = name;
-        var v = if (Std.isOfType(newValue, Array)) ""
-            else if (Std.isOfType(newValue, Float)) _formatFloatPosix(cast newValue)
-            else Std.string(newValue);
-        untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, v);
-        #end
-        return newValue;
     }
 
-    /** Read the current value. Alias for `value`. **/
-    public function get():T {
-        return _value;
+    /**
+        Write originating from SwiftUI (a TextField, Toggle, Picker or Slider
+        binding). Reaches Haxe effects and the `onValueChanged` callback, but is
+        **not** pushed back to Swift, which already holds this value.
+    **/
+    override public function applyExternal(newValue:T):Void {
+        super.applyExternal(newValue);
+        if (onChange != null) {
+            onChange(newValue);
+        }
     }
 
-    /** Set a new value and notify Swift. Alias for `value = x`. **/
-    public function set(newValue:T):Void {
-        value = newValue;
-    }
-
+    /** Called whenever the value changes, whichever side wrote it. **/
     public function onValueChanged(callback:T->Void):Void {
         onChange = callback;
     }
+
+    #if cpp
+    /** Mirror a value into Swift's `AppState` through the C bridge. **/
+    private function notifySwift(v:T):Void {
+        var k = name;
+        var s = if (Std.isOfType(v, Array)) ""
+            else if (Std.isOfType(v, Float)) _formatFloatPosix(cast v)
+            else Std.string(v);
+        untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, s);
+    }
+    #end
 
     // ── Shared-memory query API (called from C bridge) ──────────────
 
@@ -144,7 +151,7 @@ class State<T> {
         if (stateName == null) return -1;
         var state:Dynamic = _registry.get(stateName);
         if (state == null) return -1;
-        var val:Dynamic = state._value;
+        var val:Dynamic = state.peek();
         if (val == null) return 0;
         if (Std.isOfType(val, Array)) {
             var arr:Array<Dynamic> = val;
@@ -234,7 +241,7 @@ class State<T> {
         if (stateName == null) return null;
         var state:Dynamic = _registry.get(stateName);
         if (state == null) return null;
-        var val:Dynamic = state._value;
+        var val:Dynamic = state.peek();
         if (val == null) return null;
         if (Std.isOfType(val, Array)) return cast val;
         return null;
@@ -255,7 +262,7 @@ class State<T> {
         var state:Dynamic = _registry.get(stateName);
         if (state == null) return;
         var s:State<Dynamic> = state;
-        var current:Dynamic = s._value;
+        var current:Dynamic = s.peek();
         // Infer the target type from the current value. Order
         // matters: on hxcpp `Bool` and `Int` both satisfy broader
         // checks, so test the narrowest types first. Arrays and
@@ -269,8 +276,9 @@ class State<T> {
             else if (Std.isOfType(current, Float)) Std.parseFloat(raw)
             else if (Std.isOfType(current, String)) raw
             else return;
-        s._value = parsed;
-        if (s.onChange != null) s.onChange(parsed);
+        // applyExternal: the value reaches Haxe effects and the onValueChanged
+        // callback, but is not pushed back to Swift — it came from there.
+        s.applyExternal(parsed);
     }
 
     /**

@@ -6,10 +6,19 @@
     "version": "0.1.0",
     "classPath": "src",
     "dependencies": {
-        "hxcpp": ""
+        "hxcpp": "",
+        "rui": ""
     },
     "main": "tools.cli.CLI",
     "contributors": [],
-    "releasenote": "Initial release — Phase 1: Hello World on macOS",
-    "tags": ["apple", "macos", "ios", "visionos", "swiftui", "native", "ui"]
+    "releasenote": "Initial release \u2014 Phase 1: Hello World on macOS",
+    "tags": [
+        "apple",
+        "macos",
+        "ios",
+        "visionos",
+        "swiftui",
+        "native",
+        "ui"
+    ]
 }

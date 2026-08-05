@@ -1,6 +1,7 @@
 -cp src
 -cp ../../src
 -lib hxcpp
+-lib rui
 --macro sui.macros.SwiftGenerator.register()
 -main TabsApp
 -cpp build/cpp

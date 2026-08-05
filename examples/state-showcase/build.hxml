@@ -3,5 +3,5 @@
 -lib hxcpp
 -lib rui
 --macro sui.macros.SwiftGenerator.register()
--main TodoApp
+-main StateShowcaseApp
 -cpp build/cpp
