@@ -16,6 +16,13 @@ import sui.modifiers.ViewModifier;
     `@:keep` — every method here is reached only from the C bridge via
     reflection, so DCE would otherwise strip the class in a dynamic-render
     build whose Haxe never references it directly.
+
+    **The walk itself is not here.** It lives in `sui.nui.ViewSource`, sui's
+    implementation of [nui's pull contract](https://lapavoiserie.github.io/nui/#/pull-mode),
+    and these accessors forward to it. They stay because C reaches them by
+    symbol and an interface has no static entry points — but a second copy of
+    "how do I read a sui view" is exactly the kind of duplicate that drifts
+    without ever crashing.
 **/
 @:keep
 class ViewNodeBridge {
@@ -24,6 +31,20 @@ class ViewNodeBridge {
 
     /** Current app instance. **/
     static var _app:Dynamic = null;
+
+    /** The tree reader, rebuilt with the root it describes. **/
+    static var _source:sui.nui.ViewSource = null;
+
+    /**
+        sui's view of itself through the shared node model.
+
+        Exposed so a consumer that knows nothing about sui — a devtool, an
+        inspector, a remote protocol, another renderer — can walk the tree
+        through `nui` rather than through these C entry points.
+    **/
+    public static function source():sui.nui.ViewSource {
+        return _source;
+    }
 
     /** Set the app instance and build the initial view tree. **/
     public static function setApp(app:Dynamic):Void {
@@ -35,6 +56,7 @@ class ViewNodeBridge {
     public static function rebuild():Void {
         if (_app != null) {
             _root = _app.body();
+            _source = new sui.nui.ViewSource(_root);
         }
     }
 
@@ -102,92 +124,75 @@ class ViewNodeBridge {
     }
 
     // --- View node accessors (called from C bridge) ---
+    //
+    // All of them forward to `sui.nui.ViewSource`. C may ask before `setApp`
+    // has run, so a source always exists: its accessors already answer "" / 0
+    // / false for a null node, which is what these returned before.
+
+    static function reader():sui.nui.ViewSource {
+        if (_source == null) _source = new sui.nui.ViewSource(null);
+        return _source;
+    }
+
 
     /** Get the viewType string (e.g., "VStack", "Text", "Button"). **/
     public static function getViewType(node:View):String {
-        if (node == null) return "";
-        // Strip package prefix: "sui.ui.VStack" → "VStack"
-        var vt = node.viewType;
-        if (vt == null) return "";
-        var dot = vt.lastIndexOf(".");
-        return dot >= 0 ? vt.substr(dot + 1) : vt;
+        return reader().typeOf(node);
     }
 
     /** Get the number of children. **/
     public static function getChildCount(node:View):Int {
-        if (node == null || node.children == null) return 0;
-        return node.children.length;
+        return reader().childCount(node);
     }
 
     /** Get a child by index. **/
     public static function getChild(node:View, index:Int):View {
-        if (node == null || node.children == null || index < 0 || index >= node.children.length) return null;
-        return node.children[index];
+        return reader().childAt(node, index);
     }
 
     /** Get a string property (e.g., "label", "content", "placeholder"). **/
     public static function getStringProperty(node:View, key:String):String {
-        if (node == null || node.properties == null) return "";
-        var val:Dynamic = node.properties.get(key);
-        return val != null ? Std.string(val) : "";
+        return reader().stringProp(node, key);
     }
 
     /** Get an int property. **/
     public static function getIntProperty(node:View, key:String):Int {
-        if (node == null || node.properties == null) return 0;
-        var val:Dynamic = node.properties.get(key);
-        return val != null ? cast(val, Int) : 0;
+        return reader().intProp(node, key);
     }
 
     /** Get a float property. **/
     public static function getFloatProperty(node:View, key:String):Float {
-        if (node == null || node.properties == null) return 0.0;
-        var val:Dynamic = node.properties.get(key);
-        return val != null ? cast(val, Float) : 0.0;
+        return reader().floatProp(node, key);
     }
 
     /** Get a bool property. **/
     public static function getBoolProperty(node:View, key:String):Bool {
-        if (node == null || node.properties == null) return false;
-        var val:Dynamic = node.properties.get(key);
-        return val != null ? cast(val, Bool) : false;
+        return reader().boolProp(node, key);
     }
 
     /** Check if a property exists. **/
     public static function hasProperty(node:View, key:String):Bool {
-        if (node == null || node.properties == null) return false;
-        return node.properties.exists(key);
+        return reader().hasProp(node, key);
     }
 
     /** Get the number of modifiers. **/
     public static function getModifierCount(node:View):Int {
-        if (node == null || node.modifierChain == null) return 0;
-        return node.modifierChain.length;
+        return reader().modifierCount(node);
     }
 
     /** Get modifier type name at index. **/
     public static function getModifierType(node:View, index:Int):String {
-        if (node == null || node.modifierChain == null || index < 0 || index >= node.modifierChain.length) return "";
-        return Type.enumConstructor(node.modifierChain[index]);
+        return reader().modifierType(node, index);
     }
 
     /** Get modifier float parameter (e.g., padding value, opacity). **/
     public static function getModifierFloat(node:View, index:Int, paramIndex:Int):Float {
-        if (node == null || node.modifierChain == null || index < 0 || index >= node.modifierChain.length) return 0.0;
-        var params = Type.enumParameters(node.modifierChain[index]);
-        if (paramIndex < 0 || paramIndex >= params.length) return 0.0;
-        var val:Dynamic = params[paramIndex];
-        if (Std.isOfType(val, Float)) return val;
-        if (Std.isOfType(val, Int)) return cast(val, Int) * 1.0;
-        return 0.0;
+        return reader().modifierFloat(node, index, paramIndex);
     }
 
     /** Get modifier string parameter (e.g., color name, font style). **/
     public static function getModifierString(node:View, index:Int, paramIndex:Int):String {
-        if (node == null || node.modifierChain == null || index < 0 || index >= node.modifierChain.length) return "";
-        var params = Type.enumParameters(node.modifierChain[index]);
-        if (paramIndex < 0 || paramIndex >= params.length) return "";
-        return Std.string(params[paramIndex]);
+        return reader().modifierString(node, index, paramIndex);
     }
 
     // --- Text special accessors ---
@@ -218,9 +223,7 @@ class ViewNodeBridge {
 
     /** Get button action ID (for invoking via bridge). **/
     public static function getButtonActionId(node:View):Int {
-        if (node == null) return -1;
-        var id:Dynamic = Reflect.field(node, "actionId");
-        return id != null ? cast(id, Int) : -1;
+        return reader().actionId(node);
     }
 
     /** Invoke a Button's action closure directly.
@@ -231,8 +234,6 @@ class ViewNodeBridge {
         live view tree (`_root`, a GC root), so the closure sitting on the node
         stays reachable. So we just call it — no id, no Callbacks indirection. **/
     public static function invokeButtonAction(node:View):Void {
-        if (node == null) return;
-        var action:Dynamic = Reflect.field(node, "action");
-        if (action != null) action();
+        reader().invokeAction(node);
     }
 }

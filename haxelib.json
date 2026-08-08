@@ -7,11 +7,12 @@
     "classPath": "src",
     "dependencies": {
         "hxcpp": "",
-        "rui": ""
+        "rui": "",
+        "nui": ""
     },
     "main": "tools.cli.CLI",
     "contributors": [],
-    "releasenote": "Initial release \u2014 Phase 1: Hello World on macOS",
+    "releasenote": "Initial release — Phase 1: Hello World on macOS",
     "tags": [
         "apple",
         "macos",

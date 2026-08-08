@@ -24,6 +24,12 @@ class SwiftGenerator {
     /** Hook into the Haxe compiler. Called via --macro in build.hxml. **/
     public static function register() {
         #if macro
+        // The view rule, enforced from here rather than asked for in every
+        // build.hxml. A fundamental rule an example can forget to opt into is
+        // advice, not a rule: registering it beside the generator means any
+        // build that emits Swift is checked, by construction.
+        rui.macros.ViewRule.register("sui.App", "body");
+
         // Dynamic renderer (hot reload): the native host reaches ViewNodeBridge
         // and the Callbacks store only through the generated C bridge — via
         // reflection and direct C++ symbols — never from Haxe. Nothing imports
