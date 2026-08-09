@@ -146,6 +146,31 @@ class State<T> extends rui.state.State<T> {
 
     // ── Shared-memory query API (called from C bridge) ──────────────
 
+    /**
+        The current value of a named state, or null when no such state exists.
+
+        sui's controls take their binding as a **name** — `new Toggle("On",
+        "isEnabled")` — because the transpiler turned that into
+        `$appState.isEnabled`. The dynamic renderer has no appState, so it
+        resolves the same name here, against the registry every State already
+        joins on construction.
+
+        `peek`, not `get`: this is a renderer reading a value to draw, not a
+        view declaring a dependency.
+    **/
+    public static function peekByName(stateName:String):Null<Dynamic> {
+        if (stateName == null) return null;
+        var state:Dynamic = _registry.get(stateName);
+        if (state == null) return null;
+        var cell:State<Dynamic> = state;
+        return cell.peek();
+    }
+
+    /** Whether a name resolves to a state at all — absent is not `false`. **/
+    public static function existsByName(stateName:String):Bool {
+        return stateName != null && _registry.exists(stateName);
+    }
+
     /** Get array length for a named state. Returns -1 if not found or not an array. **/
     public static function _getArrayLength(stateName:String):Int {
         if (stateName == null) return -1;

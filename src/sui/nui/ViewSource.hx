@@ -173,10 +173,12 @@ class ViewSource implements NodeSource<View> {
 		`new ConditionalView(isLoggedIn, ...)`, a plain string when it wrote the
 		transpiler's form, `new ConditionalView("isLoggedIn", ...)`.
 
-		Only the first can be answered here. The string names a field the
-		generated Swift would have read off `appState`; at runtime it is a name
-		with nothing to look it up in. That form is refused at compile time
-		rather than guessed at -- see `sui.macros.SwiftGenerator`.
+		Both are answerable. The string names a field the generated Swift would
+		have read off `appState`; here it is looked up in the registry every
+		`sui.state.State` joins when it is constructed — the same registry the
+		shared-memory bridge queries. A name that resolves to nothing is the one
+		case left: not `false`, which would put half a screen up on a guess, but
+		unanswerable.
 	**/
 	static function conditionHolds(n:View):Null<Bool> {
 		var cond:Dynamic = Reflect.field(n, "stateName");
@@ -184,6 +186,11 @@ class ViewSource implements NodeSource<View> {
 		if (Std.isOfType(cond, rui.state.State)) {
 			var value:Dynamic = (cast cond : rui.state.State<Dynamic>).get();
 			return value == true;
+		}
+		if (Std.isOfType(cond, String)) {
+			var name:String = cast cond;
+			if (!sui.state.State.existsByName(name)) return null;
+			return sui.state.State.peekByName(name) == true;
 		}
 		return null;
 	}
@@ -208,6 +215,9 @@ class ViewSource implements NodeSource<View> {
 		the parent's layout to place items as siblings rather than in a box.
 	**/
 	function childrenOf(n:View):Array<View> {
+		var declared = contentOf(n);
+		if (declared != null) return declared;
+
 		if (n.children == null || n.children.length == 0) return [];
 
 		// Memoised per generation: `childAt` is called once per index, and
@@ -232,6 +242,68 @@ class ViewSource implements NodeSource<View> {
 		var result = expanded ? out : n.children;
 		_children.set(n, result);
 		return result;
+	}
+
+	/**
+		A `TabView`'s tabs, or null for anything else.
+
+		Its contents are pushed into `children`, but the label and icon beside
+		each one are not: they sit in `tabs`, which the transpiler read directly.
+		A host drawing a tab bar needs them, and has nothing else to get them
+		from.
+	**/
+	static function tabsOf(n:View):Null<Array<Dynamic>> {
+		if (n == null || n.viewType != "TabView") return null;
+		var tabs:Dynamic = Reflect.field(n, "tabs");
+		return tabs == null ? null : cast tabs;
+	}
+
+	public function tabCount(n:View):Int {
+		var tabs = tabsOf(resolveWalked(n));
+		return tabs == null ? 0 : tabs.length;
+	}
+
+	public function tabTitle(n:View, index:Int):String {
+		return tabField(n, index, "label");
+	}
+
+	public function tabIcon(n:View, index:Int):String {
+		return tabField(n, index, "systemImage");
+	}
+
+	static function tabField(n:View, index:Int, key:String):String {
+		var tabs = tabsOf(n);
+		if (tabs == null || index < 0 || index >= tabs.length) return "";
+		var value:Dynamic = Reflect.field(tabs[index], key);
+		return value == null ? "" : Std.string(value);
+	}
+
+	/**
+		Sub-views a node keeps **outside** `children`, or null for anything else.
+
+		Three of sui's containers never filled `children`: the transpiler read
+		their fields directly, so nothing needed them to be reachable by walking.
+		Reporting zero children for them is a lie to the pull contract, and it
+		draws an empty box -- which is what a `GroupBox` did.
+
+		The classes are left alone; the *description* is corrected here, which is
+		what a source is for. Any consumer benefits, not only this renderer.
+	**/
+	function contentOf(n:View):Null<Array<View>> {
+		switch (n.viewType) {
+			case "GroupBox" | "DisclosureGroup":
+				var content:Dynamic = Reflect.field(n, "content");
+				return content == null ? [] : (content : Array<View>);
+			case "AdaptiveStack":
+				var sidebar:Dynamic = Reflect.field(n, "sidebar");
+				var detail:Dynamic = Reflect.field(n, "detail");
+				var out:Array<View> = [];
+				if (sidebar != null) out.push(cast sidebar);
+				if (detail != null) out.push(cast detail);
+				return out;
+			case _:
+				return null;
+		}
 	}
 
 	/**
@@ -280,38 +352,93 @@ class ViewSource implements NodeSource<View> {
 		return out;
 	}
 
+	/**
+		A named value carried by a node, from wherever the node keeps it.
+
+		`properties` first, then the node's own **field** of that name. sui's
+		views were written for a transpiler, which read `spacing`, `header`,
+		`label` straight off the typed AST -- so almost nothing was ever put in
+		the properties map, and a walker asking for a name got "" for a value
+		sitting one field away.
+
+		It was not a gap that announced itself: `new VStack(null, 16, [...])`
+		drew with SwiftUI's default spacing, because `property("spacing")` found
+		an empty map and the renderer read that as "unspecified". Every value on
+		every node this path draws went the same way.
+	**/
+	static function rawValue(n:View, key:String):Null<Dynamic> {
+		if (n == null) return null;
+		if (n.properties != null) {
+			var fromMap:Dynamic = n.properties.get(key);
+			if (fromMap != null) return fromMap;
+		}
+		return Reflect.field(n, key);
+	}
+
 	public function hasProp(n:View, key:String):Bool {
 		n = resolveWalked(n);
-		if (n == null || n.properties == null) return false;
-		return n.properties.exists(key);
+		return rawValue(n, key) != null;
 	}
 
 	public function stringProp(n:View, key:String):String {
 		n = resolveWalked(n);
-		if (n == null || n.properties == null) return "";
-		var val:Dynamic = n.properties.get(key);
-		return val != null ? Std.string(val) : "";
+		var val = rawValue(n, key);
+		if (val == null) return "";
+		return describe(val);
+	}
+
+	/**
+		One value, in the one form a host can switch on.
+
+		An enum describes itself by its constructor -- `Center`, `Red`,
+		`LargeTitle` -- with its parameters after it, so `Custom("#7c3aed")`
+		crosses as `Custom(#7c3aed)`. A list joins with commas: a gradient's
+		colours are the only lists a view carries, and a host that can read
+		`Blue,Purple` needs no list protocol for them.
+
+		`Std.string` is close to this on most targets and not on all of them,
+		and the host compares these words exactly.
+	**/
+	static function describe(val:Dynamic):String {
+		if (val == null) return "";
+		if (Std.isOfType(val, Array)) {
+			var arr:Array<Dynamic> = val;
+			return [for (item in arr) describe(item)].join(",");
+		}
+		if (Reflect.isEnumValue(val)) {
+			var name = Type.enumConstructor(val);
+			var params = Type.enumParameters(val);
+			if (params == null || params.length == 0) return name;
+			return name + "(" + [for (p in params) Std.string(p)].join(",") + ")";
+		}
+		return Std.string(val);
 	}
 
 	public function intProp(n:View, key:String):Int {
 		n = resolveWalked(n);
-		if (n == null || n.properties == null) return 0;
-		var val:Dynamic = n.properties.get(key);
-		return val != null ? cast(val, Int) : 0;
+		var val = rawValue(n, key);
+		if (val == null) return 0;
+		if (Std.isOfType(val, Int)) return val;
+		if (Std.isOfType(val, Float)) return Std.int(val);
+		var parsed = Std.parseInt(Std.string(val));
+		return parsed == null ? 0 : parsed;
 	}
 
 	public function floatProp(n:View, key:String):Float {
 		n = resolveWalked(n);
-		if (n == null || n.properties == null) return 0.0;
-		var val:Dynamic = n.properties.get(key);
-		return val != null ? cast(val, Float) : 0.0;
+		var val = rawValue(n, key);
+		if (val == null) return 0.0;
+		if (Std.isOfType(val, Float) || Std.isOfType(val, Int)) return val;
+		var parsed = Std.parseFloat(Std.string(val));
+		return Math.isNaN(parsed) ? 0.0 : parsed;
 	}
 
 	public function boolProp(n:View, key:String):Bool {
 		n = resolveWalked(n);
-		if (n == null || n.properties == null) return false;
-		var val:Dynamic = n.properties.get(key);
-		return val != null ? cast(val, Bool) : false;
+		var val = rawValue(n, key);
+		if (val == null) return false;
+		if (Std.isOfType(val, Bool)) return val;
+		return Std.string(val) == "true";
 	}
 
 	public function modifierCount(n:View):Int {

@@ -72,6 +72,80 @@ struct ViewNode: Identifiable {
         return String(cString: viewnode_get_property(ptr, key))
     }
 
+    // A TabView's labels and icons, which sit beside the contents rather than
+    // among them.
+    var tabCount: Int {
+        guard let ptr = pointer else { return 0 }
+        return Int(viewnode_tab_count(ptr))
+    }
+
+    func tabTitle(at index: Int) -> String {
+        guard let ptr = pointer else { return "" }
+        return String(cString: viewnode_tab_title(ptr, Int32(index)))
+    }
+
+    func tabIcon(at index: Int) -> String {
+        guard let ptr = pointer else { return "" }
+        return String(cString: viewnode_tab_icon(ptr, Int32(index)))
+    }
+
+    /// A value read as a number, for the many properties that are one.
+    func number(_ key: String) -> Double? {
+        Double(property(key))
+    }
+
+    /// A list of sui colours, as the source joins them: "Blue,Purple".
+    func colorList(_ key: String) -> [Color] {
+        let raw = property(key)
+        if raw.isEmpty { return [] }
+        return raw.split(separator: ",").map { suiColorValue(String($0)) }
+    }
+
+    /// The property naming the cell this control edits, if it declares one.
+    ///
+    /// sui spells it differently per control -- `textBinding`, `isOnBinding`,
+    /// `valueBinding`, `selectionBinding`, `isoStateName` -- because the
+    /// transpiler read the field, and a field can be called anything. A walker
+    /// has to know the whole list; there is nowhere else it is written down.
+    var bindingName: String? {
+        for key in ["textBinding", "isOnBinding", "valueBinding",
+                    "selectionBinding", "isoStateName"] {
+            let name = property(key)
+            if !name.isEmpty { return key }
+        }
+        return nil
+    }
+
+    /// A two-way binding for this control, whichever way it declares one.
+    ///
+    /// Everything crosses as a string: the cell's type is Haxe's business, and
+    /// `State._applyFromSwift` parses the value back into it from the type
+    /// already in the cell. A renderer that guessed types here would be a
+    /// second opinion about them.
+    var boundValue: Binding<String> {
+        let node = self
+        if let key = bindingName {
+            return Binding(get: { node.stateValue(key) },
+                           set: { node.setStateValue(key, $0) })
+        }
+        return Binding(get: { node.property("value") },
+                       set: { viewnode_set_data(node.property("path"), $0) })
+    }
+
+    /// A named state's current value, for a control that binds by name.
+    func stateValue(_ key: String) -> String {
+        let name = property(key)
+        if name.isEmpty { return "" }
+        return String(cString: viewnode_state_value(name))
+    }
+
+    /// Write a named state back, after the control edited it.
+    func setStateValue(_ key: String, _ value: String) {
+        let name = property(key)
+        if name.isEmpty { return }
+        viewnode_set_state(name, value)
+    }
+
     var modifierCount: Int {
         guard let ptr = pointer else { return 0 }
         return Int(viewnode_modifier_count(ptr))
@@ -138,14 +212,210 @@ struct DynamicView: View {
         case "Spacer":
             Spacer()
 
+        // MARK: sui containers
+        //
+        // Everything from here down is a type *sui itself* produces. The
+        // renderer was written against a streaming protocol's vocabulary, so it
+        // knew Board and Canvas but not List or Section -- the app's own views
+        // reached the unknown-type branch and drew a placeholder.
+        //
+        // Most are pass-throughs: the container is the SwiftUI one, its content
+        // is the node's children. What is *not* mechanical is where the content
+        // comes from -- three of these keep it outside `children`, and
+        // `sui.nui.ViewSource` is where that is corrected, not here.
+
+        case "Form":
+            Form { childViews() }
+
+        case "Section":
+            let header = node.property("header")
+            if header.isEmpty {
+                Section { childViews() }
+            } else {
+                Section(header) { childViews() }
+            }
+
+        case "List":
+            List { childViews() }
+
+        case "GroupBox":
+            GroupBox(node.property("label")) {
+                VStack(alignment: .leading) { childViews() }
+            }
+
+        case "DisclosureGroup":
+            DisclosureGroup(node.property("label")) {
+                VStack(alignment: .leading) { childViews() }
+            }
+
+        case "GeometryReader":
+            GeometryReader { _ in childViews() }
+
+        case "LazyVStack":
+            LazyVStack(spacing: spacingFromProperties()) { childViews() }
+
+        case "LazyHStack":
+            LazyHStack(spacing: spacingFromProperties()) { childViews() }
+
+        case "LazyVGrid":
+            LazyVGrid(columns: flexibleGrid(count: node.property("columns")),
+                      spacing: spacingFromProperties()) { childViews() }
+
+        case "LazyHGrid":
+            LazyHGrid(rows: flexibleGrid(count: node.property("rows")),
+                      spacing: spacingFromProperties()) { childViews() }
+
+        // An AdaptiveStack is a sidebar and a detail that lay out side by side
+        // where there is room and stacked where there is not. `ViewThatFits`
+        // says exactly that, and needs no size class to be threaded through.
+        case "AdaptiveStack":
+            ViewThatFits {
+                HStack(alignment: .top) { childViews() }
+                VStack(alignment: .leading) { childViews() }
+            }
+
+        // MARK: sui navigation
+
+        case "NavigationStack":
+            NavigationStack { childViews() }
+
+        case "NavigationSplitView":
+            NavigationSplitView {
+                DynamicView(node: node.child(at: 0))
+            } detail: {
+                DynamicView(node: node.child(at: 1))
+            }
+
+        case "NavigationLink":
+            NavigationLink(node.property("label")) {
+                DynamicView(node: node.child(at: 0))
+            }
+
+        case "TabView":
+            TabView {
+                ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                    DynamicView(node: child)
+                        .tabItem {
+                            Label(node.tabTitle(at: index),
+                                  systemImage: node.tabIcon(at: index))
+                        }
+                }
+            }
+
+        // A CommandMenu belongs to a Scene's `.commands`, not to a view tree --
+        // there is no place in a rendered hierarchy where it *is* the menu bar.
+        // Drawn as the menu it most resembles, so its items stay reachable
+        // rather than vanishing; on macOS a real app gets the menu bar from the
+        // static path.
+        case "CommandMenu", "Menu":
+            Menu(node.property("label")) { childViews() }
+
+        // MARK: sui controls
+        //
+        // A sui control declares its binding as a **name** -- `new
+        // TextField("Name", "userName")` -- because the transpiler turned that
+        // into `$appState.userName`. The streaming protocol instead carries the
+        // current `value` plus a `path` to send edits to. Both are here: the
+        // sui shape when a binding name is present, the protocol shape
+        // otherwise, so neither renderer's apps regress.
+
+        case "SecureField":
+            SuiTextField(node: node, secure: true)
+
+        case "TextEditor":
+            SuiTextEditor(node: node)
+
+        case "Stepper":
+            SuiStepper(node: node)
+
+        case "Picker":
+            SuiPicker(node: node)
+
+        case "ColorPicker":
+            SuiColorPicker(node: node)
+
+        case "DatePicker", "IsoDatePicker", "IsoTimePicker":
+            SuiDatePicker(node: node, timeOnly: node.viewType == "IsoTimePicker")
+
+        // Read-only: a Gauge shows a value, it does not take one.
+        case "Gauge":
+            let lo = node.number("minValue") ?? 0
+            let hi = node.number("maxValue") ?? 1
+            Gauge(value: Double(node.boundValue.wrappedValue) ?? lo, in: lo...max(hi, lo + 0.0001)) {
+                Text(node.property("label"))
+            }
+
+        case "Label":
+            Label(node.property("title"), systemImage: node.property("systemImage"))
+
+        case "Link":
+            if let url = URL(string: node.property("url")) {
+                Link(node.property("label"), destination: url)
+            } else {
+                Text(node.property("label"))
+            }
+
+        case "ShareLink":
+            let item = node.property("item")
+            let shareLabel = node.property("label")
+            if shareLabel.isEmpty {
+                ShareLink(item: item)
+            } else {
+                ShareLink(item: item) { Text(shareLabel) }
+            }
+
+        case "ContentUnavailableView":
+            ContentUnavailableView {
+                Label(node.property("title"), systemImage: node.property("systemImage"))
+            } description: {
+                Text(node.property("description"))
+            }
+
+        // MARK: sui shapes and gradients
+
+        case "Rectangle":
+            Rectangle()
+
+        case "Circle":
+            Circle()
+
+        case "Capsule":
+            Capsule()
+
+        case "Ellipse":
+            Ellipse()
+
+        case "LinearGradient":
+            LinearGradient(colors: node.colorList("colors"),
+                           startPoint: unitPoint(node.property("startPoint"), fallback: .top),
+                           endPoint: unitPoint(node.property("endPoint"), fallback: .bottom))
+
+        case "RadialGradient":
+            RadialGradient(colors: node.colorList("colors"),
+                           center: unitPoint(node.property("center"), fallback: .center),
+                           startRadius: node.number("startRadius") ?? 0,
+                           endRadius: node.number("endRadius") ?? 100)
+
+        case "AngularGradient":
+            AngularGradient(colors: node.colorList("colors"),
+                            center: unitPoint(node.property("center"), fallback: .center))
+
         case "Divider":
             Divider()
 
         case "Toggle", "CheckBox":
-            DynamicCheckBox(node: node)
+            if node.bindingName != nil {
+                SuiToggle(node: node)
+            } else {
+                DynamicCheckBox(node: node)
+            }
 
         case "TextField":
-            DynamicTextField(node: node)
+            if node.bindingName != nil {
+                SuiTextField(node: node, secure: false)
+            } else {
+                DynamicTextField(node: node)
+            }
 
         case "Canvas":
             DynamicCanvas(node: node)
@@ -154,7 +424,11 @@ struct DynamicView: View {
             DynamicBoard(node: node)
 
         case "Slider":
-            DynamicSlider(node: node)
+            if node.bindingName != nil {
+                SuiSlider(node: node)
+            } else {
+                DynamicSlider(node: node)
+            }
 
         case "ChoicePicker":
             DynamicPicker(node: node)
@@ -259,12 +533,15 @@ struct DynamicView: View {
             case "Italic":
                 result = AnyView(result.italic())
 
+            // The source describes a `ColorValue` by its constructor -- `Red`,
+            // or `Custom(#7c3aed)` with its parameter. Both were dropped here,
+            // with a comment saying the mapping was missing; every colour an
+            // app set went nowhere, in silence.
             case "ForegroundColor":
-                // Would need color enum mapping from bridge
-                break
+                result = AnyView(result.foregroundStyle(suiColorValue(node.modifierString(at: i))))
 
             case "Background":
-                break
+                result = AnyView(result.background(suiColorValue(node.modifierString(at: i))))
 
             case "Opacity":
                 let value = node.modifierFloat(at: i)
@@ -287,6 +564,36 @@ struct DynamicView: View {
         }
 
         return result
+    }
+
+    /// The node's children, as the content of a container.
+    @ViewBuilder
+    private func childViews() -> some View {
+        ForEach(node.children) { child in
+            DynamicView(node: child)
+        }
+    }
+
+    /// Equal-width columns (or equal-height rows) for a Lazy*Grid.
+    private func flexibleGrid(count: String) -> [GridItem] {
+        let n = max(1, Int(count) ?? 1)
+        return Array(repeating: GridItem(.flexible()), count: n)
+    }
+
+    /// sui names gradient anchors as strings ("top", "bottomTrailing", …).
+    private func unitPoint(_ name: String, fallback: UnitPoint) -> UnitPoint {
+        switch name.lowercased() {
+        case "top": return .top
+        case "bottom": return .bottom
+        case "leading": return .leading
+        case "trailing": return .trailing
+        case "center": return .center
+        case "topleading": return .topLeading
+        case "toptrailing": return .topTrailing
+        case "bottomleading": return .bottomLeading
+        case "bottomtrailing": return .bottomTrailing
+        default: return fallback
+        }
     }
 
     private func spacingFromProperties() -> CGFloat? {
@@ -806,6 +1113,175 @@ struct HotReloadRootView: View {
             .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
                 withAnimation { reloadCount += 1 }
             }
+    }
+}
+
+// MARK: - sui controls
+//
+// Each takes its value through `node.boundValue`, so none of them knows whether
+// the app named a cell or the protocol sent a path. They keep no local mirror:
+// a write rebuilds the tree, and the next read comes from the cell -- a mirror
+// would be a second copy of the value, free to disagree with it.
+
+struct SuiTextField: View {
+    let node: ViewNode
+    let secure: Bool
+
+    var body: some View {
+        let placeholder = node.property("placeholder")
+        Group {
+            if secure {
+                SecureField(placeholder, text: node.boundValue)
+            } else {
+                TextField(placeholder, text: node.boundValue)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+    }
+}
+
+struct SuiTextEditor: View {
+    let node: ViewNode
+
+    var body: some View {
+        TextEditor(text: node.boundValue)
+    }
+}
+
+struct SuiToggle: View {
+    let node: ViewNode
+
+    var body: some View {
+        Toggle(node.property("label"), isOn: Binding(
+            get: { node.boundValue.wrappedValue == "true" },
+            set: { node.boundValue.wrappedValue = $0 ? "true" : "false" }
+        ))
+    }
+}
+
+struct SuiSlider: View {
+    let node: ViewNode
+
+    var body: some View {
+        let lo = node.number("rangeMin") ?? 0
+        let hi = node.number("rangeMax") ?? 1
+        Slider(value: Binding(
+            get: { Double(node.boundValue.wrappedValue) ?? lo },
+            set: { node.boundValue.wrappedValue = String($0) }
+        ), in: lo...max(hi, lo + 0.0001))
+    }
+}
+
+struct SuiStepper: View {
+    let node: ViewNode
+
+    var body: some View {
+        let lo = Int(node.number("minValue") ?? 0)
+        let hi = Int(node.number("maxValue") ?? 100)
+        Stepper(node.property("label"), value: Binding(
+            get: { Int(node.boundValue.wrappedValue) ?? lo },
+            set: { node.boundValue.wrappedValue = String($0) }
+        ), in: lo...max(hi, lo))
+    }
+}
+
+/// A Picker whose options are its children.
+///
+/// The transpiler read a `.tag(...)` modifier off each option to know what a
+/// row *selects*; nothing carries that here, so a row's own text is both what
+/// it shows and what it stores. That is what the common case writes anyway --
+/// `new Text(name).tag(name)` -- and it is stated rather than silently assumed.
+struct SuiPicker: View {
+    let node: ViewNode
+
+    var body: some View {
+        Picker(node.property("label"), selection: node.boundValue) {
+            ForEach(node.children) { child in
+                Text(child.textContent).tag(child.textContent)
+            }
+        }
+    }
+}
+
+struct SuiColorPicker: View {
+    let node: ViewNode
+
+    var body: some View {
+        ColorPicker(node.property("label"), selection: Binding(
+            get: { Color(suiHex: node.boundValue.wrappedValue) ?? .accentColor },
+            set: { node.boundValue.wrappedValue = $0.suiHexString } 
+        ))
+    }
+}
+
+/// A date picker over a cell holding an ISO-8601 string.
+///
+/// sui has three of these and they differ only in what they let you touch, so
+/// they share one view: the value crosses as text either way, and a date that
+/// cannot be parsed falls back to now rather than to 1970 -- a control opening
+/// on the Unix epoch reads as broken, not as empty.
+struct SuiDatePicker: View {
+    let node: ViewNode
+    let timeOnly: Bool
+
+    var body: some View {
+        DatePicker(node.property("label"), selection: Binding(
+            get: { ViewNode.isoFormatter.date(from: node.boundValue.wrappedValue) ?? Date() },
+            set: { node.boundValue.wrappedValue = ViewNode.isoFormatter.string(from: $0) }
+        ), displayedComponents: timeOnly ? [.hourAndMinute] : [.date])
+    }
+}
+
+extension ViewNode {
+    static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+}
+
+extension Color {
+    /// The hex a ColorPicker writes back, in the form `Color(suiHex:)` reads.
+    var suiHexString: String {
+        #if canImport(AppKit)
+        let native = NSColor(self).usingColorSpace(.sRGB)
+        let r = native?.redComponent ?? 0, g = native?.greenComponent ?? 0, b = native?.blueComponent ?? 0
+        #else
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(self).getRed(&r, green: &g, blue: &b, alpha: &a)
+        #endif
+        return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+    }
+}
+
+/// A sui `ColorValue`, by the name `sui.nui.ViewSource` gives it.
+///
+/// Constructors, not hex: `Red`, `Primary`, and `Custom(#7c3aed)` carrying its
+/// parameter. This is the app's own palette; `suiThemeColor` above maps the
+/// *protocol's* tokens (`surface`, `onPrimary`), which are a different set with
+/// different names, and conflating them would answer both questions wrongly.
+func suiColorValue(_ raw: String) -> Color {
+    let name = raw.trimmingCharacters(in: .whitespaces)
+    if name.hasPrefix("Custom(") && name.hasSuffix(")") {
+        let hex = String(name.dropFirst("Custom(".count).dropLast())
+        return Color(suiHex: hex) ?? .primary
+    }
+    switch name {
+    case "Primary":   return .primary
+    case "Secondary": return .secondary
+    case "Accent":    return .accentColor
+    case "Red":       return .red
+    case "Orange":    return .orange
+    case "Yellow":    return .yellow
+    case "Green":     return .green
+    case "Blue":      return .blue
+    case "Purple":    return .purple
+    case "Pink":      return .pink
+    case "White":     return .white
+    case "Black":     return .black
+    case "Gray":      return .gray
+    case "Clear":     return .clear
+    default:          return .primary
     }
 }
 

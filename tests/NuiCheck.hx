@@ -171,14 +171,112 @@ class NuiCheck {
 			nes.typeOf(noElse) == "VStack" && nes.childCount(noElse) == 0,
 			nes.typeOf(noElse));
 
-		// The string form named a field on the generated appState. At runtime it
-		// is a name with nothing to look it up in -- guessing a branch would
-		// draw the wrong half of the screen, so neither is taken.
+		// The string form names a field the generated appState would have held.
+		// Here it resolves against the registry every State joins when it is
+		// constructed -- the same one the shared-memory bridge queries.
+		var named = new State<Bool>(true, "isLoggedIn");
 		var stringly:View = new ConditionalView("isLoggedIn", new Text("in"), new Text("out"));
 		var ss = new ViewSource(stringly);
-		check("a stringly condition takes neither branch",
-			ss.typeOf(stringly) == "VStack" && ss.childCount(stringly) == 0,
-			ss.typeOf(stringly));
+		check("a condition named as a string resolves through the registry",
+			textOf(ss, stringly) == "in", textOf(ss, stringly));
+
+		named.set(false);
+		var ss2 = new ViewSource(stringly);
+		check("and follows the cell it names", textOf(ss2, stringly) == "out",
+			textOf(ss2, stringly));
+
+		// A name that resolves to nothing is not `false`: taking the else-branch
+		// would put half a screen up on a guess.
+		var unknown:View = new ConditionalView("noSuchState", new Text("in"), new Text("out"));
+		var us = new ViewSource(unknown);
+		check("an unresolvable condition takes neither branch",
+			us.typeOf(unknown) == "VStack" && us.childCount(unknown) == 0, us.typeOf(unknown));
+
+		// --- values live in fields, not in the properties map ---
+		//
+		// sui's views were written for a transpiler that read `spacing` and
+		// `header` off the typed AST, so almost nothing was ever put in
+		// `properties`. A walker asking by name got "" for a value one field
+		// away: `new VStack(null, 16, ...)` drew with default spacing, and
+		// nothing said why.
+		var spaced:View = new VStack(null, 16, [new Text("x")]);
+		var sp = new ViewSource(spaced);
+		check("a value kept in a field is readable by name",
+			sp.floatProp(spaced, "spacing") == 16.0, Std.string(sp.floatProp(spaced, "spacing")));
+		check("and reports as present", sp.hasProp(spaced, "spacing"));
+		check("an enum value describes itself by its constructor",
+			sp.stringProp(spaced, "alignment") == "Center", sp.stringProp(spaced, "alignment"));
+		check("an absent name is still absent", !sp.hasProp(spaced, "nothingHere"));
+
+		var section:View = new sui.ui.Section("Header", [new Text("row")]);
+		var sec = new ViewSource(section);
+		check("a Section reports its header", sec.stringProp(section, "header") == "Header",
+			sec.stringProp(section, "header"));
+
+		// --- content kept outside `children` ---
+		//
+		// Three containers never filled `children`; the transpiler read their
+		// fields. Reporting zero children drew an empty box.
+		var boxed:View = new sui.ui.GroupBox("Box", [new Text("inside"), new Text("also")]);
+		var bx = new ViewSource(boxed);
+		check("a GroupBox's content is reachable by walking", bx.childCount(boxed) == 2,
+			Std.string(bx.childCount(boxed)));
+		check("and its label is readable", bx.stringProp(boxed, "label") == "Box",
+			bx.stringProp(boxed, "label"));
+
+		var split:View = new sui.ui.AdaptiveStack(new Text("side"), new Text("main"));
+		var spl = new ViewSource(split);
+		check("an AdaptiveStack reports both halves as children",
+			spl.childCount(split) == 2 && textOf(spl, spl.childAt(split, 1)) == "main",
+			Std.string(spl.childCount(split)));
+
+		// --- a list, and an enum carrying a parameter ---
+		//
+		// A gradient's colours are the only list a view carries. They cross
+		// joined, so a host reading "Blue,Purple" needs no list protocol -- and
+		// a ColorValue keeps its parameter, since Custom("#7c3aed") is a colour
+		// and "Custom" alone is not.
+		var grad:View = new sui.ui.LinearGradient([Blue, Purple], "top", "bottom");
+		var gs = new ViewSource(grad);
+		check("a list of values crosses joined", gs.stringProp(grad, "colors") == "Blue,Purple",
+			gs.stringProp(grad, "colors"));
+
+		var custom:View = new sui.ui.LinearGradient([Custom("#7c3aed")], "top", "bottom");
+		var cus = new ViewSource(custom);
+		check("an enum keeps the parameter that carries its meaning",
+			cus.stringProp(custom, "colors") == "Custom(#7c3aed)",
+			cus.stringProp(custom, "colors"));
+
+		// --- a tab's label sits beside the contents, not among them ---
+		var tabbed:View = new sui.ui.TabView([
+			{label: "Home", systemImage: "house", content: new Text("home")},
+			{label: "Settings", systemImage: "gear", content: new Text("settings")}
+		]);
+		var ts = new ViewSource(tabbed);
+		check("a TabView's contents are its children", ts.childCount(tabbed) == 2,
+			Std.string(ts.childCount(tabbed)));
+		check("and its labels are reachable", ts.tabTitle(tabbed, 1) == "Settings"
+			&& ts.tabIcon(tabbed, 0) == "house", ts.tabTitle(tabbed, 1));
+		check("an index past the end is empty, not a crash", ts.tabTitle(tabbed, 9) == "");
+
+		// --- a control's binding is a name, and it resolves both ways ---
+		//
+		// `new TextField("Name", "userName")` names a cell because the
+		// transpiler turned that into `$appState.userName`. The renderer reads
+		// and writes the same cell by that name.
+		var userName = new State<String>("ada", "userName");
+		var field:View = new sui.ui.TextField("Name", "userName");
+		var fs = new ViewSource(field);
+		check("a control reports the cell it binds", fs.stringProp(field, "textBinding") == "userName",
+			fs.stringProp(field, "textBinding"));
+		check("the bridge reads that cell", ViewNodeBridge.getStateValue("userName") == "ada",
+			ViewNodeBridge.getStateValue("userName"));
+
+		ViewNodeBridge.setStateValue("userName", "grace");
+		check("and writes it back", userName.peek() == "grace", userName.peek());
+		check("an unknown name reads empty and does not throw",
+			ViewNodeBridge.getStateValue("noSuchCell") == ""
+			&& !ViewNodeBridge.hasStateValue("noSuchCell"));
 
 		// --- through the bridge, the way Swift asks ---
 		//

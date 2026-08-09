@@ -235,6 +235,54 @@ class ViewNodeBridge {
         return reader().actionId(node);
     }
 
+    // --- Tabs ----------------------------------------------------------------
+    //
+    // A TabView pushes its tab contents into `children`, but the label and icon
+    // beside each one stay in `tabs`. A host drawing the bar needs them.
+
+    public static function getTabCount(node:View):Int {
+        return reader().tabCount(node);
+    }
+
+    public static function getTabTitle(node:View, index:Int):String {
+        return reader().tabTitle(reader().resolveWalked(node), index);
+    }
+
+    public static function getTabIcon(node:View, index:Int):String {
+        return reader().tabIcon(reader().resolveWalked(node), index);
+    }
+
+    // --- Named state, for controls whose binding is a name -------------------
+    //
+    // A sui control carries its binding as a String: `new TextField("Name",
+    // "userName")`. The transpiler turned that into `$appState.userName`, a
+    // real SwiftUI binding. The dynamic renderer has no appState, so it reads
+    // and writes the cell itself, by the same name.
+
+    /** The value of a named state, rendered as a string for the host. **/
+    public static function getStateValue(name:String):String {
+        var value = sui.state.State.peekByName(name);
+        return value == null ? "" : Std.string(value);
+    }
+
+    /** Whether the name resolves at all — "" is a value, absence is not. **/
+    public static function hasStateValue(name:String):Bool {
+        return sui.state.State.existsByName(name);
+    }
+
+    /**
+        A value edited by a native control, written back into the cell.
+
+        Through `_applyFromSwift`, so the write reaches Haxe effects but is not
+        pushed back to the platform it came from: echoing it would fight the
+        control for the cursor, which is the loop `applyExternal` exists to
+        break. The tree is rebuilt by the state observer either way, so what is
+        on screen follows.
+    **/
+    public static function setStateValue(name:String, raw:String):Void {
+        sui.state.State._applyFromSwift(name, raw);
+    }
+
     /** Invoke a Button's action closure directly.
 
         The static bridge routes taps through an integer id into the Callbacks

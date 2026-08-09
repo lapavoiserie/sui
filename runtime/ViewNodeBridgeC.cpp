@@ -264,6 +264,77 @@ const char* viewnode_modifier_string(void* node, int32_t index, int32_t paramInd
     return result;
 }
 
+/* --- Tabs ------------------------------------------------------------------ */
+int32_t viewnode_tab_count(void* node) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    int32_t result = 0;
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getTabCount(_asView(node));
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+const char* viewnode_tab_title(void* node, int32_t index) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getTabTitle(_asView(node), index).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+const char* viewnode_tab_icon(void* node, int32_t index) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getTabIcon(_asView(node), index).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+/* --- Named state ------------------------------------------------------------
+ *
+ * A sui control's binding is a name, not a cell: the transpiler turned it into
+ * `$appState.userName`. The dynamic renderer resolves the same name against the
+ * registry every State joins on construction.
+ */
+const char* viewnode_state_value(const char* name) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getStateValue(::String(name)).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+int32_t viewnode_state_exists(const char* name) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    int32_t result = 0;
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::hasStateValue(::String(name)) ? 1 : 0;
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+void viewnode_set_state(const char* name, const char* value) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::setStateValue(::String(name), ::String(value));
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+}
+
 /* --- State writes -----------------------------------------------------------
  *
  * `sui.state.State.set()` calls `_hxsui_notify_swift(key, value)` on every

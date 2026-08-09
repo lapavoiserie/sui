@@ -53,6 +53,18 @@ int32_t viewnode_get_button_action_id(void* node);
 // Invoke a Button node's action closure directly (dynamic renderer path).
 void viewnode_invoke_action(void* node);
 
+// --- Tabs ---
+// A TabView's contents are children; its labels and icons are here.
+int32_t viewnode_tab_count(void* node);
+const char* viewnode_tab_title(void* node, int32_t index);
+const char* viewnode_tab_icon(void* node, int32_t index);
+
+// --- Named state ---
+// A sui control binds by name; these resolve it against the state registry.
+const char* viewnode_state_value(const char* name);
+int32_t viewnode_state_exists(const char* name);
+void viewnode_set_state(const char* name, const char* value);
+
 // --- State writes ---
 // Called with (name, value) whenever the application writes a sui State.
 typedef void (*viewnode_state_observer_t)(const char* key, const char* value);
