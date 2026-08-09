@@ -1,6 +1,15 @@
 -cp .
 -cp ../src
 -lib hxcpp
+# sui has been backed by rui's reactive core and nui's pull contract since
+# 54e9c5e / 24b0803. This file was not updated with it, so every run since has
+# failed at "Type not found : rui.macros.ViewRule" -- before a single assertion.
+-lib rui
+-lib nui
+# These tests compare generated Swift: App.swift, ContentView.swift, AppState.
+# That is the static path, which is decommissioned and no longer the default,
+# so it has to be asked for by name.
+-D sui_static
 --macro sui.macros.SwiftGenerator.register()
 -D swift-output=build/swift
 -main TestSwiftGen

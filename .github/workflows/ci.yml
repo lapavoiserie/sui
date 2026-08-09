@@ -18,10 +18,22 @@ jobs:
           mkdir -p ~/haxelib
           haxelib setup ~/haxelib
 
-      - name: Install hxcpp
+      - name: Install dependencies
         run: |
           haxelib install hxcpp --quiet
+          # rui and nui are sui's declared dependencies and are not on haxelib:
+          # without them the compiler stops at "Type not found :
+          # rui.macros.ViewRule", which is what every run here did since sui
+          # adopted them.
+          haxelib git rui https://github.com/lapavoiserie/rui.git --quiet
+          haxelib git nui https://github.com/lapavoiserie/nui.git --quiet
           haxelib dev sui .
 
-      - name: Run tests
+      - name: The Haxe half of the dynamic renderer
+        run: bash tests/run_dynamic.sh
+
+      - name: Both render paths
+        run: bash tests/run_paths.sh
+
+      - name: Generated Swift, on the decommissioned static path
         run: bash tests/run_tests.sh

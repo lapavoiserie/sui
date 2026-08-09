@@ -1,6 +1,10 @@
+# Compares generated Swift: the static path, which is no longer the default.
+-D sui_static
 -cp .
 -cp ../../src
 -lib hxcpp
+-lib rui
+-lib nui
 --macro sui.macros.SwiftGenerator.register()
 -D swift-output=build/swift
 -main TestTypedExpressions

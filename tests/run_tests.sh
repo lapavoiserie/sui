@@ -106,7 +106,7 @@ fi
 echo ""
 echo "--- Test 8: Shared memory bridge ---"
 cd tests
-if haxe -cp . -cp ../src -main TestSharedMemory -neko "${TMPDIR:-/tmp}/test_shared_memory.n" 2>&1 && neko "${TMPDIR:-/tmp}/test_shared_memory.n" 2>&1; then
+if haxe -cp . -cp ../src -lib rui -lib nui -main TestSharedMemory -neko "${TMPDIR:-/tmp}/test_shared_memory.n" 2>&1 && neko "${TMPDIR:-/tmp}/test_shared_memory.n" 2>&1; then
     echo "PASS: Shared memory tests passed"
     PASS=$((PASS + 1))
 else
