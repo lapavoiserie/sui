@@ -128,6 +128,12 @@ class ViewNodeBridge {
     // All of them forward to `sui.nui.ViewSource`. C may ask before `setApp`
     // has run, so a source always exists: its accessors already answer "" / 0
     // / false for a null node, which is what these returned before.
+    //
+    // The few that still read a field directly -- text, a button's label --
+    // resolve the node through the source first. A walker holds the node it was
+    // handed, not the one it expands to, so asking a ConditionalView for its
+    // text has to reach the branch: reading the raw node returned "" and drew
+    // an empty label with nothing to say why.
 
     static function reader():sui.nui.ViewSource {
         if (_source == null) _source = new sui.nui.ViewSource(null);
@@ -199,6 +205,7 @@ class ViewNodeBridge {
 
     /** Get the text content (for Text views). **/
     public static function getTextContent(node:View):String {
+        node = reader().resolveWalked(node);
         if (node == null) return "";
         var content:Dynamic = Reflect.field(node, "content");
         return content != null ? Std.string(content) : "";
@@ -206,6 +213,7 @@ class ViewNodeBridge {
 
     /** Get the swift expression for state-interpolated text. **/
     public static function getTextExpression(node:View):String {
+        node = reader().resolveWalked(node);
         if (node == null) return "";
         var expr:Dynamic = Reflect.field(node, "swiftExpression");
         if (expr == null) expr = Reflect.field(node, "composeExpression");
@@ -216,6 +224,7 @@ class ViewNodeBridge {
 
     /** Get button label. **/
     public static function getButtonLabel(node:View):String {
+        node = reader().resolveWalked(node);
         if (node == null) return "";
         var label:Dynamic = Reflect.field(node, "label");
         return label != null ? Std.string(label) : "";

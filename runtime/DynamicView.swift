@@ -750,14 +750,40 @@ private let _suiRuntimeBooted: Bool = {
     return true
 }()
 
+/// Rebuild the tree when the Haxe app writes a state, and tell the view.
+///
+/// A C function pointer, so it has to be a free function: it is handed to
+/// `viewnode_observe_state` and called from wherever `State.set()` ran. The
+/// rebuild is hopped onto the main thread, where every other traversal happens.
+///
+/// Coalesced: one `body()` per turn of the run loop, not one per write. A
+/// handler that writes three states in a row asked for one new tree, not three.
+private var _suiRebuildPending = false
+
+private func _suiStateDidChange(_ key: UnsafePointer<CChar>?, _ value: UnsafePointer<CChar>?) {
+    DispatchQueue.main.async {
+        if _suiRebuildPending { return }
+        _suiRebuildPending = true
+        DispatchQueue.main.async {
+            _suiRebuildPending = false
+            viewnode_rebuild()
+            NotificationCenter.default.post(name: .viewTreeDidReload, object: nil)
+        }
+    }
+}
+
 struct HotReloadRootView: View {
     @State private var reloadCount = 0
 
     // Pump the app's poll delegate on the main thread (drains the WS queue).
     private let pollTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
-    // Boot the runtime before the first body evaluation reads the view tree.
-    init() { _ = _suiRuntimeBooted }
+    // Boot the runtime before the first body evaluation reads the view tree,
+    // then listen for the app's own state writes.
+    init() {
+        _ = _suiRuntimeBooted
+        viewnode_observe_state(_suiStateDidChange)
+    }
 
     var body: some View {
         // Read reloadCount so a poll-driven bump re-evaluates body (re-reads the

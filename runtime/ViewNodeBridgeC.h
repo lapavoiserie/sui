@@ -53,6 +53,13 @@ int32_t viewnode_get_button_action_id(void* node);
 // Invoke a Button node's action closure directly (dynamic renderer path).
 void viewnode_invoke_action(void* node);
 
+// --- State writes ---
+// Called with (name, value) whenever the application writes a sui State.
+typedef void (*viewnode_state_observer_t)(const char* key, const char* value);
+// Register the observer. The renderer rebuilds the tree from it, since a
+// dynamic build has no generated AppState for the write to land in.
+void viewnode_observe_state(viewnode_state_observer_t observer);
+
 // --- Modifiers ---
 int32_t viewnode_modifier_count(void* node);
 const char* viewnode_modifier_type(void* node, int32_t index);

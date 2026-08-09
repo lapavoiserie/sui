@@ -468,6 +468,24 @@ class SwiftGenerator {
             sys.io.File.saveContent('$outputDir/AppState.swift', generateAppState(stateDecls));
         }
 
+        // Remove what the *other* path leaves behind.
+        //
+        // The CLI copies everything in this directory into the Xcode project,
+        // and skips the Haxe compile entirely when nothing changed -- so a file
+        // from the previous mode is copied for as long as it exists. A dynamic
+        // build then picked up a `HaxeBridgeC.swift` that writes to `AppState`,
+        // which a dynamic build does not generate: "cannot find 'AppState' in
+        // scope", in a mode the developer did not ask for. A leftover
+        // `HaxeBridgeC.cpp` was worse than a compile error -- the CLI reads its
+        // presence as "this is a bridge app" and compiles it in.
+        var stale = dynamicMode
+            ? ["AppState.swift", "HaxeBridgeC.swift", "HaxeBridgeC.cpp", "HaxeBridgeC.h"]
+            : ["SuiBootC.cpp"];
+        for (name in stale) {
+            var path = '$outputDir/$name';
+            if (sys.FileSystem.exists(path)) sys.FileSystem.deleteFile(path);
+        }
+
         // Hot-reload / dynamic renderer: emit the runtime bootstrap. This file
         // is the only per-app knowledge the dynamic bridge needs — the concrete
         // app class to instantiate — so the macro (which knows it) generates it;

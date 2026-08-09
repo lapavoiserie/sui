@@ -264,4 +264,39 @@ const char* viewnode_modifier_string(void* node, int32_t index, int32_t paramInd
     return result;
 }
 
+/* --- State writes -----------------------------------------------------------
+ *
+ * `sui.state.State.set()` calls `_hxsui_notify_swift(key, value)` on every
+ * application write, and that hook is compiled into libhaxe.a whatever the
+ * render path. The *static* path used it to update the generated `AppState`,
+ * an ObservableObject SwiftUI was already watching.
+ *
+ * The dynamic path has no AppState: the views are not generated, so there is no
+ * published field to write. The tree itself carries the state -- `body()` reads
+ * the Haxe cell -- so the answer to a write is to rebuild the tree and let the
+ * host know. That is what the renderer registers here.
+ *
+ * Without it a dynamic app drew its first frame and then never changed: a tap
+ * ran the Haxe closure, the state moved, and nothing on screen followed. The
+ * poll timer was the only way back, and it only fires for an app that streams
+ * its UI from somewhere else.
+ */
+extern "C" void haxe_bridge_register_state_fn(void (*cb)(const char*, const char*));
+
+// Declared here as well as in ViewNodeBridgeC.h: this file is compiled with the
+// hxcpp and generated-app include paths only, not with its own header's
+// directory, so the header is not reachable from here.
+typedef void (*viewnode_state_observer_t)(const char* key, const char* value);
+
+static viewnode_state_observer_t _viewnode_state_observer = 0;
+
+static void _viewnode_forward_state(const char* key, const char* value) {
+    if (_viewnode_state_observer) _viewnode_state_observer(key, value);
+}
+
+void viewnode_observe_state(viewnode_state_observer_t observer) {
+    _viewnode_state_observer = observer;
+    haxe_bridge_register_state_fn(_viewnode_forward_state);
+}
+
 } // extern "C"
