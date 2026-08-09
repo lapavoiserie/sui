@@ -23,6 +23,10 @@ new Button("Bounce", () -> scale.value = scale.value == 1.0 ? 1.3 : 1.0)
 When the closure sets `scale.value`, SwiftUI sees the change and animates the
 `scaleEffect` with a spring. This generates:
 
+> The Swift below is what the [decommissioned static path](render-paths.md)
+> emitted. The dynamic renderer applies the same modifier from the live tree,
+> reading the value rather than naming an `appState` field.
+
 ```swift
 Text("Hello")
     .scaleEffect(scale)

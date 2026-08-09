@@ -1,5 +1,11 @@
 # Bridge
 
+> **Which path this is.** The bridge below belongs to the
+> [decommissioned static path](render-paths.md), where generated Swift calls into Haxe by
+> action id. The dynamic renderer &mdash; the default &mdash; holds the live tree instead
+> and invokes a node's closure directly, with no id and no `Callbacks` store. See
+> [Dynamic renderer](dynamic-renderer.md).
+
 sui includes a **transparent bridge** between Swift and Haxe/C++. Most of the time, you just write normal Haxe code &mdash; closures, state updates, lifecycle handlers &mdash; and the framework handles the bridging automatically. No annotations required.
 
 ## Transparent Bridge (Automatic)

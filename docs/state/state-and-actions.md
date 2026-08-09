@@ -127,7 +127,10 @@ animation with `.animation(AnimationCurve.X, state)`; see [Animations](../animat
 
 ## Text.bind
 
-Displays state values in text. Pass any String-typed Haxe expression — sui's macro walks the typed AST and emits Swift string interpolation directly:
+Displays state values in text. Pass any String-typed Haxe expression.
+
+On the dynamic renderer — the default — the expression is simply **run**, each time the view is asked for its value, so there is nothing to translate. The
+[decommissioned static path](../render-paths.md) instead walked the typed AST and emitted Swift string interpolation, which is what the generated Swift below shows:
 
 ```haxe
 Text.bind('Count: ${count.value}')           // → Text("Count: \(count)")

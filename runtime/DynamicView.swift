@@ -1069,6 +1069,82 @@ private let _suiRuntimeBooted: Bool = {
     return true
 }()
 
+
+// MARK: - Frame dumps
+//
+// A way to see what the renderer drew on a machine that refuses every outside
+// capture. macOS has no equivalent of `simctl io screenshot` or `adb screencap`:
+// `screencapture` wants Screen Recording, AppleScript wants Accessibility, and
+// idb's macOS companion answers "takeScreenshot: is not implemented". An app,
+// though, may rasterise itself.
+//
+//     SUI_FRAME_DUMP=/tmp/frames  ./MyApp.app/Contents/MacOS/MyApp
+//
+// writes frame-0000.png at launch and one more after every state write, naming
+// each on stderr. Unset, nothing here runs and nothing is allocated.
+//
+// What it proves, and what it does not: `ImageRenderer` rasterises the SwiftUI
+// hierarchy -- the same `DynamicView`, built by the same renderer, from the same
+// live tree -- but it does not read the composited window. It shows that the
+// renderer produced the right pixels, not that the window server showed them.
+// `cacheDisplay(in:to:)` would read the window's backing store and is the wrong
+// tool here: SwiftUI does not draw into its hosting view's store, so it returns
+// a blank sheet.
+#if canImport(AppKit)
+import AppKit
+
+private var _suiFrameCount = 0
+
+/// Files written so far, capped so a long run cannot fill a disk.
+private let _suiFrameLimit = 200
+
+@MainActor
+private func _suiDumpFrame() {
+    guard let dir = ProcessInfo.processInfo.environment["SUI_FRAME_DUMP"] else { return }
+    if _suiFrameCount >= _suiFrameLimit {
+        if _suiFrameCount == _suiFrameLimit {
+            _suiFrameCount += 1
+            FileHandle.standardError.write(
+                "[sui] frame dump stopped at \(_suiFrameLimit) files\n".data(using: .utf8)!)
+        }
+        return
+    }
+
+    let content = DynamicView(node: ViewNode(pointer: viewnode_get_root()))
+        .frame(width: 460, alignment: .leading)
+        .padding(24)
+        .background(Color(nsColor: .textBackgroundColor))
+
+    let renderer = ImageRenderer(content: content)
+    renderer.scale = 2
+    guard let image = renderer.nsImage,
+          let tiff = image.tiffRepresentation,
+          let rep = NSBitmapImageRep(data: tiff),
+          let png = rep.representation(using: .png, properties: [:]) else { return }
+
+    let name = String(format: "frame-%04d.png", _suiFrameCount)
+    _suiFrameCount += 1
+    let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    do {
+        try png.write(to: url)
+        FileHandle.standardError.write("[sui] \(name)\n".data(using: .utf8)!)
+    } catch {
+        FileHandle.standardError.write(
+            "[sui] could not write \(url.path): \(error)\n".data(using: .utf8)!)
+    }
+}
+
+/// After SwiftUI has settled, not while it is still applying the change.
+@MainActor
+private func _suiDumpFrameSoon() {
+    guard ProcessInfo.processInfo.environment["SUI_FRAME_DUMP"] != nil else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { _suiDumpFrame() }
+}
+#else
+@MainActor private func _suiDumpFrameSoon() {}
+#endif
+
 /// One observable per state cell, so a write can reach the views that display
 /// that cell and no others.
 ///
@@ -1135,6 +1211,7 @@ private func _suiStateDidChange(_ key: UnsafePointer<CChar>?, _ value: UnsafePoi
         // where the cell was read.
         if viewnode_is_structural(name) == 0 {
             SuiCells.shared.bump(name)
+            _suiDumpFrameSoon()
             return
         }
 
@@ -1144,6 +1221,7 @@ private func _suiStateDidChange(_ key: UnsafePointer<CChar>?, _ value: UnsafePoi
             _suiRebuildPending = false
             viewnode_rebuild()
             NotificationCenter.default.post(name: .viewTreeDidReload, object: nil)
+            _suiDumpFrameSoon()
         }
     }
 }
@@ -1182,6 +1260,7 @@ struct HotReloadRootView: View {
             .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
                 withAnimation { reloadCount += 1 }
             }
+            .onAppear { _suiDumpFrameSoon() }
     }
 }
 

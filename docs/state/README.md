@@ -67,7 +67,9 @@ read it — on top of the Swift notification you already had.
 Two things are specific to sui and worth knowing:
 
 - **The Swift push is unconditional.** The shared core skips a write whose value compares
-  equal; sui mirrors *every* application write to `AppState` anyway. An `Array` can be
+  equal; sui pushes *every* application write across the bridge anyway — on the static path
+  that reaches `AppState`, on the dynamic one the renderer, which rebuilds or invalidates
+  from it. An `Array` can be
   mutated in place, so equality proves nothing, and arrays cross the bridge as an empty
   string whose only job is to bump Swift's version counter and trigger a re-read from
   shared memory. Skipping it would silently freeze the UI on

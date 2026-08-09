@@ -2,7 +2,9 @@
 
 > Build native Apple apps in Haxe. &mdash; [GitHub](https://github.com/Pign/sui) | [Documentation](https://pign.github.io/sui/#/)
 
-**sui** is a framework that lets you write SwiftUI applications entirely in Haxe. Your Haxe code compiles to C++ via hxcpp, bridges into Swift, and produces genuine native apps for macOS, iOS, iPadOS, and visionOS.
+**sui** is a framework that lets you write SwiftUI applications entirely in Haxe. Your Haxe code compiles to C++ via hxcpp and produces genuine native apps for macOS, iOS, iPadOS, and visionOS.
+
+Your `body()` runs on the device: it builds a view tree, and SwiftUI is built from it at runtime. A state write reaches the views that display it, and nothing else. See [Render paths](render-paths.md) for what that replaced, and why the transpiler that emitted SwiftUI ahead of time is kept but no longer used.
 
 ## Why sui?
 

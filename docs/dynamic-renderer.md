@@ -95,6 +95,40 @@ The result, on a real runtime: writing a cell only a `Text` displays does not ru
 `body()` at all, and the leaf re-reads it. Writing a `ForEach`'s list runs
 `body()`, because the shape changed.
 
+## Seeing what it drew
+
+macOS has no equivalent of `simctl io screenshot` or `adb screencap`. Every
+outside capture needs a permission the terminal may not have: `screencapture`
+wants Screen Recording, AppleScript wants Accessibility, and idb's macOS
+companion answers `takeScreenshot: is not implemented`. An app, though, may
+rasterise itself.
+
+```bash
+SUI_FRAME_DUMP=/tmp/frames ./build/macos/DerivedData/Build/Products/Debug/MyApp.app/Contents/MacOS/MyApp
+```
+
+Writes `frame-0000.png` at launch and one more after every state write, naming
+each on stderr:
+
+```
+[sui] frame-0000.png
+[sui] frame-0001.png     ← after a value write
+[sui] frame-0002.png     ← after a structural write
+```
+
+So a run leaves a frame-by-frame record of what the renderer produced, which is
+what you want when you cannot watch. Capped at 200 files. Unset, nothing runs.
+
+**What it proves, and what it does not.** `ImageRenderer` rasterises the SwiftUI
+hierarchy — the same `DynamicView`, built by the same renderer, from the same
+live tree — but it does not read the composited window. It shows that the
+renderer produced the right pixels, not that the window server showed them. On
+iOS and Android, `simctl` and `adb` capture the real screen and this is not
+needed.
+
+> `cacheDisplay(in:to:)` is the wrong tool here and returns a blank sheet:
+> SwiftUI does not draw into its hosting view's backing store.
+
 ## What is refused
 
 A view type the renderer has no branch for stops the build,

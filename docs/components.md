@@ -1,6 +1,12 @@
 # Components
 
-`ViewComponent` lets you create reusable views that generate separate SwiftUI structs.
+`ViewComponent` lets you create reusable views with state of their own.
+
+How one reaches the screen depends on the [render path](render-paths.md). The dynamic
+renderer &mdash; the default &mdash; **expands** it: `sui.nui.ViewSource` replaces the
+component with what its `body()` returns, so no renderer ever meets a `Counter`. The
+decommissioned static path generated a separate SwiftUI struct per component instead,
+reading `appState`; that is why the examples below show Swift structs.
 
 ## Creating a Component
 
