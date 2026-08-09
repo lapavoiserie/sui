@@ -308,8 +308,17 @@ struct DynamicView: View {
                 ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
                     DynamicView(node: child)
                         .tabItem {
-                            Label(node.tabTitle(at: index),
-                                  systemImage: node.tabIcon(at: index))
+                            // An empty systemImage is not "no icon" to SwiftUI:
+                            // it is an SF Symbol that does not exist, and the
+                            // tab renders as the unsupported-view placeholder.
+                            // `mui` passes "" for every tab, having no icon in
+                            // its own vocabulary.
+                            let icon = node.tabIcon(at: index)
+                            if icon.isEmpty {
+                                Text(node.tabTitle(at: index))
+                            } else {
+                                Label(node.tabTitle(at: index), systemImage: icon)
+                            }
                         }
                 }
             }

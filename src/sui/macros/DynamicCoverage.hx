@@ -183,6 +183,25 @@ class DynamicCoverage {
 	}
 
 	/**
+		Whether the renderer draws this class, or a class it inherits from.
+
+		The check is about the `viewType` a node carries, and a subclass carries
+		its parent's unless it sets its own. `mui.ui.TextInput` extends
+		`sui.ui.TextField` and reports `"TextField"` at runtime — judging it by
+		its Haxe name refuses a type the renderer draws, and names a type nobody
+		wrote. A class that renames itself sets `viewType`, and then nothing in
+		the chain matches.
+	**/
+	static function coveredByChain(cls:ClassType, covered:Map<String, Bool>):Bool {
+		var current = cls;
+		while (current != null) {
+			if (covered.exists(current.name)) return true;
+			current = current.superClass == null ? null : current.superClass.t.get();
+		}
+		return false;
+	}
+
+	/**
 		`sui.View` itself, which is not a node type.
 
 		`App.body()` and `ViewComponent.body()` both return one before anything
@@ -215,7 +234,7 @@ class DynamicCoverage {
 				// other: restricting this to `sui.ui` would watch only our code
 				// and leave a user's node to fail in silence, which is the
 				// failure this check exists to remove.
-				if (extendsView(cls) && !isComponent(cls) && !isBaseView(cls) && !covered.exists(cls.name)) {
+				if (extendsView(cls) && !isComponent(cls) && !isBaseView(cls) && !coveredByChain(cls, covered)) {
 					offenders.push({name: cls.name, pos: e.pos});
 				}
 			default:
