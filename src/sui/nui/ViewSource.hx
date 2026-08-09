@@ -131,6 +131,12 @@ class ViewSource implements NodeSource<View> {
 
 	/** One step of expansion, or null when the node stands for itself. **/
 	function expandOne(n:View):Null<View> {
+		// A bare `sui.View` carries no type of its own -- it is what `App.body()`
+		// and `ViewComponent.body()` return before anything overrides them. The
+		// renderer has no `View` branch, so left alone it drew a placeholder for
+		// what is really "nothing here yet".
+		if (isBare(n)) return n.children != null && n.children.length > 0 ? null : empty();
+
 		if (Std.isOfType(n, sui.ViewComponent)) {
 			var produced = n.body();
 			if (produced == null || produced == n) return null;

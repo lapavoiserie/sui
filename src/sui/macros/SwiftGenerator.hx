@@ -38,6 +38,11 @@ class SwiftGenerator {
         if (Context.defined("sui_hot_reload")) {
             Context.getModule("sui.runtime.ViewNodeBridge");
             Context.getModule("sui.state.Callbacks");
+
+            // And refuse a view the renderer cannot draw, rather than letting it
+            // reach the screen as a placeholder. Only on this path: the static
+            // one has no renderer vocabulary to be outside of.
+            sui.macros.DynamicCoverage.register();
         }
         var outputDir = Context.defined("swift-output") ? Context.definedValue("swift-output") : "build/swift";
 
@@ -494,13 +499,27 @@ class SwiftGenerator {
             sys.io.File.saveContent('$outputDir/SuiBootC.cpp', generateBootCpp(cls));
         }
 
-        // Generate Swift structs for ViewComponent subclasses
+        // Generate Swift structs for ViewComponent subclasses.
+        //
+        // Static path only. A component's struct reads `appState`, which a
+        // dynamic build does not generate -- and it would be dead code there
+        // anyway: `sui.nui.ViewSource` expands a component into its body()
+        // before the renderer sees it, so no Swift ever refers to the struct.
+        // Emitting it broke the build with "cannot find 'AppState' in scope",
+        // pointing at a file the developer never wrote.
         if (componentTypes != null) {
             for (compName in componentTypes.keys()) {
+                var compPath = '$outputDir/$compName.swift';
+                if (dynamicMode) {
+                    // Also clear one left by a previous static build: the CLI
+                    // copies whatever is here into the Xcode project.
+                    if (sys.FileSystem.exists(compPath)) sys.FileSystem.deleteFile(compPath);
+                    continue;
+                }
                 var compCls = componentTypes.get(compName);
                 var compSwift = generateComponent(compCls);
                 if (compSwift != null) {
-                    sys.io.File.saveContent('$outputDir/$compName.swift', compSwift);
+                    sys.io.File.saveContent(compPath, compSwift);
                 }
             }
         }
