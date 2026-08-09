@@ -298,6 +298,37 @@ const char* viewnode_tab_icon(void* node, int32_t index) {
     return result;
 }
 
+/* --- Fine-grained updates -------------------------------------------------
+ *
+ * SwiftUI cannot observe a state read that crosses this bridge, so it cannot
+ * know which view depends on which cell. Haxe works that out and answers here:
+ * which cells a node displays, and whether a write to a cell changes the tree's
+ * shape or only a value.
+ */
+const char* viewnode_value_deps(void* node) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::getValueDependencies(_asView(node)).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+int32_t viewnode_is_structural(const char* name) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    /* Rebuilding is the answer that cannot be wrong, so it is also the answer
+     * when the call itself fails. */
+    int32_t result = 1;
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::isStructural(::String(name)) ? 1 : 0;
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
 /* --- Named state ------------------------------------------------------------
  *
  * A sui control's binding is a name, not a cell: the transpiler turned it into

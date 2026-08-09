@@ -13,6 +13,20 @@ class View {
     public var modifierChain:Array<ViewModifier>;
     public var properties:Map<String, Dynamic>;
 
+    /**
+        Rebuilds this node with its values evaluated *now*.
+
+        Set by `sui.macros.LiveProps` on the dynamic path: the node itself is
+        constructed with neutral values, so building it reads no state, and this
+        carries the real expression. `sui.nui.ViewSource` calls it when a value
+        is asked for, which is what puts the state read inside the view that
+        displays it rather than inside the one that built the tree.
+
+        `null` on the static path, and on containers — re-running a container's
+        constructor would rebuild its children and discard their identity.
+    **/
+    public var liveBuild:Null<Void->View> = null;
+
     public function new() {
         children = [];
         modifierChain = [];

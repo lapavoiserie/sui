@@ -326,7 +326,10 @@ class StateMacro {
             });
         }
 
-        return newFields;
+        // Defer view values into thunks, so a read lands in the SwiftUI view
+        // that displays it rather than the one that built the tree. Dynamic
+        // path only; see sui.macros.LiveProps.
+        return LiveProps.apply(newFields);
     }
 
     /** Walk an Expr tree, tracking lambda-param scope (from

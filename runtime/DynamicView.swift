@@ -89,6 +89,14 @@ struct ViewNode: Identifiable {
         return String(cString: viewnode_tab_icon(ptr, Int32(index)))
     }
 
+    /// The cells this node displays, as Haxe worked them out.
+    var valueDependencies: [String] {
+        guard let ptr = pointer else { return [] }
+        let raw = String(cString: viewnode_value_deps(ptr))
+        if raw.isEmpty { return [] }
+        return raw.split(separator: ",").map(String.init)
+    }
+
     /// A value read as a number, for the many properties that are one.
     func number(_ key: String) -> Double? {
         Double(property(key))
@@ -174,6 +182,10 @@ struct DynamicView: View {
     let node: ViewNode
 
     var body: some View {
+        // Register on the cells this node displays. Observation records the
+        // reads, so a write to one of them re-evaluates this view -- and only
+        // the views that read it -- instead of the whole tree.
+        let _ = SuiCells.shared.track(node.valueDependencies)
         applyModifiers(to: renderContent())
     }
 
@@ -1057,6 +1069,52 @@ private let _suiRuntimeBooted: Bool = {
     return true
 }()
 
+/// One observable per state cell, so a write can reach the views that display
+/// that cell and no others.
+///
+/// A dictionary would not do: Observation tracks *properties*, so a store
+/// holding `[String: Int]` invalidates every reader of the dictionary on any
+/// change — which is the whole-tree behaviour this exists to replace. One object
+/// per cell gives one dependency per cell.
+///
+/// The value itself is not mirrored here. It stays in Haxe, and a view that has
+/// been invalidated reads it back through the bridge: two copies of a value are
+/// two things that can disagree, and the version counter is enough to say
+/// "ask again".
+@Observable
+final class SuiCell {
+    var version: Int = 0
+}
+
+final class SuiCells {
+    static let shared = SuiCells()
+    private var cells: [String: SuiCell] = [:]
+
+    func cell(_ name: String) -> SuiCell {
+        if let existing = cells[name] { return existing }
+        let made = SuiCell()
+        cells[name] = made
+        return made
+    }
+
+    /// Read the cells a node displays, so SwiftUI records the dependency.
+    ///
+    /// Called from a view's `body`: Observation notices the reads and
+    /// invalidates that view alone when one of them is bumped. The returned sum
+    /// is what makes the reads real — an access the compiler can discard
+    /// registers nothing.
+    @discardableResult
+    func track(_ names: [String]) -> Int {
+        var seen = 0
+        for name in names { seen &+= cell(name).version }
+        return seen
+    }
+
+    func bump(_ name: String) {
+        cell(name).version &+= 1
+    }
+}
+
 /// Rebuild the tree when the Haxe app writes a state, and tell the view.
 ///
 /// A C function pointer, so it has to be a free function: it is handed to
@@ -1068,7 +1126,18 @@ private let _suiRuntimeBooted: Bool = {
 private var _suiRebuildPending = false
 
 private func _suiStateDidChange(_ key: UnsafePointer<CChar>?, _ value: UnsafePointer<CChar>?) {
+    let name = key.map { String(cString: $0) } ?? ""
     DispatchQueue.main.async {
+        // A cell that shapes the tree -- a ForEach's list, a condition -- needs
+        // a new tree. A cell that is merely displayed does not: bumping it
+        // invalidates the views that read it, and they ask Haxe for the value
+        // again. Haxe decides which is which; it is the only side that can see
+        // where the cell was read.
+        if viewnode_is_structural(name) == 0 {
+            SuiCells.shared.bump(name)
+            return
+        }
+
         if _suiRebuildPending { return }
         _suiRebuildPending = true
         DispatchQueue.main.async {

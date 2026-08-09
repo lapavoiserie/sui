@@ -59,6 +59,12 @@ int32_t viewnode_tab_count(void* node);
 const char* viewnode_tab_title(void* node, int32_t index);
 const char* viewnode_tab_icon(void* node, int32_t index);
 
+// --- Fine-grained updates ---
+// Which cells a node displays, comma-joined; and whether a write to a cell
+// changes the tree's shape (1) or only a value (0).
+const char* viewnode_value_deps(void* node);
+int32_t viewnode_is_structural(const char* name);
+
 // --- Named state ---
 // A sui control binds by name; these resolve it against the state registry.
 const char* viewnode_state_value(const char* name);

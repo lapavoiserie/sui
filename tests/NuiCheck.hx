@@ -292,6 +292,53 @@ class NuiCheck {
 			ViewNodeBridge.getTextContent(ViewNodeBridge.getChild(first, 0)) == "carded",
 			ViewNodeBridge.getTextContent(ViewNodeBridge.getChild(first, 0)));
 
+		// --- the two tiers: what a write has to cost ---
+		//
+		// SwiftUI cannot see a state read that crosses a C bridge, so it cannot
+		// know which view depends on which cell. The split is worked out here
+		// instead: LiveProps moves every displayed value into a thunk, so what
+		// is left reading during body() is exactly what decides the tree's
+		// shape. A write to one of those rebuilds; a write to anything else
+		// reaches the node that displays it.
+		var tiered = new Tiered();
+		ViewNodeBridge.setApp(tiered);
+		var builds = Tiered.builds;
+
+		check("the list a ForEach iterates is structural",
+			ViewNodeBridge.isStructural("tieredItems"));
+		check("a value only a Text displays is not",
+			!ViewNodeBridge.isStructural("tieredLabel"));
+		check("a name nobody has read is treated as structural",
+			ViewNodeBridge.isStructural("neverRead"));
+
+		// The label node is the first child; its value must follow a write with
+		// no rebuild at all -- that is the whole point of deferring it.
+		var tieredRoot = ViewNodeBridge.getRoot();
+		var labelNode = ViewNodeBridge.getChild(tieredRoot, 0);
+		check("a deferred value reads through the thunk",
+			ViewNodeBridge.getTextContent(labelNode) == "label: one",
+			ViewNodeBridge.getTextContent(labelNode));
+
+		Tiered.label.set("two");
+		check("a write changes the value with no tree rebuild",
+			ViewNodeBridge.getTextContent(labelNode) == "label: two",
+			ViewNodeBridge.getTextContent(labelNode));
+		check("and body() did not run again", Tiered.builds == builds,
+			Std.string(Tiered.builds - builds));
+
+		check("the node reports the cell it displays",
+			ViewNodeBridge.getValueDependencies(labelNode) == "tieredLabel",
+			ViewNodeBridge.getValueDependencies(labelNode));
+
+		// A constant carries no dependency: there is nothing to ask again for.
+		check("a constant node depends on nothing",
+			ViewNodeBridge.getValueDependencies(ViewNodeBridge.getChild(tieredRoot, 1)) == "",
+			ViewNodeBridge.getValueDependencies(ViewNodeBridge.getChild(tieredRoot, 1)));
+
+		// A container is never deferred: re-running its constructor would
+		// rebuild its children and discard their identity.
+		check("a container carries no thunk", tieredRoot.liveBuild == null);
+
 		Sys.println(failures == 0 ? "\nall good" : '\n$failures failed');
 		Sys.exit(failures == 0 ? 0 : 1);
 	}
@@ -328,5 +375,32 @@ class Host extends sui.App {
 
 	override public function body():View {
 		return new VStack(null, null, [new Card("carded")]);
+	}
+}
+
+/**
+	An app with one cell of each kind.
+
+	`tieredLabel` is only ever displayed, so LiveProps moves it into a thunk and
+	it never reads during `body()`. `tieredItems` is what a `ForEach` iterates,
+	so it is read while the tree is expanded and a write to it changes the shape.
+**/
+class Tiered extends sui.App {
+	public static var builds = 0;
+	public static var label = new State<String>("one", "tieredLabel");
+	public static var items = new State<Array<String>>(["a", "b"], "tieredItems");
+
+	public function new() {
+		super();
+		appName = "Tiered";
+	}
+
+	override public function body():View {
+		builds++;
+		return new VStack(null, null, [
+			new Text("label: " + label.get()),
+			new Text("constant"),
+			new ForEach(items, (s:String) -> new Text(s))
+		]);
 	}
 }

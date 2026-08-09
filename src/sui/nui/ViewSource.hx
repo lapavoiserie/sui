@@ -2,6 +2,7 @@ package sui.nui;
 
 import nui.NodeSource;
 import sui.View;
+import sui.runtime.ReadScope;
 
 /**
 	Describes a `sui` view tree through
@@ -129,8 +130,112 @@ class ViewSource implements NodeSource<View> {
 		return current;
 	}
 
+	/**
+		The node a *value* should be read from: expanded, then through its thunk.
+
+		`LiveProps` builds a node with neutral values and hangs the real
+		expression on `liveBuild`. Calling it here is what puts the state read at
+		the moment the renderer asks — inside the SwiftUI view that displays the
+		value — rather than at the moment `body()` ran.
+
+		Deliberately **not** memoised, unlike the child lists. A memo would be
+		right if a value could only change with a new tree, and the whole point
+		is that it can change without one: the leaf asks again, and must get the
+		new answer.
+	**/
+	public function valueOf(n:View):View {
+		var resolved = resolveWalked(n);
+		if (resolved == null) return null;
+		return resolved.liveBuild != null ? resolved.liveBuild() : resolved;
+	}
+
+	/**
+		The cells a node's value depends on, by name.
+
+		Evaluated inside a `ReadScope`, so the answer is whatever the thunk
+		actually read — not a guess from the expression's shape. A node with no
+		thunk depends on nothing: its value was a constant.
+
+		This is what SwiftUI cannot work out for itself, and what lets a write
+		reach one view instead of the tree.
+	**/
+	public function valueDependencies(n:View):Array<String> {
+		var resolved = resolveWalked(n);
+		if (resolved == null || resolved.liveBuild == null) return [];
+		ReadScope.begin();
+		try {
+			resolved.liveBuild();
+		} catch (_:Dynamic) {}
+		return ReadScope.end();
+	}
+
+	/** Cells read while expanding the tree — see `structuralNames`. **/
+	var _walkStructural:Map<String, Bool>;
+
+	/**
+		The cells that decide the tree's **shape**, as far as this source knows.
+
+		Not everything structural is read during `body()`. A `ForEach` holds its
+		list and a `ConditionalView` its condition, and both are read lazily —
+		when the walk reaches them, which is after `body()` has returned. Left to
+		`body()` alone, adding an item to a list would have been classified as a
+		value change and the new row would never have appeared.
+
+		So expansion runs inside a scope of its own and merges here. A component's
+		`body()` counts too: what it reads shapes its subtree.
+	**/
+	public function structuralNames():Array<String> {
+		if (_walkStructural == null) return [];
+		return [for (name in _walkStructural.keys()) name];
+	}
+
+	/** Cells some node displays — see `classify`. **/
+	var _valueNames:Map<String, Bool>;
+
+	public function valueNames():Array<String> {
+		if (_valueNames == null) return [];
+		return [for (name in _valueNames.keys()) name];
+	}
+
+	/**
+		Walk the whole tree once, so both sets are complete before anyone asks.
+
+		Expansion is lazy: a `ForEach`'s list is read when the walk reaches it,
+		and a node's thunk when its value is asked for. Classifying a write
+		before that happened answered "not structural" for a list nobody had
+		looked at yet — and adding a row would have updated no row at all.
+
+		So the source classifies itself when it is built. It costs one traversal
+		and one thunk evaluation per node, which is what the renderer's first
+		frame does anyway; it buys an answer that does not depend on what has
+		been drawn yet.
+	**/
+	public function classify():Void {
+		if (_valueNames == null) _valueNames = new Map();
+		visit(_root, 0);
+	}
+
+	function visit(n:View, depth:Int):Void {
+		// A tree deep enough to hit this is a cycle, not a view.
+		if (n == null || depth > 512) return;
+		for (name in valueDependencies(n)) _valueNames.set(name, true);
+		var count = childCount(n);
+		for (i in 0...count) visit(childAt(n, i), depth + 1);
+	}
+
 	/** One step of expansion, or null when the node stands for itself. **/
 	function expandOne(n:View):Null<View> {
+		ReadScope.begin();
+		var produced = expandStep(n);
+		var read = ReadScope.end();
+		if (read.length > 0) {
+			if (_walkStructural == null) _walkStructural = new Map();
+			for (name in read) _walkStructural.set(name, true);
+		}
+		return produced;
+	}
+
+	function expandStep(n:View):Null<View> {
 		// A bare `sui.View` carries no type of its own -- it is what `App.body()`
 		// and `ViewComponent.body()` return before anything overrides them. The
 		// renderer has no `View` branch, so left alone it drew a placeholder for
@@ -382,12 +487,12 @@ class ViewSource implements NodeSource<View> {
 	}
 
 	public function hasProp(n:View, key:String):Bool {
-		n = resolveWalked(n);
+		n = valueOf(n);
 		return rawValue(n, key) != null;
 	}
 
 	public function stringProp(n:View, key:String):String {
-		n = resolveWalked(n);
+		n = valueOf(n);
 		var val = rawValue(n, key);
 		if (val == null) return "";
 		return describe(val);
@@ -421,7 +526,7 @@ class ViewSource implements NodeSource<View> {
 	}
 
 	public function intProp(n:View, key:String):Int {
-		n = resolveWalked(n);
+		n = valueOf(n);
 		var val = rawValue(n, key);
 		if (val == null) return 0;
 		if (Std.isOfType(val, Int)) return val;
@@ -431,7 +536,7 @@ class ViewSource implements NodeSource<View> {
 	}
 
 	public function floatProp(n:View, key:String):Float {
-		n = resolveWalked(n);
+		n = valueOf(n);
 		var val = rawValue(n, key);
 		if (val == null) return 0.0;
 		if (Std.isOfType(val, Float) || Std.isOfType(val, Int)) return val;
@@ -440,7 +545,7 @@ class ViewSource implements NodeSource<View> {
 	}
 
 	public function boolProp(n:View, key:String):Bool {
-		n = resolveWalked(n);
+		n = valueOf(n);
 		var val = rawValue(n, key);
 		if (val == null) return false;
 		if (Std.isOfType(val, Bool)) return val;

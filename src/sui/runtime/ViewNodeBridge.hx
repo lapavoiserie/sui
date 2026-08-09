@@ -52,12 +52,48 @@ class ViewNodeBridge {
         rebuild();
     }
 
+    /** Cells whose value decides the tree's shape — see `isStructural`. **/
+    static var _bodyStructural:Array<String> = [];
+
     /** Rebuild the view tree by calling body() on the app. **/
     public static function rebuild():Void {
         if (_app != null) {
+            // `body()` runs inside a scope, so what it reads is recorded. After
+            // LiveProps has moved every displayed value into a thunk, what is
+            // left reading here is exactly what decides the tree's shape.
+            //
+            // Reset first: body() can throw, and a scope left open would
+            // attribute the next generation's reads to the failed one.
+            sui.runtime.ReadScope.reset();
+            sui.runtime.ReadScope.begin();
             _root = _app.body();
+            _bodyStructural = sui.runtime.ReadScope.end();
             _source = new sui.nui.ViewSource(_root);
+            // Force the lazy parts, so a write arriving before the first frame
+            // is classified against a complete picture rather than an empty one.
+            _source.classify();
         }
+    }
+
+    /**
+        Whether a write to this cell changes the tree's *shape*.
+
+        The renderer asks before deciding what to do with a write: a structural
+        one rebuilds, a value one tells the views that display it to ask again.
+        Unknown answers "yes" — a name nobody has read yet is one this generation
+        has not reached, and rebuilding is the answer that cannot be wrong.
+    **/
+    public static function isStructural(name:String):Bool {
+        if (name == null || name == "") return true;
+        for (known in _bodyStructural) if (known == name) return true;
+        if (_source == null) return true;
+        for (known in _source.structuralNames()) if (known == name) return true;
+        // Displayed somewhere, and read nowhere that shapes the tree: a value
+        // write, which is the only case worth the narrow path.
+        for (known in _source.valueNames()) if (known == name) return false;
+        // Read nowhere at all. Rebuilding is the answer that cannot be wrong,
+        // and a cell nothing displays is not one anybody writes in a loop.
+        return true;
     }
 
     /** Optional per-frame delegate: pumps an external source (e.g. a WebSocket
@@ -205,7 +241,7 @@ class ViewNodeBridge {
 
     /** Get the text content (for Text views). **/
     public static function getTextContent(node:View):String {
-        node = reader().resolveWalked(node);
+        node = reader().valueOf(node);
         if (node == null) return "";
         var content:Dynamic = Reflect.field(node, "content");
         return content != null ? Std.string(content) : "";
@@ -213,7 +249,7 @@ class ViewNodeBridge {
 
     /** Get the swift expression for state-interpolated text. **/
     public static function getTextExpression(node:View):String {
-        node = reader().resolveWalked(node);
+        node = reader().valueOf(node);
         if (node == null) return "";
         var expr:Dynamic = Reflect.field(node, "swiftExpression");
         if (expr == null) expr = Reflect.field(node, "composeExpression");
@@ -224,7 +260,7 @@ class ViewNodeBridge {
 
     /** Get button label. **/
     public static function getButtonLabel(node:View):String {
-        node = reader().resolveWalked(node);
+        node = reader().valueOf(node);
         if (node == null) return "";
         var label:Dynamic = Reflect.field(node, "label");
         return label != null ? Std.string(label) : "";
@@ -233,6 +269,11 @@ class ViewNodeBridge {
     /** Get button action ID (for invoking via bridge). **/
     public static function getButtonActionId(node:View):Int {
         return reader().actionId(node);
+    }
+
+    /** The cells a node's value depends on, joined for the C bridge. **/
+    public static function getValueDependencies(node:View):String {
+        return reader().valueDependencies(node).join(",");
     }
 
     // --- Tabs ----------------------------------------------------------------

@@ -96,6 +96,20 @@ class State<T> extends rui.state.State<T> {
     }
 
     /**
+        Read, noting which cell was read while anything is listening.
+
+        The dynamic renderer needs to know that a given node displays *this*
+        cell, and SwiftUI cannot observe a read that crosses a C bridge. So the
+        read is noted here, by name, and `sui.runtime.ReadScope` hands the set
+        over. Costs a stack-depth check when nothing is recording, which is
+        every read outside a tree build or a deferred value.
+    **/
+    override public function get():T {
+        sui.runtime.ReadScope.note(this.name);
+        return super.get();
+    }
+
+    /**
         Write from application code: updates the shared reactive core, then
         mirrors the value to Swift.
 
