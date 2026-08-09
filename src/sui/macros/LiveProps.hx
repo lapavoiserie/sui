@@ -183,7 +183,7 @@ class LiveProps {
 	public static function apply(fields:Array<Field>):Array<Field> {
 		// Nothing to defer on the static path: the transpiler reads `body()`
 		// from the typed AST, and a thunk is exactly what it cannot translate.
-		if (!Context.defined("sui_hot_reload")) return fields;
+		if (RenderPath.isStatic()) return fields;
 
 		for (field in fields) {
 			switch (field.kind) {

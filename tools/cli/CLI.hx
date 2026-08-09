@@ -92,6 +92,7 @@ Options:
   --release            Build Release configuration
   --verbose / -v       Show xcodebuild output
   --xcode-only         Generate Xcode project without building
+  --static             Build through the decommissioned SwiftUI transpiler
 
 Signing:
   Add \"teamId\" to sui.json for device builds.

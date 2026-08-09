@@ -14,7 +14,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-# -D sui_hot_reload so LiveProps runs: the deferral it performs is one of the
-# things under test, and without it the checks would pass by describing a
-# build nobody ships.
-haxe -cp src -cp tests -lib rui -lib nui -D sui_hot_reload --interp -main NuiCheck
+# No define: the dynamic renderer is the default, so this is the build everyone
+# ships. LiveProps runs, and the deferral it performs is one of the things under
+# test.
+haxe -cp src -cp tests -lib rui -lib nui --interp -main NuiCheck

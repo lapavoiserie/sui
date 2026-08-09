@@ -1,9 +1,9 @@
 # Dynamic Renderer
 
-sui normally **compiles** your view tree to Swift ahead of time: the macro reads
-`body()` at build time and emits static SwiftUI. The **dynamic renderer** flips
-that around &mdash; it walks the Haxe view tree at **runtime** and rebuilds
-SwiftUI from it, with no per-view codegen.
+The dynamic renderer walks your Haxe view tree at **runtime** and builds SwiftUI
+from it, with no per-view codegen. It is how sui draws: the transpiler that read
+`body()` at build time and emitted static SwiftUI is
+[decommissioned](render-paths.md), behind `-D sui_static`.
 
 That makes sui usable as a **host for a UI that isn't known at compile time**: a
 hot-reload loop, or a renderer driven by a live protocol (this is how rsx2ui's
@@ -25,14 +25,16 @@ be true for that, and each is worth knowing:
   `$appState.userName`. There is no `appState` here, so the name is resolved
   against the registry every `State` joins when it is constructed.
 
-Enable it with `--watch`:
+Nothing to enable:
 
 ```bash
-sui build macos --watch
+sui build macos
 ```
 
-Output records which path it was built for, so switching back and forth
-recompiles rather than reusing the other mode's Swift.
+`--watch` is still accepted and names what already happens. `--static` opts back
+in to the transpiler, which warns that it is decommissioned. Output records
+which path it was built for, so switching back and forth recompiles rather than
+reusing the other mode's Swift.
 
 ## Nodes with no rendering of their own
 
@@ -65,9 +67,37 @@ of the run loop, so a handler writing three states asks for one new tree.
 The poll delegate below is still there, and is still what an app streaming its
 UI from elsewhere needs. An app with a fixed `body()` no longer needs one.
 
+## Fine-grained updates
+
+A state write used to rebuild the whole tree, for a label changing by one
+character. It no longer does, and the mechanism is worth knowing because SwiftUI
+cannot provide it on its own: a read that crosses a C bridge is invisible to it,
+so it cannot know which view depends on which cell.
+
+Three pieces:
+
+1. **Values are deferred.** `sui.macros.LiveProps` rewrites a view whose value is
+   computed from state — `new Text("count: " + n.get())` — into a node built with
+   neutral values, carrying the real expression in `liveBuild`. Containers and
+   constants are left alone.
+2. **Two tiers.** Once every displayed value has moved into a thunk, what is left
+   reading during `body()` is exactly what decides the tree's *shape*: a
+   `ForEach`'s list, a `ConditionalView`'s condition. `sui.runtime.ReadScope`
+   records the two evaluations separately, so a write can be classified. A name
+   read nowhere counts as structural — rebuilding is the answer that cannot be
+   wrong.
+3. **One observable per cell.** Each `DynamicView` reads the cells its node
+   declares, so Observation invalidates that view alone. The value itself is not
+   mirrored on the Swift side: a version counter says "ask again", and two copies
+   of a value are two things that can disagree.
+
+The result, on a real runtime: writing a cell only a `Text` displays does not run
+`body()` at all, and the leaf re-reads it. Writing a `ForEach`'s list runs
+`body()`, because the shape changed.
+
 ## What is refused
 
-Under `--watch`, a view type the renderer has no branch for stops the build,
+A view type the renderer has no branch for stops the build,
 naming it and listing what is covered:
 
 ```
@@ -223,7 +253,7 @@ The bridge surface, all `extern "C"`:
 
 ## What the build wires up
 
-Under `--watch`, the CLI treats the app as a native-bridge build:
+The CLI treats the app as a native-bridge build:
 
 - compiles the hxcpp static library (`libhaxe.a`) plus `ViewNodeBridgeC.cpp` and
   the generated `SuiBootC.cpp`;
@@ -233,5 +263,6 @@ Under `--watch`, the CLI treats the app as a native-bridge build:
 It works without any action closures (the static bridge is suppressed in this
 mode) &mdash; the ViewNode bridge and direct dispatch replace it.
 
-> **See also:** the [Bridge](bridge.md) doc covers the *static* bridge used by
-> normal (compiled) apps. The dynamic renderer is the runtime counterpart.
+> **See also:** [Render paths](render-paths.md) for why the transpiler was set
+> aside and what it still wins, and [Bridge](bridge.md) for the static bridge it
+> used.

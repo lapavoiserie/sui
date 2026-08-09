@@ -30,12 +30,12 @@ class SwiftGenerator {
         // build that emits Swift is checked, by construction.
         rui.macros.ViewRule.register("sui.App", "body");
 
-        // Dynamic renderer (hot reload): the native host reaches ViewNodeBridge
+        // Dynamic renderer: the native host reaches ViewNodeBridge
         // and the Callbacks store only through the generated C bridge — via
         // reflection and direct C++ symbols — never from Haxe. Nothing imports
         // them, so force the modules into the compilation (getModule) and past
         // DCE (both classes are @:keep) so their C++ symbols exist to link.
-        if (Context.defined("sui_hot_reload")) {
+        if (sui.macros.RenderPath.isDynamic()) {
             Context.getModule("sui.runtime.ViewNodeBridge");
             Context.getModule("sui.state.Callbacks");
 
@@ -164,7 +164,7 @@ class SwiftGenerator {
         // closures. So we suppress the static bridge files (which would also
         // clash: duplicate haxe_bridge_invoke_action, references to an AppState
         // that isn't generated when there's no @:state).
-        var dynamicMode = Context.defined("sui_hot_reload");
+        var dynamicMode = sui.macros.RenderPath.isDynamic();
         var className = cls.name;
         var appName = className;
         var bundleId = 'com.example.${className.toLowerCase()}';
@@ -495,7 +495,7 @@ class SwiftGenerator {
         // is the only per-app knowledge the dynamic bridge needs — the concrete
         // app class to instantiate — so the macro (which knows it) generates it;
         // the boot logic itself is a fixed framework template.
-        if (Context.defined("sui_hot_reload")) {
+        if (dynamicMode) {
             sys.io.File.saveContent('$outputDir/SuiBootC.cpp', generateBootCpp(cls));
         }
 

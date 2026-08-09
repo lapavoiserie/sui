@@ -18,6 +18,7 @@ using StringTools;
     --device=NAME   Build for a specific device name
     --release       Build Release configuration
     --xcode-only    Generate Xcode project without building
+    --static        Build through the decommissioned SwiftUI transpiler
     --verbose / -v  Show xcodebuild output
 **/
 class Build {
@@ -26,7 +27,11 @@ class Build {
         var xcodeOnly = args.indexOf("--xcode-only") != -1;
         var verbose = args.indexOf("--verbose") != -1 || args.indexOf("-v") != -1;
         var release = args.indexOf("--release") != -1;
-        var hotReload = args.indexOf("--watch") != -1 || args.indexOf("--hot-reload") != -1;
+        // The dynamic renderer is the path. `--watch` and `--hot-reload` are
+        // still accepted -- they name what already happens -- and `--static`
+        // opts back in to the decommissioned transpiler.
+        var staticPath = args.indexOf("--static") != -1;
+        var hotReload = !staticPath;
         var configuration = release ? "Release" : "Debug";
 
         // Device flag: --device or --device=MyiPhone
@@ -84,7 +89,7 @@ class Build {
             var haxeArgs = ["build.hxml", "-D", 'sui_$platform'];
             // Dynamic renderer: SwiftGenerator emits SuiBootC.cpp and force-keeps
             // the bridge classes only under this define.
-            if (hotReload) { haxeArgs.push("-D"); haxeArgs.push("sui_hot_reload"); }
+            if (staticPath) { haxeArgs.push("-D"); haxeArgs.push("sui_static"); }
             // For non-macOS targets, tell hxcpp to cross-compile for the correct platform
             if (platform == "ios") {
                 haxeArgs.push("-D");
@@ -452,7 +457,7 @@ class Build {
             File.copy(bridgeHeader, '$buildDir/Sources/ViewNodeBridgeC.h');
         }
 
-        // In hot reload mode, override the ContentView to use HotReloadRootView
+        // Point ContentView at the runtime renderer rather than generated views
         var contentView = '$buildDir/Sources/ContentView.swift';
         if (FileSystem.exists(contentView)) {
             var content = File.getContent(contentView);
@@ -470,7 +475,7 @@ class Build {
             File.saveContent(contentView, hotReloadWrapper);
         }
 
-        Sys.println("  [hot-reload] DynamicView renderer enabled");
+        Sys.println("  [renderer] DynamicView walks the tree at runtime");
     }
 
     static function copyUserSwiftFiles(cwd:String, buildDir:String) {
