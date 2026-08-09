@@ -10,11 +10,74 @@ hot-reload loop, or a renderer driven by a live protocol (this is how rsx2ui's
 native A2UI renderer is built &mdash; a WebSocket feeds surfaces that become a
 sui view tree at runtime).
 
+It also runs an ordinary sui app, which it did not use to. Three things had to
+be true for that, and each is worth knowing:
+
+- **It draws every view sui produces.** The renderer's vocabulary was the
+  protocol's &mdash; it knew `Board` and `Canvas`, and 12 of sui's 51 view
+  types. A `List` or a `Picker` drew a placeholder. All of them are covered now,
+  and a type outside the vocabulary is [refused at compile
+  time](#what-is-refused) rather than drawn as `?Type`.
+- **A state write reaches the screen.** `State.set()` rebuilds the tree, with no
+  poll delegate to register. See [Reacting to state](#reacting-to-state).
+- **Bindings resolve.** A sui control names its cell &mdash; `new
+  TextField("Name", "userName")` &mdash; because the transpiler turned that into
+  `$appState.userName`. There is no `appState` here, so the name is resolved
+  against the registry every `State` joins when it is constructed.
+
 Enable it with `--watch`:
 
 ```bash
 sui build macos --watch
 ```
+
+Output records which path it was built for, so switching back and forth
+recompiles rather than reusing the other mode's Swift.
+
+## Nodes with no rendering of their own
+
+A `ViewComponent`, a `ForEach` and a `ConditionalView` are read *at compile
+time* by the transpiler: a component becomes a Swift struct, a loop becomes
+`ForEach(0..<n)`, a condition becomes an `if`. A walker cannot read them that
+way, so `sui.nui.ViewSource` expands them before the renderer sees them &mdash;
+a component into its `body()`, a loop into siblings, a condition into the branch
+it selects. The renderer needs no branch for an `if`, and none for a component.
+
+Two shapes exist only for the transpiler and cannot be resolved at runtime:
+
+| Shape | What happens |
+|---|---|
+| `new ForEach(items, "i", Text.withState("{items[i].title}"))` | The body is a string template with nothing to resolve it against. No items are built, rather than putting `{items[i].title}` on screen. |
+| `new ConditionalView("name", …)` where `name` is in no registry | Neither branch is taken. `false` would be a guess about half the screen. |
+
+Prefer the closure form, `new ForEach(items, item -> …)`, and pass the cell
+itself rather than its name where you can.
+
+## Reacting to state
+
+`sui.state.State.set()` notifies the C bridge on every application write. On the
+static path that updated the generated `AppState`, an `ObservableObject` SwiftUI
+was already watching. A dynamic build generates no views, so there is no
+published field to write &mdash; the renderer observes those writes itself,
+rebuilds the tree, and posts to the host. Rebuilds are coalesced to one per turn
+of the run loop, so a handler writing three states asks for one new tree.
+
+The poll delegate below is still there, and is still what an app streaming its
+UI from elsewhere needs. An app with a fixed `body()` no longer needs one.
+
+## What is refused
+
+Under `--watch`, a view type the renderer has no branch for stops the build,
+naming it and listing what is covered:
+
+```
+src/MyApp.hx:32: The dynamic renderer cannot draw "Badge".
+  Covered types: AdaptiveStack, AngularGradient, Board, Button, …
+  Add a case to the switch in sui/runtime/DynamicView.swift.
+```
+
+The covered set is read from `DynamicView.swift` itself, so it cannot drift from
+what the renderer actually draws.
 
 ## How it works
 
