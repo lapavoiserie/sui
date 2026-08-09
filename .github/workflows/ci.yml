@@ -26,7 +26,10 @@ jobs:
           # rui.macros.ViewRule", which is what every run here did since sui
           # adopted them.
           haxelib git rui https://github.com/lapavoiserie/rui.git --quiet
-          haxelib git nui https://github.com/lapavoiserie/nui.git --quiet
+          # --skip-dependencies: nui declares rui, and haxelib would go looking
+          # for it in the public database, where neither of them is published.
+          # rui is installed by the line above.
+          haxelib git nui https://github.com/lapavoiserie/nui.git --quiet --skip-dependencies
           haxelib dev sui .
 
       - name: The Haxe half of the dynamic renderer
