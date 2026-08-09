@@ -148,8 +148,14 @@ class Build {
             }
 
             // Create static library from hxcpp object files (excluding __main__.o)
-            var cppObjDir = '$cwd/build/cpp/obj';
-            if (FileSystem.exists(cppObjDir)) {
+            // hxcpp keeps one directory per toolchain under obj/, and a project
+            // built for more than one platform keeps them all: darwinarm64
+            // beside iphonesim-c11. Archiving the lot mixes arm64 and x86_64
+            // objects, and `ar` answers "Inappropriate file type or format" --
+            // which reads as a broken build rather than as two builds in one
+            // box. Take only the toolchain this target uses.
+            var cppObjDir = objDirFor('$cwd/build/cpp/obj', platform, forDevice);
+            if (cppObjDir != null && FileSystem.exists(cppObjDir)) {
                 // Collect all .o files
                 var oFiles:Array<String> = [];
                 collectObjectFiles(cppObjDir, oFiles);
@@ -327,12 +333,52 @@ class Build {
             return ["-destination", 'generic/platform=${platform == "ios" ? "iOS" : "visionOS"}'];
         }
 
-        // Simulator — use x86_64 arch to match hxcpp's iphonesim toolchain output
+        // Simulator. The arch is x86_64 to match hxcpp's iphonesim toolchain,
+        // which builds for it whatever the host.
+        //
+        // The device is *asked for*, not named here. A hardcoded "iPhone 16"
+        // fails on any machine whose Xcode ships a different set -- with
+        // "Unable to find a device matching the provided destination
+        // specifier", which points at the destination rather than at the fact
+        // that the name is a guess about someone else's install.
         return switch (platform) {
-            case "ios": ["-destination", "platform=iOS Simulator,name=iPhone 16,arch=x86_64"];
-            case "visionos": ["-destination", "platform=visionOS Simulator,name=Apple Vision Pro"];
+            case "ios":
+                var device = firstAvailableSimulator("iPhone");
+                device == null
+                    ? ["-destination", "generic/platform=iOS Simulator"]
+                    : ["-destination", 'platform=iOS Simulator,id=$device,arch=x86_64'];
+            case "visionos":
+                var device = firstAvailableSimulator("Apple Vision");
+                device == null
+                    ? ["-destination", "generic/platform=visionOS Simulator"]
+                    : ["-destination", 'platform=visionOS Simulator,id=$device'];
             default: [];
         }
+    }
+
+    /**
+        A simulator that actually exists on this machine, preferring a booted one.
+
+        `simctl` answers with what is installed rather than what we hoped for,
+        and a booted device is almost always the one the developer is looking at.
+    **/
+    static function firstAvailableSimulator(nameContains:String):Null<String> {
+        for (onlyBooted in [true, false]) {
+            try {
+                var args = ["simctl", "list", "devices", "available"];
+                if (onlyBooted) args.push("booted");
+                var proc = new sys.io.Process("xcrun", args);
+                var out = proc.stdout.readAll().toString();
+                proc.close();
+                var udid = ~/\(([0-9A-F]{8}-[0-9A-F-]{27})\)/i;
+                for (line in out.split("\n")) {
+                    if (line.indexOf(nameContains) < 0) continue;
+                    if (line.indexOf("unavailable") >= 0) continue;
+                    if (udid.match(line)) return udid.matched(1);
+                }
+            } catch (_:Dynamic) {}
+        }
+        return null;
     }
 
     /** Find a connected device UUID by parsing xcodebuild destination list. **/
@@ -681,6 +727,36 @@ class Build {
     }
 
     /** Recursively collect .o files, excluding __main__.o **/
+    /**
+        The hxcpp toolchain directory this target's objects are in.
+
+        Named by hxcpp, not by us: `darwinarm64` / `darwin64` for macOS,
+        `iphonesim-*` for the simulator, `iphoneos-*` for a device. Matching by
+        prefix rather than listing exact names keeps this working when hxcpp
+        changes a suffix, which is where the `-c11` comes from.
+
+        Returns null when nothing matches, so the caller reports a missing build
+        rather than archiving another platform's objects.
+    **/
+    static function objDirFor(objRoot:String, platform:String, forDevice:Bool):Null<String> {
+        if (!FileSystem.exists(objRoot)) return null;
+
+        var prefixes = switch (platform) {
+            case "ios": forDevice ? ["iphoneos"] : ["iphonesim"];
+            case "visionos": forDevice ? ["xros", "appletvos"] : ["xrsim", "iphonesim"];
+            default: ["darwin", "mac"];
+        };
+
+        for (entry in FileSystem.readDirectory(objRoot)) {
+            var path = '$objRoot/$entry';
+            if (!FileSystem.isDirectory(path)) continue;
+            for (prefix in prefixes) {
+                if (StringTools.startsWith(entry, prefix)) return path;
+            }
+        }
+        return null;
+    }
+
     static function collectObjectFiles(dir:String, result:Array<String>) {
         for (entry in FileSystem.readDirectory(dir)) {
             var path = '$dir/$entry';
