@@ -95,6 +95,14 @@ The result, on a real runtime: writing a cell only a `Text` displays does not ru
 `body()` at all, and the leaf re-reads it. Writing a `ForEach`'s list runs
 `body()`, because the shape changed.
 
+A value arriving from a **control** takes the same two roads. It enters through
+`State._applyFromSwift`, which deliberately does not push back to the platform
+— echoing a value at the control that produced it is the loop that fights a
+text field for its cursor — so the control's write-back tells the renderer
+directly instead. Without that, a label reading the same cell as a text field
+stayed on its old value while the field showed the new one, with nothing wrong
+on the Haxe side to find.
+
 ## Seeing what it drew
 
 macOS has no equivalent of `simctl io screenshot` or `adb screencap`. Every
