@@ -111,7 +111,15 @@ class LiveProps {
 	/** Is this expression already a constant? Then there is nothing to defer. **/
 	static function isConstant(e:Expr):Bool {
 		return switch (e.expr) {
-			case EConst(CString(_) | CInt(_) | CFloat(_)): true;
+			// A single-quoted string is not a constant until the compiler has
+			// looked inside it: Haxe keeps `'n = ${count.get()}'` as a CString
+			// through the build pass, interpolation and all. Calling that
+			// constant deferred nothing, so the read stayed in body() -- which
+			// made the cell structural, so every write rebuilt the tree and the
+			// whole screen flickered for a label changing by one digit.
+			case EConst(CString(value, kind)):
+				kind != SingleQuotes || value.indexOf("$") < 0;
+			case EConst(CInt(_) | CFloat(_)): true;
 			case EConst(CIdent("true" | "false" | "null")): true;
 			case _: false;
 		};
@@ -124,8 +132,13 @@ class LiveProps {
 			switch (Context.follow(t)) {
 				case TInst(ref, _):
 					var cls = ref.get();
-					// Only sui's own views. Anything else is not ours to rewrite.
-					if (cls.pack.join(".") != "sui.ui") return null;
+					// A sui view, or something that extends one. Restricting this to
+					// the `sui.ui` package meant a framework layered on top got no
+					// deferral at all: `mui.ui.Text` is a `sui.ui.Text`, but it is
+					// not *in* sui.ui, so every value stayed computed during body()
+					// -- which made every cell structural, so every write rebuilt
+					// the tree and the app lost its fine grain entirely.
+					if (!isSuiView(cls)) return null;
 					var ctor = cls.constructor;
 					if (ctor == null) return null;
 					switch (Context.follow(ctor.get().type)) {
@@ -137,6 +150,16 @@ class LiveProps {
 		} catch (_:Dynamic) {
 			return null;
 		}
+	}
+
+	/** A view sui ships, or a subclass of one. **/
+	static function isSuiView(cls:haxe.macro.Type.ClassType):Bool {
+		var current = cls;
+		while (current != null) {
+			if (current.pack.join(".") == "sui.ui") return true;
+			current = current.superClass == null ? null : current.superClass.t.get();
+		}
+		return false;
 	}
 
 	static function rewrite(e:Expr):Expr {

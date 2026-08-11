@@ -316,10 +316,26 @@ struct DynamicView: View {
                 DynamicView(node: node.child(at: 0))
             }
 
+        // The selection lives outside the tree, because the tree is replaced.
+        //
+        // A TabView with no `selection:` keeps its own, tied to the view's
+        // identity -- and a structural write hands SwiftUI a new root with a new
+        // id, so the whole hierarchy is recreated and the selection goes back to
+        // the first tab. Touching a control sent you to tab one.
         case "TabView":
-            TabView {
+            // Read the selection *here*, in the body, so Observation records the
+            // dependency. Reading it only inside the binding's getter registers
+            // nothing -- that closure runs outside body evaluation -- so the
+            // TabView never learned the selection had changed and tapping a tab
+            // did nothing at all.
+            let selectedTab = SuiTabs.shared.index
+            TabView(selection: Binding(
+                get: { selectedTab },
+                set: { SuiTabs.shared.index = $0 }
+            )) {
                 ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
                     DynamicView(node: child)
+                        .tag(index)
                         .tabItem {
                             // An empty systemImage is not "no icon" to SwiftUI:
                             // it is an SF Symbol that does not exist, and the
@@ -1166,6 +1182,18 @@ private func _suiDumpFrameSoon() {
 #else
 @MainActor private func _suiDumpFrameSoon() {}
 #endif
+
+/// Which tab is showing, kept where a tree rebuild cannot reach it.
+///
+/// One selection for the whole app, as on `aui`. A second TabView would share
+/// it; nothing in the vocabulary makes that likely, and the alternative -- a
+/// selection per node -- has nowhere stable to live, since a node's identity is
+/// its pointer and that changes on every rebuild.
+@Observable
+final class SuiTabs {
+    static let shared = SuiTabs()
+    var index = 0
+}
 
 /// One observable per state cell, so a write can reach the views that display
 /// that cell and no others.
