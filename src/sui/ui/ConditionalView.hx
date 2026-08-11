@@ -35,7 +35,16 @@ import sui.View;
     ```
 **/
 class ConditionalView extends View {
-    public var stateName:String;
+    /**
+        The condition: a `State<Bool>` to read, or the name of one.
+
+        Typed `Dynamic` because it holds either, and because a `String` field
+        cannot hold a `State` on a static target. It could on the JVM and under
+        `--interp`, which is why the tests were green while the condition
+        rendered nothing at all on a device: the value went in and came back
+        null, so neither branch was taken and the line simply was not there.
+    **/
+    public var stateName:Dynamic;
     public var matchValue:String;
     public var trueView:View;
     public var falseView:View;
