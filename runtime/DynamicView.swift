@@ -152,6 +152,19 @@ struct ViewNode: Identifiable {
         let name = property(key)
         if name.isEmpty { return }
         viewnode_set_state(name, value)
+        // And tell the views that display this cell.
+        //
+        // A value arriving from a control goes in through `applyExternal`, which
+        // deliberately does *not* push back to the platform: echoing it at the
+        // control that produced it is the loop that fights a text field for its
+        // cursor. But every *other* view showing the same cell learns nothing,
+        // so a label reading the field's text stayed on the old value while the
+        // field showed the new one.
+        //
+        // The control itself re-reads what it just wrote, which is why nothing
+        // is mirrored on this side: there is only one copy, so there is nothing
+        // to disagree with.
+        _suiStateChanged(name)
     }
 
     var modifierCount: Int {
@@ -1211,13 +1224,17 @@ final class SuiCells {
 private var _suiRebuildPending = false
 
 private func _suiStateDidChange(_ key: UnsafePointer<CChar>?, _ value: UnsafePointer<CChar>?) {
-    let name = key.map { String(cString: $0) } ?? ""
+    _suiStateChanged(key.map { String(cString: $0) } ?? "")
+}
+
+/// What a changed cell costs, whichever side changed it.
+///
+/// A cell that shapes the tree -- a ForEach's list, a condition -- needs a new
+/// tree. A cell that is merely displayed does not: bumping it invalidates the
+/// views that read it, and they ask Haxe for the value again. Haxe decides
+/// which is which; it is the only side that can see where the cell was read.
+private func _suiStateChanged(_ name: String) {
     DispatchQueue.main.async {
-        // A cell that shapes the tree -- a ForEach's list, a condition -- needs
-        // a new tree. A cell that is merely displayed does not: bumping it
-        // invalidates the views that read it, and they ask Haxe for the value
-        // again. Haxe decides which is which; it is the only side that can see
-        // where the cell was read.
         if viewnode_is_structural(name) == 0 {
             SuiCells.shared.bump(name)
             _suiDumpFrameSoon()
