@@ -13,7 +13,13 @@ import AVFoundation
 // MARK: - ViewNode wrapper
 
 /// Opaque wrapper around a Haxe View pointer from the bridge.
-struct ViewNode: Identifiable {
+/// A handle on a Haxe view node.
+///
+/// Deliberately **not** `Identifiable`: the only identity it could offer itself
+/// is its pointer, and that changes on every rebuild. Identity belongs to a
+/// node's *place* among its siblings, which only the parent walking them knows
+/// — see `identity(at:)`.
+struct ViewNode {
     let pointer: UnsafeMutableRawPointer?
 
     // Stable identity across rebuilds: the app tags each node with a "nodeId"
@@ -21,11 +27,23 @@ struct ViewNode: Identifiable {
     // pointer — unstable across rebuilds, but such nodes carry no view state to
     // preserve. A stable id lets SwiftUI diff the tree and keep input focus/text
     // through a rebuild instead of tearing everything down.
-    var id: String {
+    /// A node's identity, for SwiftUI's diffing.
+    ///
+    /// The pointer is **not** it. A rebuild allocates a fresh tree, so every
+    /// pointer changes, so every view looks new to SwiftUI and the whole screen
+    /// is torn down and put back — which is the flicker you see when a list
+    /// gains a row. Rebuilding the tree is not supposed to cost that: SwiftUI
+    /// will happily diff a new tree against the old one and touch only what
+    /// differs, given identities that survive.
+    ///
+    /// So identity is **positional**, which is what
+    /// [nui's contract](https://lapavoiserie.github.io/nui/#/pull-mode) says it
+    /// is: `keyOf` returns null because sui's trees carry no sibling keys yet.
+    /// A node that does carry an explicit `nodeId` — a protocol-fed tree, where
+    /// rows genuinely move — keeps it, and gets real identity instead.
+    func identity(at index: Int) -> String {
         let nid = property("nodeId")
-        if !nid.isEmpty { return nid }
-        if let p = pointer { return "ptr-\(UInt(bitPattern: p))" }
-        return "nil"
+        return nid.isEmpty ? "#\(index)" : nid
     }
 
     var viewType: String {
@@ -207,22 +225,22 @@ struct DynamicView: View {
         switch node.viewType {
         case "VStack":
             VStack(spacing: spacingFromProperties()) {
-                ForEach(node.children) { child in
-                    DynamicView(node: child)
+                ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                    DynamicView(node: child).id(child.identity(at: index))
                 }
             }
 
         case "HStack":
             HStack(spacing: spacingFromProperties()) {
-                ForEach(node.children) { child in
-                    DynamicView(node: child)
+                ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                    DynamicView(node: child).id(child.identity(at: index))
                 }
             }
 
         case "ZStack":
             ZStack {
-                ForEach(node.children) { child in
-                    DynamicView(node: child)
+                ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                    DynamicView(node: child).id(child.identity(at: index))
                 }
             }
 
@@ -522,8 +540,8 @@ struct DynamicView: View {
         case "ScrollView":
             ScrollView {
                 VStack {
-                    ForEach(node.children) { child in
-                        DynamicView(node: child)
+                    ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                        DynamicView(node: child).id(child.identity(at: index))
                     }
                 }
             }
@@ -532,8 +550,8 @@ struct DynamicView: View {
             // Unknown view type — render children if any
             if node.childCount > 0 {
                 VStack {
-                    ForEach(node.children) { child in
-                        DynamicView(node: child)
+                    ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                        DynamicView(node: child).id(child.identity(at: index))
                     }
                 }
             } else {
@@ -619,8 +637,8 @@ struct DynamicView: View {
     /// The node's children, as the content of a container.
     @ViewBuilder
     private func childViews() -> some View {
-        ForEach(node.children) { child in
-            DynamicView(node: child)
+        ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+            DynamicView(node: child).id(child.identity(at: index))
         }
     }
 
@@ -1303,7 +1321,9 @@ struct HotReloadRootView: View {
         // Tint native controls with the theme accent (surface primaryColor).
         let accent = Color(suiHex: String(cString: viewnode_theme_accent()))
         DynamicView(node: root)
-            .id(root.id)
+            // Constant: there is one root, and it stays the root. Keying it on
+            // the node meant a new tree replaced the whole hierarchy.
+            .id("sui-root")
             .tint(accent)
             .onReceive(pollTimer) { _ in
                 // Animate tree updates: with stable node identities, SwiftUI
@@ -1398,7 +1418,7 @@ struct SuiPicker: View {
 
     var body: some View {
         Picker(node.property("label"), selection: node.boundValue) {
-            ForEach(node.children) { child in
+            ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
                 Text(child.textContent).tag(child.textContent)
             }
         }
