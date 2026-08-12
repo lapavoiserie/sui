@@ -86,7 +86,13 @@ class Build {
             Sys.println("[1/3] Compiling Haxe (C++ & Swift generation)...");
             Sys.setCwd(cwd);
             // Pass platform define for conditional compilation (#if sui_ios, #if sui_macos, #if sui_visionos)
-            var haxeArgs = ["build.hxml", "-D", 'sui_$platform'];
+            var buildFile = resolveBuildFile();
+            if (buildFile == null) {
+                Sys.println("Error: no build file. Looked for build-sui.hxml, then build.hxml.");
+                Sys.exit(1);
+            }
+            Sys.println('  Compiling $buildFile');
+            var haxeArgs = [buildFile, "-D", 'sui_$platform'];
             // Dynamic renderer: SwiftGenerator emits SuiBootC.cpp and force-keeps
             // the bridge classes only under this define.
             if (staticPath) { haxeArgs.push("-D"); haxeArgs.push("sui_static"); }
@@ -647,6 +653,26 @@ class Build {
 
     /** Check if hxcpp output is up-to-date (all .hx source files are older than build output). **/
     /** What the output in `build/` was produced for. **/
+    /**
+        The build file to compile: this backend's own, or the generic one.
+
+        Compiling `build.hxml` unconditionally is right for a project targeting
+        one backend, and quietly wrong for one targeting several. `mui`'s
+        kitchen sink has three, and the generic name could only belong to one of
+        them -- so the other two tools compiled *this* one's target, packaged
+        whatever artefact was already lying about, and reported success. A
+        backend that had not compiled in months looked healthy.
+
+        A backend now prefers the file named after it. The generic name still
+        works, and is what a single-target project keeps.
+    **/
+    static function resolveBuildFile():Null<String> {
+        for (name in ["build-sui.hxml", "build.hxml"]) {
+            if (FileSystem.exists(name)) return name;
+        }
+        return null;
+    }
+
     static function buildStamp(platform:String, hotReload:Bool):String {
         return platform + "|" + (hotReload ? "dynamic" : "static");
     }
