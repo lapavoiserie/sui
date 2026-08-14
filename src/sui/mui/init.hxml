@@ -1,0 +1,14 @@
+# What `mui init` writes as `build-sui.hxml`.
+#
+# It lives here rather than in `mui` because what a build for this backend needs
+# -- which libraries, which generator macro, which output -- is ours to state,
+# and `mui` had no way of keeping six of these honest. `$MAIN` is the only thing
+# substituted.
+-cp src
+-lib mui
+-lib sui
+-D mui_backend=sui
+--macro sui.macros.SwiftGenerator.register()
+--macro mui.macros.Bind.all()
+--main $MAIN
+-cpp build/sui
