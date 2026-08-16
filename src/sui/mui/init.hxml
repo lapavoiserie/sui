@@ -7,8 +7,10 @@
 -cp src
 -lib mui
 -lib sui
+-lib kui
 -D mui_backend=sui
 --macro sui.macros.SwiftGenerator.register()
 --macro mui.macros.Bind.all()
+--macro sui.kui.Platform.registerWithKui()
 --main $MAIN
 -cpp build/sui

@@ -67,3 +67,16 @@ class HelloApp extends App {
 - **[Bridge](bridge.md)** &mdash; Transparent Haxe/C++ bridge (automatic closures + explicit exports).
 - **[Native Extensions](native-extensions.md)** &mdash; Custom Swift files and SPM packages.
 - **[Examples](examples/README.md)** &mdash; 18 example apps.
+
+## Native capabilities
+
+Anything that is not a view — the battery, the camera, secure storage — lives in
+[`kui`](https://lapavoiserie.github.io/kui/), keyed by operating system so the
+same implementation serves a `sui` application and any other backend building
+for macOS or iOS.
+
+hxcpp compiles a capability's C and Objective-C++ into `libhaxe.a`, and **Xcode**
+performs the link, so a capability that needs a framework or a Swift Package
+says so in its `xcode` payload. `sui`'s CLI reads it and merges it into the
+generated `project.yml` before xcodegen runs — which is why the payload has to
+be read *after* the Haxe compilation that writes it, not before.
