@@ -8,7 +8,8 @@
     "dependencies": {
         "hxcpp": "",
         "rui": "",
-        "nui": ""
+        "nui": "",
+        "kui": ""
     },
     "main": "tools.cli.CLI",
     "contributors": [],

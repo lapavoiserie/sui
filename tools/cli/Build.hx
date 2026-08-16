@@ -53,6 +53,7 @@ class Build {
         }
 
         var config = readProjectConfig(cwd);
+        mergeKuiPayload(cwd, config);
         var target = if (forDevice) '$platform device' else '$platform simulator';
         if (platform == "macos") target = "macos";
         Sys.println('Building ${config.appName} for $target...');
@@ -277,6 +278,7 @@ class Build {
 
         // Copy user-provided Swift files from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
+        copyKuiSwiftFiles(cwd, buildDir);
 
         // Generate project.yml
         File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge));
@@ -538,6 +540,57 @@ class Build {
                     File.copy('$swiftDir/$file', '$buildDir/Sources/$file');
                 }
             }
+        }
+    }
+
+    /**
+        Fold a kui capability's Xcode payload into the project configuration.
+
+        `sui.json` already carries `frameworks` and `swiftPackages`, and a
+        capability wants exactly those two things plus its own Swift sources. So
+        nothing downstream has to learn anything: the payload is merged here and
+        the project generator sees one list, however it was declared.
+
+        The sidecar is what `kui` writes beside the generated C++, with every path
+        already absolute. It is read rather than `Build.xml`, because Xcode never
+        opens that file and a `${haxelib:x}` path would reach it unexpanded.
+
+        A project with no capabilities finds no sidecar and nothing changes.
+    **/
+    static function mergeKuiPayload(cwd:String, config:ProjectConfig):Void {
+        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+        if (!payload.any()) return;
+
+        var frameworks = payload.strings("xcode", "frameworks");
+        if (frameworks.length > 0) {
+            if (config.frameworks == null) config.frameworks = [];
+            for (framework in frameworks)
+                if (config.frameworks.indexOf(framework) < 0) config.frameworks.push(framework);
+        }
+
+        var packages = payload.objects("xcode", "packages");
+        if (packages.length > 0) {
+            if (config.swiftPackages == null) config.swiftPackages = [];
+            for (pkg in packages)
+                config.swiftPackages.push({
+                    url: Std.string(Reflect.field(pkg, "url")),
+                    from: Std.string(Reflect.field(pkg, "from")),
+                    product: Std.string(Reflect.field(pkg, "product")),
+                });
+        }
+
+        Sys.println("  [kui] " + payload.names().join(", "));
+    }
+
+    /** Swift a capability ships, copied beside the application's own. **/
+    static function copyKuiSwiftFiles(cwd:String, buildDir:String) {
+        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+        for (source in payload.strings("xcode", "sources")) {
+            if (!FileSystem.exists(source)) {
+                Sys.println('  [kui] missing source: $source');
+                continue;
+            }
+            File.copy(source, '$buildDir/Sources/' + haxe.io.Path.withoutDirectory(source));
         }
     }
 
