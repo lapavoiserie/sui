@@ -53,7 +53,6 @@ class Build {
         }
 
         var config = readProjectConfig(cwd);
-        mergeKuiPayload(cwd, config);
         var target = if (forDevice) '$platform device' else '$platform simulator';
         if (platform == "macos") target = "macos";
         Sys.println('Building ${config.appName} for $target...');
@@ -279,6 +278,15 @@ class Build {
         // Copy user-provided Swift files from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
         copyKuiSwiftFiles(cwd, buildDir);
+
+        // Read what kui capabilities need — here, and not beside
+        // readProjectConfig where it started. The sidecar is written by the Haxe
+        // compilation in step 1, so reading it before that ran meant reading the
+        // *previous* build's payload: nothing at all on a first build, and the
+        // wrong platform's after switching targets. It cost an iOS build that
+        // linked no UIKit while the macOS one linked IOKit correctly, which
+        // looked like an iOS problem and was an ordering one.
+        mergeKuiPayload(cwd, config);
 
         // Generate project.yml
         File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge));
