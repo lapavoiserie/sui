@@ -1,6 +1,6 @@
 # sui
 
-> Build native Apple apps in Haxe. &mdash; [GitHub](https://github.com/Pign/sui) | [Documentation](https://pign.github.io/sui/#/)
+> Build native Apple apps in Haxe. &mdash; [GitHub](https://github.com/lapavoiserie/sui) | [Documentation](https://lapavoiserie.github.io/sui/#/)
 
 **sui** is a framework that lets you write SwiftUI applications entirely in Haxe. Your Haxe code compiles to C++ via hxcpp and produces genuine native apps for macOS, iOS, iPadOS, and visionOS.
 

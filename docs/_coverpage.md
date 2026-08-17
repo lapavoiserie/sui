@@ -10,5 +10,5 @@ Write SwiftUI applications entirely in Haxe. Your code compiles to C++ via hxcpp
 - Shared-memory data access
 - SPM packages and native Swift extensions
 
-[GitHub](https://github.com/Pign/sui)
+[GitHub](https://github.com/lapavoiserie/sui)
 [Get Started](getting-started.md)
