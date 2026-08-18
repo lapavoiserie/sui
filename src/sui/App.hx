@@ -7,23 +7,7 @@ package sui;
     Example:
     ```haxe
     class MyApp extends sui.App {
-    /**
-        What this application owns for as long as it runs.
 
-        An effect an application starts — watching connectivity, a subscription,
-        a timer — has to be stopped, and there is exactly one moment every
-        backend agrees on: the application is over.
-
-        ```haxe
-        lifetime.ownEffect(new Effect(() -> { … Effect.onCleanup(stop); }));
-        ```
-
-        **A view lifetime exists too**, through `lifetime.keep(key, start)`: it
-        lasts as long as `body()` keeps declaring that key. Not as long as the
-        view is on screen — those differ, and the difference is deliberate. See
-        `rui.Lifetime.keep`.
-       **/
-    public final lifetime = new rui.Lifetime();
 
         override function body():View {
             return new Text("Hello from Haxe!");
@@ -33,6 +17,22 @@ package sui;
 **/
 @:autoBuild(sui.macros.StateMacro.build())
 class App {
+    /**
+        What this application owns for as long as it runs.
+
+        An effect an application starts — watching connectivity, a subscription,
+        a timer — has to be stopped, and there is exactly one moment every
+        backend agrees on: the application is over.
+
+            lifetime.ownEffect(new Effect(() -> { … Effect.onCleanup(stop); }));
+
+        **A view lifetime exists too**, through `lifetime.keep(key, start)`: it
+        lasts as long as `body()` keeps declaring that key. Not as long as the
+        view is on screen — those differ, and the difference is deliberate. See
+        `rui.Lifetime.keep`.
+       **/
+    public final lifetime = new rui.Lifetime();
+
     public var appName:String;
     public var bundleIdentifier:String;
 

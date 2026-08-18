@@ -113,10 +113,34 @@ class ViewNodeBridge {
     /** Pump the poll delegate and rebuild if it reports a change. Returns true
         when the tree changed, so the native host can trigger a re-render. **/
     public static function poll():Bool {
+        pumpHaxeEvents();
         if (_poll == null) return false;
         var changed = _poll();
         if (changed) rebuild();
         return changed;
+    }
+
+    static var _pumpBroken = false;
+
+    /** Let Haxe's own scheduled work run. Without this a `haxe.Timer` an
+        application creates never fires — silently. The entry point pumps the
+        loop after `main()` returns, and under sui the Haxe `main` never runs at
+        all: Swift boots the runtime and asks for the tree. The host's 100ms
+        poll timer is the one periodic visit Haxe gets, so the pump lives here.
+        On a threaded target — every hxcpp build — the timer registers with the
+        current thread's event loop, not `haxe.MainLoop`. **/
+    static function pumpHaxeEvents():Void {
+        if (_pumpBroken) return;
+        try {
+            #if (target.threaded && !cppia)
+            sys.thread.Thread.current().events.progress();
+            #elseif !js
+            @:privateAccess haxe.MainLoop.tick();
+            #end
+        } catch (e:Dynamic) {
+            _pumpBroken = true;
+            trace("[sui] no Haxe event loop on this thread; haxe.Timer will not fire: " + e);
+        }
     }
 
     /** Optional sink for input edits: a native control (TextField, Toggle…)
