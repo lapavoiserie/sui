@@ -24,7 +24,7 @@ class App {
         a timer — has to be stopped, and there is exactly one moment every
         backend agrees on: the application is over.
 
-            lifetime.ownEffect(new Effect(() -> { … Effect.onCleanup(stop); }));
+            lifetime.own(new Effect(() -> { … Effect.onCleanup(stop); }).dispose);
 
         **A view lifetime exists too**, through `lifetime.keep(key, start)`: it
         lasts as long as `body()` keeps declaring that key. Not as long as the
