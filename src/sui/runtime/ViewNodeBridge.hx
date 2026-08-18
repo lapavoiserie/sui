@@ -73,6 +73,9 @@ class ViewNodeBridge {
             // Force the lazy parts, so a write arriving before the first frame
             // is classified against a complete picture rather than an empty one.
             _source.classify();
+            // After classify, not after body(): that is where the lazy parts
+            // were forced, so it is where a component has finished declaring.
+            _app.lifetime.endPass();
         }
     }
 
