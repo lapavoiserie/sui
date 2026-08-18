@@ -66,6 +66,7 @@ class ViewNodeBridge {
             // attribute the next generation's reads to the failed one.
             sui.runtime.ReadScope.reset();
             sui.runtime.ReadScope.begin();
+            _app.lifetime.beginPass();
             _root = _app.body();
             _bodyStructural = sui.runtime.ReadScope.end();
             _source = new sui.nui.ViewSource(_root);
