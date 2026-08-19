@@ -134,6 +134,72 @@ void* viewnode_root_for(const char* id) {
     return result;
 }
 
+// --- Command sets (the menu bar's data) ---
+
+int32_t viewnode_command_set_count(void) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    int32_t result = 0;
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::commandSetCount();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+const char* viewnode_command_set_id(int32_t set) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::commandSetId(set).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+int32_t viewnode_command_count(int32_t set) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    int32_t result = 0;
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::commandCount(set);
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+const char* viewnode_command_label(int32_t set, int32_t index) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::commandLabel(set, index).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+const char* viewnode_command_shortcut(int32_t set, int32_t index) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    const char* result = "";
+    try {
+        result = ::sui::runtime::ViewNodeBridge_obj::commandShortcut(set, index).__CStr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
+void viewnode_command_invoke(int32_t set, int32_t index) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::invokeCommand(set, index);
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+}
+
 // --- Node accessors ---
 
 const char* viewnode_get_type(void* node) {

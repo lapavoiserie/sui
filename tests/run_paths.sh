@@ -103,16 +103,26 @@ if app=$(emitted_app SurfaceFixture); then
 	else
 		echo "  ok   no static-path artifact (SettingsView/AppState) in the dynamic App.swift"
 	fi
+	if echo "$app" | grep -q 'DynamicAppCommands()'; then
+		echo "  ok   a Commands declaration becomes the menu bar (DynamicAppCommands)"
+	else
+		echo "  FAIL no DynamicAppCommands in the dynamic App.swift"; echo "$app" | sed 's/^/         /'; failures=1
+	fi
 else
 	echo "  FAIL SurfaceFixture should have compiled"; failures=1
 fi
 
-# And an app declaring nothing gets no Settings scene at all.
+# And an app declaring nothing gets no Settings scene and no menu bar at all.
 if app=$(emitted_app PathFixture); then
 	if echo "$app" | grep -q 'Settings {'; then
 		echo "  FAIL a Settings scene was emitted for an app declaring none"; failures=1
 	else
 		echo "  ok   no declaration, no Settings scene"
+	fi
+	if echo "$app" | grep -q 'DynamicAppCommands'; then
+		echo "  FAIL a menu bar was emitted for an app declaring none"; failures=1
+	else
+		echo "  ok   no declaration, no menu bar"
 	fi
 else
 	echo "  FAIL PathFixture should have compiled"; failures=1

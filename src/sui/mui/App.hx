@@ -13,9 +13,11 @@ class App extends sui.App {
     public function new() {
         super();
         // The bridge is sui core and may not import mui, so the mui layer
-        // installs the hook that turns declarations into extra roots. Every
-        // mui app sets the same static — idempotent by construction.
+        // installs the hooks that turn declarations into extra roots and
+        // command sets. Every mui app sets the same statics — idempotent by
+        // construction.
         sui.runtime.ViewNodeBridge.extraRootsOf = muiRoots;
+        sui.runtime.ViewNodeBridge.commandSetsOf = muiCommandSets;
     }
 
     /** Set the application title. Maps to sui's appName. **/
@@ -47,6 +49,31 @@ class App extends sui.App {
             case Tree(_, id, content): [{id: id, content: content}];
             case _: [];
         };
+    }
+
+    /**
+        The declared command sets, for the generated menu bar
+        (`DynamicAppCommands` enumerates them through the bridge). Cardinality
+        Many is natural here — every CommandSet declaration is served, in
+        declaration order. The mapping into the bridge's structural
+        `CommandEntry` is an explicit copy, not a cast: `mui.surface.Command`
+        has final fields, and building anonymous objects sidesteps the
+        class-to-structure unification question entirely.
+    **/
+    static function muiCommandSets(app:Dynamic):Array<{id:String, commands:() -> Array<sui.runtime.ViewNodeBridge.CommandEntry>}> {
+        var mine:App = cast app;
+        var sets = [];
+        for (d in mine.surfaces()) switch (d) {
+            case CommandSet(id, commands):
+                sets.push({
+                    id: id,
+                    commands: function() {
+                        return [for (c in commands()) ({label: c.label, shortcut: c.shortcut, action: c.action} : sui.runtime.ViewNodeBridge.CommandEntry)];
+                    },
+                });
+            case _:
+        }
+        return sets;
     }
 
     /**

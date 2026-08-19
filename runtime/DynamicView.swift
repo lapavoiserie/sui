@@ -1372,6 +1372,103 @@ struct DynamicSurfaceView: View {
     }
 }
 
+/// Re-evaluation trigger for the menu bar: SwiftUI re-invokes a Commands body
+/// when an @ObservedObject it holds publishes — the reload notification (one
+/// per structural rebuild, where the command sets were just resampled) bumps
+/// the generation. Honest scope: this is the mechanism SwiftUI documents for
+/// dynamic menus on macOS 12+; if a host ignores ObservedObject in Commands,
+/// the menu keeps its launch-time labels while the ACTIONS stay live — they
+/// invoke by index into the current sample, never a captured closure.
+final class SuiCommandsModel: ObservableObject {
+    static let shared = SuiCommandsModel()
+    @Published var generation = 0
+    private var observer: NSObjectProtocol?
+
+    private init() {
+        observer = NotificationCenter.default.addObserver(
+            forName: .viewTreeDidReload, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.generation += 1
+        }
+    }
+}
+
+/// The menu bar, built from the app's CommandSet declarations through the
+/// bridge's index enumeration. One CommandMenu carries every set (the
+/// CommandsBuilder has no ForEach, so per-set menus cannot be built from a
+/// runtime count — sets are separated by dividers instead; the menu takes the
+/// single set's id as its title, "Commands" when there are several or none).
+///
+/// Chord mapping, deliberate: the portable chord names the platform's PRIMARY
+/// modifier, so "ctrl" is ⌘ here (.command), "alt" is ⌥, "shift" is ⇧. Keys
+/// are a single character or enter/escape/tab. A chord outside the grammar
+/// degrades to a menu item WITHOUT a shortcut — on a menu bar the label still
+/// shows and clicks, which is better degradation than a key-only backend can
+/// offer.
+struct DynamicAppCommands: Commands {
+    @ObservedObject private var model = SuiCommandsModel.shared
+
+    var body: some Commands {
+        CommandMenu(Self.menuTitle()) {
+            let _ = model.generation
+            let sets = Int(viewnode_command_set_count())
+            ForEach(0..<max(sets, 0), id: \.self) { set in
+                if set > 0 { Divider() }
+                let count = Int(viewnode_command_count(Int32(set)))
+                ForEach(0..<max(count, 0), id: \.self) { index in
+                    Self.commandButton(set: set, index: index)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    static func commandButton(set: Int, index: Int) -> some View {
+        let label = String(cString: viewnode_command_label(Int32(set), Int32(index)))
+        let chord = String(cString: viewnode_command_shortcut(Int32(set), Int32(index)))
+        let button = Button(label) { viewnode_command_invoke(Int32(set), Int32(index)) }
+        if let parsed = parseChord(chord) {
+            button.keyboardShortcut(parsed.key, modifiers: parsed.modifiers)
+        } else {
+            button
+        }
+    }
+
+    /// "ctrl+n" -> (⌘, "n"); nil for "" or anything outside the grammar.
+    static func parseChord(_ chord: String) -> (key: KeyEquivalent, modifiers: EventModifiers)? {
+        if chord.isEmpty { return nil }
+        var parts = chord.lowercased().split(separator: "+").map(String.init)
+        guard let last = parts.popLast(), !last.isEmpty else { return nil }
+        var modifiers: EventModifiers = []
+        for part in parts {
+            switch part {
+            case "ctrl": modifiers.insert(.command)
+            case "alt": modifiers.insert(.option)
+            case "shift": modifiers.insert(.shift)
+            default: return nil
+            }
+        }
+        let key: KeyEquivalent
+        switch last {
+        case "enter": key = .return
+        case "escape", "esc": key = .escape
+        case "tab": key = .tab
+        default:
+            guard last.count == 1, let ch = last.first else { return nil }
+            key = KeyEquivalent(ch)
+        }
+        return (key, modifiers)
+    }
+
+    static func menuTitle() -> String {
+        if Int(viewnode_command_set_count()) == 1 {
+            let id = String(cString: viewnode_command_set_id(0))
+            if !id.isEmpty { return id.prefix(1).uppercased() + id.dropFirst() }
+        }
+        return "Commands"
+    }
+}
+
 // MARK: - sui controls
 //
 // Each takes its value through `node.boundValue`, so none of them knows whether

@@ -44,6 +44,19 @@ class ViewNodeBridge {
     **/
     public static var extraRootsOf:Dynamic -> Array<{id:String, content:() -> View}> = null;
 
+    /** Every declared command set, sampled with the roots — see `rebuild`. **/
+    static var _commandSets:Array<CommandSetRecord> = [];
+
+    /**
+        The mui layer's hook for declaring command sets — same layering as
+        `extraRootsOf`: the bridge is sui core and may not import `mui`, so
+        `sui.mui.App` installs a provider that maps the app's CommandSet
+        declarations into the structural `CommandEntry` shape. The generated
+        macOS menu bar (`DynamicAppCommands`) enumerates the result through
+        the C entry points below.
+    **/
+    public static var commandSetsOf:Dynamic -> Array<{id:String, commands:() -> Array<CommandEntry>}> = null;
+
     /**
         sui's view of itself through the shared node model — the Primary's.
 
@@ -55,13 +68,18 @@ class ViewNodeBridge {
         return _roots.length > 0 ? _roots[0].source : null;
     }
 
-    /** Set the app instance, discover its roots, and build the trees. **/
+    /** Set the app instance, discover its roots and command sets, and build. **/
     public static function setApp(app:Dynamic):Void {
         _app = app;
         _roots = [new SurfaceRoot("body", function() return _app.body())];
         if (extraRootsOf != null) {
             for (extra in extraRootsOf(app))
                 _roots.push(new SurfaceRoot(extra.id, extra.content));
+        }
+        _commandSets = [];
+        if (commandSetsOf != null) {
+            for (set in commandSetsOf(app))
+                _commandSets.push(new CommandSetRecord(set.id, set.commands));
         }
         rebuild();
     }
@@ -93,6 +111,17 @@ class ViewNodeBridge {
             // is classified against a complete picture rather than an empty one.
             root.source.classify();
         }
+        // Command sets sample inside the same pass, for the same reason the
+        // roots rebuild together: a `keep` declared while building a menu is
+        // swept like any other if its pass closes without it. What a set's
+        // thunk reads decides the menu's *content*, so those reads are
+        // structural — recorded per set and consulted by `isStructural`.
+        for (set in _commandSets) {
+            sui.runtime.ReadScope.begin();
+            set.current = set.commands();
+            set.structural = sui.runtime.ReadScope.end();
+            if (set.current == null) set.current = [];
+        }
         // After the last classify, not after each body(): that is where the
         // lazy parts were forced, so it is where declaring has finished.
         _app.lifetime.endPass();
@@ -119,11 +148,60 @@ class ViewNodeBridge {
             if (!displayed)
                 for (known in root.source.valueNames()) if (known == name) { displayed = true; break; }
         }
+        // A cell read while sampling a command set shapes the menu the same
+        // way a body read shapes a tree.
+        for (set in _commandSets)
+            for (known in set.structural) if (known == name) return true;
         // Displayed somewhere, and read nowhere that shapes a tree: a value
         // write, which is the only case worth the narrow path. Read nowhere
         // at all: rebuilding is the answer that cannot be wrong, and a cell
         // nothing displays is not one anybody writes in a loop.
         return !displayed;
+    }
+
+    // --- Command sets (the menu bar's data, called from C) ---
+    //
+    // Enumeration by index, strings out, an int-indexed invoke back in — the
+    // same closure-never-crosses rule as everything else on this bridge. The
+    // arrays behind the indices are this generation's samples; a menu held
+    // open across a rebuild may name an index the new sample no longer has,
+    // so every accessor bounds-guards and an out-of-range invoke is a no-op.
+
+    public static function commandSetCount():Int {
+        return _commandSets.length;
+    }
+
+    public static function commandSetId(set:Int):String {
+        if (set < 0 || set >= _commandSets.length) return "";
+        return _commandSets[set].id;
+    }
+
+    public static function commandCount(set:Int):Int {
+        if (set < 0 || set >= _commandSets.length) return 0;
+        return _commandSets[set].current.length;
+    }
+
+    public static function commandLabel(set:Int, index:Int):String {
+        var entry = commandAt(set, index);
+        return entry == null ? "" : entry.label;
+    }
+
+    /** "" when the command has no shortcut. **/
+    public static function commandShortcut(set:Int, index:Int):String {
+        var entry = commandAt(set, index);
+        return entry == null || entry.shortcut == null ? "" : entry.shortcut;
+    }
+
+    public static function invokeCommand(set:Int, index:Int):Void {
+        var entry = commandAt(set, index);
+        if (entry != null) entry.action();
+    }
+
+    static function commandAt(set:Int, index:Int):Null<CommandEntry> {
+        if (set < 0 || set >= _commandSets.length) return null;
+        var current = _commandSets[set].current;
+        if (index < 0 || index >= current.length) return null;
+        return current[index];
     }
 
     /** Optional per-frame delegate: pumps an external source (e.g. a WebSocket
@@ -421,5 +499,34 @@ private class SurfaceRoot {
     public function new(id:String, content:() -> View) {
         this.id = id;
         this.content = content;
+    }
+}
+
+/**
+    One command, structurally: what `mui.surface.Command` carries, without
+    naming it — the bridge is sui core and the mui layer hands these across
+    as anonymous objects. The action stays a Haxe closure on this side of the
+    bridge; only an index ever crosses.
+**/
+typedef CommandEntry = {
+    var label:String;
+    var shortcut:Null<String>;
+    var action:() -> Void;
+}
+
+/**
+    One declared command set: a stable id, the thunk that samples it, this
+    generation's commands and the cells the sampling read (structural — they
+    decide the menu's content).
+**/
+private class CommandSetRecord {
+    public var id:String;
+    public var commands:() -> Array<CommandEntry>;
+    public var current:Array<CommandEntry> = [];
+    public var structural:Array<String> = [];
+
+    public function new(id:String, commands:() -> Array<CommandEntry>) {
+        this.id = id;
+        this.commands = commands;
     }
 }

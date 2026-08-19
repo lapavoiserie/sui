@@ -21,6 +21,18 @@ void* viewnode_get_root(void);
 // Primary). NULL when no such root is mounted - the caller draws nothing,
 // which is the degradation contract.
 void* viewnode_root_for(const char* id);
+
+// --- Command sets (the menu bar's data) ---
+// Enumeration by index; an index is what crosses back in on invoke - a
+// closure never does. Out-of-range answers are ""/0/no-op: a menu held open
+// across a rebuild may name an index the new sample no longer has.
+int32_t viewnode_command_set_count(void);
+const char* viewnode_command_set_id(int32_t set);
+int32_t viewnode_command_count(int32_t set);
+const char* viewnode_command_label(int32_t set, int32_t index);
+// "" when the command has no shortcut.
+const char* viewnode_command_shortcut(int32_t set, int32_t index);
+void viewnode_command_invoke(int32_t set, int32_t index);
 // Pump the app's poll delegate (e.g. drain a WebSocket queue) on the calling
 // thread; returns non-zero if the view tree changed and should be re-rendered.
 int32_t viewnode_poll(void);

@@ -18,4 +18,5 @@ cd "$(dirname "$0")/.."
 # ships. LiveProps runs, and the deferral it performs is one of the things under
 # test.
 haxe -cp src -cp tests -lib rui -lib nui --interp -main NuiCheck || exit 1
-haxe -cp src -cp tests -lib rui -lib nui --interp -main MultiRootCheck
+haxe -cp src -cp tests -lib rui -lib nui --interp -main MultiRootCheck || exit 1
+haxe -cp src -cp tests -lib rui -lib nui --interp -main CommandSetCheck

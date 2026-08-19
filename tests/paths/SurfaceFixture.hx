@@ -29,6 +29,13 @@ class SurfaceFixture extends App {
 		return new VStack(null, 8, [new Text("settings")]);
 	}
 
+	// The generator only reads the metadata — the return type is the mui
+	// macro's business, and this fixture deliberately compiles without mui.
+	@:surface(Commands)
+	function shortcuts():Array<String> {
+		return [];
+	}
+
 	// The legacy method, transpiler-era: on the dynamic path its emission
 	// referenced files the CLI overwrites or deletes. The gate under test.
 	override function settings():View {

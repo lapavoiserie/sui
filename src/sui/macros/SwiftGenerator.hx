@@ -126,6 +126,27 @@ class SwiftGenerator {
         ("preferences") wins, else the first declaration. Null when the app
         declares none — the Settings scene is then simply not emitted.
     **/
+    /** Whether the app class (or a superclass) declares any
+        `@:surface(Commands)` — the menu bar is emitted iff one exists; the
+        sets themselves are enumerated at runtime through the bridge. **/
+    static function declaresCommandsSurface(cls:haxe.macro.Type.ClassType):Bool {
+        var at = cls;
+        while (at != null) {
+            for (field in at.fields.get()) {
+                if (!field.meta.has(":surface")) continue;
+                for (m in field.meta.extract(":surface")) {
+                    if (m.params == null || m.params.length == 0) continue;
+                    switch (m.params[0].expr) {
+                        case EConst(CIdent("Commands")): return true;
+                        case _:
+                    }
+                }
+            }
+            at = at.superClass == null ? null : at.superClass.t.get();
+        }
+        return false;
+    }
+
     static function preferencesSurfaceId(cls:haxe.macro.Type.ClassType):Null<String> {
         var first:Null<String> = null;
         var at = cls;
@@ -320,6 +341,10 @@ class SwiftGenerator {
         // declaration is rendered by the generated macOS Settings scene
         // through DynamicSurfaceView, live, as a second root.
         var prefsSurfaceId = dynamicMode ? preferencesSurfaceId(cls) : null;
+        // Same story for the menu bar: @:surface(Commands) declarations are
+        // enumerated at runtime by DynamicAppCommands — the emission only
+        // needs to know that at least one exists.
+        var hasCommandsSurface = dynamicMode && declaresCommandsSurface(cls);
 
         // 5. Emit App.swift (after needsRuntimeBridge is finalized)
         var appSwift = new StringBuf();
@@ -363,6 +388,11 @@ class SwiftGenerator {
         if (commandsSwift != "" && !dynamicMode) {
             appSwift.add("        .commands {\n");
             appSwift.add(commandsSwift);
+            appSwift.add("        }\n");
+        }
+        if (hasCommandsSurface) {
+            appSwift.add("        .commands {\n");
+            appSwift.add("            DynamicAppCommands()\n");
             appSwift.add("        }\n");
         }
         if (hasSettings && !dynamicMode) {
