@@ -19,4 +19,9 @@ cd "$(dirname "$0")/.."
 # test.
 haxe -cp src -cp tests -lib rui -lib nui --interp -main NuiCheck || exit 1
 haxe -cp src -cp tests -lib rui -lib nui --interp -main MultiRootCheck || exit 1
-haxe -cp src -cp tests -lib rui -lib nui --interp -main CommandSetCheck
+haxe -cp src -cp tests -lib rui -lib nui --interp -main CommandSetCheck || exit 1
+
+# With the mui chain: the declarations reach the bridge through the hooks
+# sui.mui.App installs, and what must NOT map (Glance) is pinned too.
+haxe -cp src -cp tests -lib rui -lib nui -lib mui -D mui_backend=sui \
+	--macro 'mui.macros.Bind.all()' --interp -main MuiRootsCheck

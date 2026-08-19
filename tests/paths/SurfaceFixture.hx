@@ -36,6 +36,13 @@ class SurfaceFixture extends App {
 		return [];
 	}
 
+	// An Auxiliary declaration: the emission must produce a macOS Window
+	// scene named after the method and rendering the root by that id.
+	@:surface(Auxiliary)
+	function inspector():View {
+		return new Text("inspector");
+	}
+
 	// The legacy method, transpiler-era: on the dynamic path its emission
 	// referenced files the CLI overwrites or deletes. The gate under test.
 	override function settings():View {

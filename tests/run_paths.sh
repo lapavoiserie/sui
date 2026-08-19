@@ -108,6 +108,12 @@ if app=$(emitted_app SurfaceFixture); then
 	else
 		echo "  FAIL no DynamicAppCommands in the dynamic App.swift"; echo "$app" | sed 's/^/         /'; failures=1
 	fi
+	if echo "$app" | grep -q 'Window("Inspector", id: "inspector")' \
+		&& echo "$app" | grep -q 'DynamicSurfaceView(surfaceId: "inspector")'; then
+		echo "  ok   an Auxiliary declaration becomes a macOS window scene"
+	else
+		echo "  FAIL no Window scene for the Auxiliary declaration"; echo "$app" | sed 's/^/         /'; failures=1
+	fi
 else
 	echo "  FAIL SurfaceFixture should have compiled"; failures=1
 fi
@@ -123,6 +129,12 @@ if app=$(emitted_app PathFixture); then
 		echo "  FAIL a menu bar was emitted for an app declaring none"; failures=1
 	else
 		echo "  ok   no declaration, no menu bar"
+	fi
+	# grep for the id: marker, not 'Window(' — WindowGroup(" contains it.
+	if echo "$app" | grep -q 'id: "'; then
+		echo "  FAIL a window scene was emitted for an app declaring none"; failures=1
+	else
+		echo "  ok   no declaration, no extra window scene"
 	fi
 else
 	echo "  FAIL PathFixture should have compiled"; failures=1

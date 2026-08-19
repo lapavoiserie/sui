@@ -184,6 +184,42 @@ class SwiftGenerator {
         return false;
     }
 
+    /**
+        Every Auxiliary declaration's id, in declaration order — class first,
+        then supers. Each becomes a macOS window scene rendering the root by
+        id. Duplicate role/id pairs are refused at build time by
+        mui.macros.Surfaces, so the seen-set here is inheritance hygiene, not
+        conflict resolution.
+    **/
+    static function auxiliarySurfaceIds(cls:haxe.macro.Type.ClassType):Array<String> {
+        var ids:Array<String> = [];
+        var seen = new Map<String, Bool>();
+        var at = cls;
+        while (at != null) {
+            for (field in at.fields.get()) {
+                if (!field.meta.has(":surface")) continue;
+                for (m in field.meta.extract(":surface")) {
+                    if (m.params == null || m.params.length == 0) continue;
+                    switch (m.params[0].expr) {
+                        case EConst(CIdent("Auxiliary")):
+                            var id = field.name;
+                            if (m.params.length == 2) switch (m.params[1].expr) {
+                                case EConst(CString(s, _)): id = s;
+                                case _:
+                            }
+                            if (!seen.exists(id)) {
+                                seen.set(id, true);
+                                ids.push(id);
+                            }
+                        case _:
+                    }
+                }
+            }
+            at = at.superClass == null ? null : at.superClass.t.get();
+        }
+        return ids;
+    }
+
     static function isValidStateType(type:haxe.macro.Type):Bool {
         switch (type) {
             case TAbstract(absRef, _):
@@ -345,6 +381,9 @@ class SwiftGenerator {
         // enumerated at runtime by DynamicAppCommands — the emission only
         // needs to know that at least one exists.
         var hasCommandsSurface = dynamicMode && declaresCommandsSurface(cls);
+        // And for the extra windows: every @:surface(Auxiliary) declaration
+        // gets its own macOS window scene, rendered live by id.
+        var auxSurfaceIds = dynamicMode ? auxiliarySurfaceIds(cls) : [];
 
         // 5. Emit App.swift (after needsRuntimeBridge is finalized)
         var appSwift = new StringBuf();
@@ -406,6 +445,21 @@ class SwiftGenerator {
             appSwift.add("        #if os(macOS)\n");
             appSwift.add("        Settings {\n");
             appSwift.add('            DynamicSurfaceView(surfaceId: "${esc(prefsSurfaceId)}")\n');
+            appSwift.add("        }\n");
+            appSwift.add("        #endif\n");
+        }
+        // `Window`, not `WindowGroup`: the deployment target is macOS 14 (13
+        // is where `Window` arrived), an Auxiliary declaration is ONE window
+        // (a group would let the user spawn clones of a root that exists
+        // once), and its opening behavior is the honest one — a secondary
+        // scene is NOT shown at launch; its title joins the Window menu and
+        // `openWindow(id:)` can summon it. Title = the id, capitalized, the
+        // same prettify rule wui uses.
+        for (auxId in auxSurfaceIds) {
+            var title = auxId.charAt(0).toUpperCase() + auxId.substr(1);
+            appSwift.add("        #if os(macOS)\n");
+            appSwift.add('        Window("${esc(title)}", id: "${esc(auxId)}") {\n');
+            appSwift.add('            DynamicSurfaceView(surfaceId: "${esc(auxId)}")\n');
             appSwift.add("        }\n");
             appSwift.add("        #endif\n");
         }

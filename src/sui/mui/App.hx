@@ -27,28 +27,36 @@ class App extends sui.App {
     function set_appTitle(v:String):String { appName = v; return v; }
 
     /**
-        The declared roots sui hosts today: one Preferences tree, rendered by
-        the generated macOS `Settings` scene (`DynamicSurfaceView` reads it by
-        id). One-cardinality rule: the role's default id ("preferences") wins,
-        else the first declaration. Every other role degrades to nothing here
-        for now — Commands (the menu bar) is the next slice.
+        The declared roots sui hosts: ONE Preferences tree — the macOS
+        `Settings` scene; the role's default id ("preferences") wins, else the
+        first declaration — and EVERY Auxiliary tree, in declaration order,
+        each rendered by a generated macOS window scene (cardinality Many:
+        macOS puts N windows on one process as naturally as WinUI does).
+
+        Every other role degrades to nothing here on purpose: Glance is the
+        snapshot corner (P4a) and never becomes a live root on sui — a
+        declaration must not mount just because a mapper was careless.
     **/
     static function muiRoots(app:Dynamic):Array<{id:String, content:() -> sui.View}> {
         var mine:App = cast app;
-        var picked:Null<mui.surface.SurfaceDecl> = null;
+        var out:Array<{id:String, content:() -> sui.View}> = [];
+        var prefs:Null<mui.surface.SurfaceDecl> = null;
         for (d in mine.surfaces()) switch (d) {
             case Tree(mui.surface.SurfaceRole.Preferences, id, _):
-                if (id == "preferences") picked = d;
-                if (picked == null) picked = d;
+                if (id == "preferences") prefs = d;
+                if (prefs == null) prefs = d;
+            case Tree(mui.surface.SurfaceRole.Auxiliary, id, content):
+                out.push({id: id, content: content});
             case _:
         }
         // Guard before the switch: matching a null enum segfaults under hxcpp
-        // (the lesson nui.PropValueTools already carries).
-        if (picked == null) return [];
-        return switch (picked) {
-            case Tree(_, id, content): [{id: id, content: content}];
-            case _: [];
-        };
+        // (the lesson nui.PropValueTools already carries). Preferences goes
+        // first so the root order matches the scene order in App.swift.
+        if (prefs != null) switch (prefs) {
+            case Tree(_, id, content): out.unshift({id: id, content: content});
+            case _:
+        }
+        return out;
     }
 
     /**
