@@ -26,78 +26,104 @@ import sui.modifiers.ViewModifier;
 **/
 @:keep
 class ViewNodeBridge {
-    /** The root view tree, rebuilt on each reload. **/
-    static var _root:View = null;
-
     /** Current app instance. **/
     static var _app:Dynamic = null;
 
-    /** The tree reader, rebuilt with the root it describes. **/
-    static var _source:sui.nui.ViewSource = null;
+    /** Every mounted root: the Primary ("body") first, then whatever surface
+        roots the mui layer registered. Rebuilt together — see `rebuild`. **/
+    static var _roots:Array<SurfaceRoot> = [];
 
     /**
-        sui's view of itself through the shared node model.
+        The mui layer's hook for declaring extra roots.
+
+        This class is sui core and may not import `mui` — the surface
+        vocabulary lives there. `sui.mui.App` installs a provider that reads
+        the app's declarations and answers the roots sui hosts (today: one
+        Preferences root, for the macOS Settings scene). A plain `sui.App`
+        installs nothing and keeps exactly one root.
+    **/
+    public static var extraRootsOf:Dynamic -> Array<{id:String, content:() -> View}> = null;
+
+    /**
+        sui's view of itself through the shared node model — the Primary's.
 
         Exposed so a consumer that knows nothing about sui — a devtool, an
         inspector, a remote protocol, another renderer — can walk the tree
         through `nui` rather than through these C entry points.
     **/
     public static function source():sui.nui.ViewSource {
-        return _source;
+        return _roots.length > 0 ? _roots[0].source : null;
     }
 
-    /** Set the app instance and build the initial view tree. **/
+    /** Set the app instance, discover its roots, and build the trees. **/
     public static function setApp(app:Dynamic):Void {
         _app = app;
+        _roots = [new SurfaceRoot("body", function() return _app.body())];
+        if (extraRootsOf != null) {
+            for (extra in extraRootsOf(app))
+                _roots.push(new SurfaceRoot(extra.id, extra.content));
+        }
         rebuild();
     }
 
-    /** Cells whose value decides the tree's shape — see `isStructural`. **/
-    static var _bodyStructural:Array<String> = [];
-
-    /** Rebuild the view tree by calling body() on the app. **/
+    /**
+        Rebuild every root — always every root, and that is structural, not
+        laziness: the roots share the app's one `rui.Lifetime`, so the pass
+        opens once before the first root and closes once after the last. A
+        partial rebuild would close the pass without the skipped roots having
+        re-declared their `keep` keys, and the sweep would release resources
+        those roots still hold. (qui's cover escapes this by owning its own
+        Lifetime inside its host; sui's roots are all driven from the app.)
+    **/
     public static function rebuild():Void {
-        if (_app != null) {
-            // `body()` runs inside a scope, so what it reads is recorded. After
+        if (_app == null) return;
+        // Reset first: a body can throw, and a scope left open would
+        // attribute the next generation's reads to the failed one.
+        sui.runtime.ReadScope.reset();
+        _app.lifetime.beginPass();
+        for (root in _roots) {
+            // Each root's shape-deciding reads are recorded separately. After
             // LiveProps has moved every displayed value into a thunk, what is
-            // left reading here is exactly what decides the tree's shape.
-            //
-            // Reset first: body() can throw, and a scope left open would
-            // attribute the next generation's reads to the failed one.
-            sui.runtime.ReadScope.reset();
+            // left reading here is exactly what decides this root's shape.
             sui.runtime.ReadScope.begin();
-            _app.lifetime.beginPass();
-            _root = _app.body();
-            _bodyStructural = sui.runtime.ReadScope.end();
-            _source = new sui.nui.ViewSource(_root);
+            root.view = root.content();
+            root.structural = sui.runtime.ReadScope.end();
+            root.source = new sui.nui.ViewSource(root.view);
             // Force the lazy parts, so a write arriving before the first frame
             // is classified against a complete picture rather than an empty one.
-            _source.classify();
-            // After classify, not after body(): that is where the lazy parts
-            // were forced, so it is where a component has finished declaring.
-            _app.lifetime.endPass();
+            root.source.classify();
         }
+        // After the last classify, not after each body(): that is where the
+        // lazy parts were forced, so it is where declaring has finished.
+        _app.lifetime.endPass();
     }
 
     /**
-        Whether a write to this cell changes the tree's *shape*.
+        Whether a write to this cell changes some tree's *shape*.
 
         The renderer asks before deciding what to do with a write: a structural
         one rebuilds, a value one tells the views that display it to ask again.
-        Unknown answers "yes" — a name nobody has read yet is one this generation
-        has not reached, and rebuilding is the answer that cannot be wrong.
+        The answer spans every root — the roots rebuild together (see
+        `rebuild`), so "structural anywhere" is the honest unit. Unknown
+        answers "yes" — a name nobody has read yet is one this generation has
+        not reached, and rebuilding is the answer that cannot be wrong.
     **/
     public static function isStructural(name:String):Bool {
         if (name == null || name == "") return true;
-        for (known in _bodyStructural) if (known == name) return true;
-        if (_source == null) return true;
-        for (known in _source.structuralNames()) if (known == name) return true;
-        // Displayed somewhere, and read nowhere that shapes the tree: a value
-        // write, which is the only case worth the narrow path.
-        for (known in _source.valueNames()) if (known == name) return false;
-        // Read nowhere at all. Rebuilding is the answer that cannot be wrong,
-        // and a cell nothing displays is not one anybody writes in a loop.
-        return true;
+        if (_roots.length == 0) return true;
+        var displayed = false;
+        for (root in _roots) {
+            for (known in root.structural) if (known == name) return true;
+            if (root.source == null) return true;
+            for (known in root.source.structuralNames()) if (known == name) return true;
+            if (!displayed)
+                for (known in root.source.valueNames()) if (known == name) { displayed = true; break; }
+        }
+        // Displayed somewhere, and read nowhere that shapes a tree: a value
+        // write, which is the only case worth the narrow path. Read nowhere
+        // at all: rebuilding is the answer that cannot be wrong, and a cell
+        // nothing displays is not one anybody writes in a loop.
+        return !displayed;
     }
 
     /** Optional per-frame delegate: pumps an external source (e.g. a WebSocket
@@ -182,9 +208,17 @@ class ViewNodeBridge {
         if (_actionSink != null) _actionSink(name, extraJson);
     }
 
-    /** Get the root view node. Returns an opaque pointer. **/
+    /** Get the Primary root's view node. Returns an opaque pointer. **/
     public static function getRoot():View {
-        return _root;
+        return _roots.length > 0 ? _roots[0].view : null;
+    }
+
+    /** Get a declared surface root's view node by its stable id ("body" is
+        the Primary). Null when no such root is mounted — the Swift side draws
+        nothing, which is the degradation contract. **/
+    public static function getRootFor(id:String):View {
+        for (root in _roots) if (root.id == id) return root.view;
+        return null;
     }
 
     // --- View node accessors (called from C bridge) ---
@@ -199,9 +233,16 @@ class ViewNodeBridge {
     // text has to reach the branch: reading the raw node returned "" and drew
     // an empty label with nothing to say why.
 
+    /** A source that always exists — the Primary's, or an empty one before
+        setApp. The node accessors are root-agnostic (they take the node they
+        are asked about), so any live source serves every root's nodes. **/
+    static var _orphan:sui.nui.ViewSource = null;
+
     static function reader():sui.nui.ViewSource {
-        if (_source == null) _source = new sui.nui.ViewSource(null);
-        return _source;
+        var primary = source();
+        if (primary != null) return primary;
+        if (_orphan == null) _orphan = new sui.nui.ViewSource(null);
+        return _orphan;
     }
 
 
@@ -357,9 +398,28 @@ class ViewNodeBridge {
         The static bridge routes taps through an integer id into the Callbacks
         store because a Haxe closure captured by a Swift/ARC closure is invisible
         to the hxcpp GC. The dynamic renderer has no such problem: it holds the
-        live view tree (`_root`, a GC root), so the closure sitting on the node
+        live view trees (each root record, a GC root), so the closure sitting on the node
         stays reachable. So we just call it — no id, no Callbacks indirection. **/
     public static function invokeButtonAction(node:View):Void {
         reader().invokeAction(node);
+    }
+}
+
+/**
+    One mounted root: a stable id, the thunk that builds it, and this
+    generation's tree, reader and shape-deciding cells. The view field is a GC
+    root on purpose — the native side holds only opaque pointers, and nui's
+    contract is that the Haxe side keeps every root referenced.
+**/
+private class SurfaceRoot {
+    public var id:String;
+    public var content:() -> View;
+    public var view:View = null;
+    public var source:sui.nui.ViewSource = null;
+    public var structural:Array<String> = [];
+
+    public function new(id:String, content:() -> View) {
+        this.id = id;
+        this.content = content;
     }
 }

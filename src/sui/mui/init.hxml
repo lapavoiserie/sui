@@ -13,4 +13,4 @@
 --macro mui.macros.Bind.all()
 --macro sui.kui.Platform.registerWithKui()
 --main $MAIN
--cpp build/sui
+-cpp build/cpp

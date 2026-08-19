@@ -17,4 +17,5 @@ cd "$(dirname "$0")/.."
 # No define: the dynamic renderer is the default, so this is the build everyone
 # ships. LiveProps runs, and the deferral it performs is one of the things under
 # test.
-haxe -cp src -cp tests -lib rui -lib nui --interp -main NuiCheck
+haxe -cp src -cp tests -lib rui -lib nui --interp -main NuiCheck || exit 1
+haxe -cp src -cp tests -lib rui -lib nui --interp -main MultiRootCheck

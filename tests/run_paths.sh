@@ -31,6 +31,20 @@ compile() {
 	return $code
 }
 
+# Same, but keeps the scratch tree and prints the emitted App.swift — for
+# asserting WHAT the macro emitted, not just that it ran.
+emitted_app() {
+	local fixture="$1"; shift
+	local work code
+	work=$(mktemp -d)
+	(cd "$work" && haxe -cp "$root/src" -cp "$root/tests/paths" -lib rui -lib nui \
+		--macro 'sui.macros.SwiftGenerator.register()' -main "$fixture" --interp "$@" >/dev/null 2>&1)
+	code=$?
+	[ $code -eq 0 ] && cat "$work/build/swift/App.swift" 2>/dev/null
+	rm -rf "$work"
+	return $code
+}
+
 echo "sui — render paths"
 
 if out=$(compile); then
@@ -71,6 +85,37 @@ if out=$(compile -D sui_hot_reload); then
 	echo "  ok   -D sui_hot_reload is accepted, and is a no-op"
 else
 	echo "  FAIL -D sui_hot_reload should still be accepted"; echo "$out" | sed 's/^/         /'; failures=1
+fi
+
+# The dynamic path's App.swift comes from the surface vocabulary, and from
+# nothing the CLI later deletes. SurfaceFixture declares @:surface(Preferences)
+# AND overrides the legacy settings() — the emission must render the
+# declaration and reference no static-path artifact.
+if app=$(emitted_app SurfaceFixture); then
+	if echo "$app" | grep -q 'DynamicSurfaceView(surfaceId: "prefs")'; then
+		echo "  ok   a Preferences declaration becomes the Settings scene (DynamicSurfaceView)"
+	else
+		echo "  FAIL no DynamicSurfaceView in the dynamic App.swift"; echo "$app" | sed 's/^/         /'; failures=1
+	fi
+	if echo "$app" | grep -q 'SettingsView()\|AppState.shared'; then
+		echo "  FAIL the dynamic App.swift references a static-path artifact"
+		echo "$app" | sed 's/^/         /'; failures=1
+	else
+		echo "  ok   no static-path artifact (SettingsView/AppState) in the dynamic App.swift"
+	fi
+else
+	echo "  FAIL SurfaceFixture should have compiled"; failures=1
+fi
+
+# And an app declaring nothing gets no Settings scene at all.
+if app=$(emitted_app PathFixture); then
+	if echo "$app" | grep -q 'Settings {'; then
+		echo "  FAIL a Settings scene was emitted for an app declaring none"; failures=1
+	else
+		echo "  ok   no declaration, no Settings scene"
+	fi
+else
+	echo "  FAIL PathFixture should have compiled"; failures=1
 fi
 
 [ $failures -eq 0 ] || { echo ""; echo "render paths: failed"; exit 1; }

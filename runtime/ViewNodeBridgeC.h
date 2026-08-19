@@ -17,6 +17,10 @@ void viewnode_boot(void);
 // --- View tree lifecycle ---
 void viewnode_rebuild(void);
 void* viewnode_get_root(void);
+// A declared surface root's view node by its stable id ("body" is the
+// Primary). NULL when no such root is mounted - the caller draws nothing,
+// which is the degradation contract.
+void* viewnode_root_for(const char* id);
 // Pump the app's poll delegate (e.g. drain a WebSocket queue) on the calling
 // thread; returns non-zero if the view tree changed and should be re-rendered.
 int32_t viewnode_poll(void);

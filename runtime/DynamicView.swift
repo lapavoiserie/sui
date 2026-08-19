@@ -1338,6 +1338,40 @@ struct HotReloadRootView: View {
     }
 }
 
+/// A declared surface root, rendered by its stable id — the generated macOS
+/// `Settings` scene draws a `@:surface(Preferences)` declaration through this,
+/// live, as a second root.
+///
+/// No poll timer here, deliberately: the Primary's HotReloadRootView owns the
+/// 100 ms poll, and a second timer would pump Haxe's event loop twice per
+/// tick. Every root rebuilds together on a structural write (they share the
+/// app's one lifetime pass), so riding the same tree-reload notification is
+/// not a shortcut — it is the actual contract.
+///
+/// A missing root draws nothing: that is the degradation contract, never an
+/// error on screen.
+struct DynamicSurfaceView: View {
+    let surfaceId: String
+    @State private var reloadCount = 0
+
+    var body: some View {
+        // Read reloadCount so a reload re-evaluates body — not as identity;
+        // the stable id below lets SwiftUI diff instead of tearing down.
+        let _ = reloadCount
+        let accent = Color(suiHex: String(cString: viewnode_theme_accent()))
+        Group {
+            if let root = viewnode_root_for(surfaceId) {
+                DynamicView(node: ViewNode(pointer: root))
+                    .id("sui-root-\(surfaceId)")
+                    .tint(accent)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
+            withAnimation { reloadCount += 1 }
+        }
+    }
+}
+
 // MARK: - sui controls
 //
 // Each takes its value through `node.boundValue`, so none of them knows whether

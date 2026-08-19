@@ -121,6 +121,19 @@ void* viewnode_get_root(void) {
     return result;
 }
 
+// A declared surface root's view node by its stable id.
+void* viewnode_root_for(const char* id) {
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    void* result = nullptr;
+    try {
+        ::sui::View root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
+        result = root.GetPtr();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+    return result;
+}
+
 // --- Node accessors ---
 
 const char* viewnode_get_type(void* node) {

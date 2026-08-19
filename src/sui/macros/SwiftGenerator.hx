@@ -117,6 +117,41 @@ class SwiftGenerator {
         return false;
     }
 
+    /**
+        The Preferences declaration's stable id, read straight off the app
+        class's `@:surface` metadata — the same parse `mui.macros.Surfaces`
+        does, walked up the superclass chain the same way. Available here
+        because the Surfaces autoBuild ran at typing time, long before
+        onGenerate. One-cardinality rule: the role's default id
+        ("preferences") wins, else the first declaration. Null when the app
+        declares none — the Settings scene is then simply not emitted.
+    **/
+    static function preferencesSurfaceId(cls:haxe.macro.Type.ClassType):Null<String> {
+        var first:Null<String> = null;
+        var at = cls;
+        while (at != null) {
+            for (field in at.fields.get()) {
+                if (!field.meta.has(":surface")) continue;
+                for (m in field.meta.extract(":surface")) {
+                    if (m.params == null || m.params.length == 0) continue;
+                    switch (m.params[0].expr) {
+                        case EConst(CIdent("Preferences")):
+                            var id = field.name;
+                            if (m.params.length == 2) switch (m.params[1].expr) {
+                                case EConst(CString(s, _)): id = s;
+                                case _:
+                            }
+                            if (id == "preferences") return id;
+                            if (first == null) first = id;
+                        case _:
+                    }
+                }
+            }
+            at = at.superClass == null ? null : at.superClass.t.get();
+        }
+        return first;
+    }
+
     static function isObservableSubclass(cls:haxe.macro.Type.ClassType):Bool {
         if (cls.name == "Observable" && cls.pack.join(".") == "sui.state") return false;
         var sc = cls.superClass;
@@ -273,7 +308,18 @@ class SwiftGenerator {
         // ContentView observes. Force the bridged AppState path so
         // both view structs reference `AppState.shared` rather than
         // each carrying its own private `@State` copies.
-        if (hasSettings) needsRuntimeBridge = true;
+        //
+        // Static path only: on the dynamic path AppState.swift is never
+        // written (and actively deleted below), so forcing the bridge here
+        // emitted references to a type the build could not have — the exact
+        // way settings() broke every dynamic build that overrode it.
+        if (hasSettings && !dynamicMode) needsRuntimeBridge = true;
+
+        // The dynamic path's settings come from the surface vocabulary, not
+        // from the transpiled settings() method: a @:surface(Preferences)
+        // declaration is rendered by the generated macOS Settings scene
+        // through DynamicSurfaceView, live, as a second root.
+        var prefsSurfaceId = dynamicMode ? preferencesSurfaceId(cls) : null;
 
         // 5. Emit App.swift (after needsRuntimeBridge is finalized)
         var appSwift = new StringBuf();
@@ -300,8 +346,13 @@ class SwiftGenerator {
         // resolve through ContentView's `@Bindable var appState`.
         // Inject the same declaration into the App struct so the
         // commands closures see it.
+        // Static-path artifacts, all three: AppState.shared and SettingsView
+        // live in files the dynamic path deletes or overwrites, and the
+        // transpiled commands closures reference both. Emitting them without
+        // the gate is what made settings()/commands() break every dynamic
+        // build that overrode them.
         var needsAppStateInApp = (commandsSwift != "" || hasSettings)
-            && needsRuntimeBridge && stateDecls.length > 0;
+            && needsRuntimeBridge && stateDecls.length > 0 && !dynamicMode;
         if (needsAppStateInApp) {
             appSwift.add("\n    @Bindable var appState = AppState.shared\n");
         }
@@ -309,15 +360,22 @@ class SwiftGenerator {
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
-        if (commandsSwift != "") {
+        if (commandsSwift != "" && !dynamicMode) {
             appSwift.add("        .commands {\n");
             appSwift.add(commandsSwift);
             appSwift.add("        }\n");
         }
-        if (hasSettings) {
+        if (hasSettings && !dynamicMode) {
             appSwift.add("        #if os(macOS)\n");
             appSwift.add("        Settings {\n");
             appSwift.add("            SettingsView()\n");
+            appSwift.add("        }\n");
+            appSwift.add("        #endif\n");
+        }
+        if (prefsSurfaceId != null) {
+            appSwift.add("        #if os(macOS)\n");
+            appSwift.add("        Settings {\n");
+            appSwift.add('            DynamicSurfaceView(surfaceId: "${esc(prefsSurfaceId)}")\n');
             appSwift.add("        }\n");
             appSwift.add("        #endif\n");
         }
