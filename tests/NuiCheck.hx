@@ -339,6 +339,16 @@ class NuiCheck {
 		// rebuild its children and discard their identity.
 		check("a container carries no thunk", tieredRoot.liveBuild == null);
 
+		// The trap the todo app paid for on macOS: a list that is BOTH spliced
+		// as siblings AND displayed (its count in a label's thunk). The splice
+		// path read the list bare, so nothing recorded the structural read --
+		// and "displayed somewhere, read nowhere structural" answers value.
+		// The rows then never changed while the count did.
+		var spliced = new SplicedList();
+		ViewNodeBridge.setApp(spliced);
+		check("a spliced list that is also displayed stays structural",
+			ViewNodeBridge.isStructural("splicedItems"));
+
 		Sys.println(failures == 0 ? "\nall good" : '\n$failures failed');
 		Sys.exit(failures == 0 ? 0 : 1);
 	}
@@ -385,6 +395,23 @@ class Host extends sui.App {
 	it never reads during `body()`. `tieredItems` is what a `ForEach` iterates,
 	so it is read while the tree is expanded and a write to it changes the shape.
 **/
+class SplicedList extends sui.App {
+	public static var items = new State<Array<String>>(["a", "b", "c"], "splicedItems");
+
+	public function new() {
+		super();
+		appName = "SplicedList";
+	}
+
+	override public function body():View {
+		return new VStack(null, null, [
+			new Text("count: " + items.get().length),
+			new ForEach(items, (s:String) -> new Text(s)),
+			new Text("footer")
+		]);
+	}
+}
+
 class Tiered extends sui.App {
 	public static var builds = 0;
 	public static var label = new State<String>("one", "tieredLabel");

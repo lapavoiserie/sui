@@ -223,6 +223,27 @@ class ViewSource implements NodeSource<View> {
 		for (i in 0...count) visit(childAt(n, i), depth + 1);
 	}
 
+	/**
+		`forEachItems`, inside a scope — the splice path's missing half.
+
+		`expandOne` records what expanding a node reads; this splice path read
+		the ForEach's list BARE, so the list never counted as structural. The
+		symptom, paid for on macOS: a menu action wrote the list, the count
+		label updated (a value dependency), and the rows never changed —
+		`isStructural` answered false because nothing had ever recorded the
+		read that shapes them. Same scope, same merge, as expandOne.
+	**/
+	function splicedItems(n:View):Null<Array<View>> {
+		ReadScope.begin();
+		var items = forEachItems(n);
+		var read = ReadScope.end();
+		if (read.length > 0) {
+			if (_walkStructural == null) _walkStructural = new Map();
+			for (name in read) _walkStructural.set(name, true);
+		}
+		return items;
+	}
+
 	/** One step of expansion, or null when the node stands for itself. **/
 	function expandOne(n:View):Null<View> {
 		ReadScope.begin();
@@ -341,7 +362,7 @@ class ViewSource implements NodeSource<View> {
 		var out:Array<View> = [];
 		var expanded = false;
 		for (child in n.children) {
-			var items = child != null && child.viewType == "ForEach" ? forEachItems(child) : null;
+			var items = child != null && child.viewType == "ForEach" ? splicedItems(child) : null;
 			if (items == null) {
 				out.push(child);
 			} else {
