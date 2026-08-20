@@ -1354,6 +1354,17 @@ struct DynamicSurfaceView: View {
     let surfaceId: String
     @State private var reloadCount = 0
 
+    /// Boot before the first read. SwiftUI may evaluate a secondary scene's
+    /// body BEFORE the main WindowGroup builds HotReloadRootView (whose init
+    /// is where the runtime normally boots) - a Settings pane or menu bar
+    /// asking the bridge on an unbooted hxcpp is a segfault before the first
+    /// line of output. Paid for at launch on the first app that declared
+    /// Commands: the crash predates main-window construction entirely.
+    init(surfaceId: String) {
+        self.surfaceId = surfaceId
+        _ = _suiRuntimeBooted
+    }
+
     var body: some View {
         // Read reloadCount so a reload re-evaluates body — not as identity;
         // the stable id below lets SwiftUI diff instead of tearing down.
@@ -1385,6 +1396,9 @@ final class SuiCommandsModel: ObservableObject {
     private var observer: NSObjectProtocol?
 
     private init() {
+        // Same boot anchor as DynamicSurfaceView.init, same reason: the menu
+        // bar's Commands body can be SwiftUI's first evaluation of anything.
+        _ = _suiRuntimeBooted
         observer = NotificationCenter.default.addObserver(
             forName: .viewTreeDidReload, object: nil, queue: .main
         ) { [weak self] _ in
