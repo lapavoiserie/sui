@@ -48,7 +48,10 @@ had nothing to do with it.
 
 A mui app on sui can serve surfaces that live OUTSIDE this process: a
 Companion panel projected to another machine over cafos today, widget
-snapshots when P4a lands. Both start from the same step — turning sui views
+snapshots when P4a lands. Installing the describer is what makes sui
+*capable* of it; the networked corner itself stays off until a build asks for
+it with `-D mui_cafos`, without which a `@:surface(Companion)` declaration
+does not compile. Both start from the same step — turning sui views
 into `nui.Node` — and `sui.nui.Describe` is that step, signed onto the shared
 `mui.surface.Describe` register by `sui.mui.App`'s constructor.
 
