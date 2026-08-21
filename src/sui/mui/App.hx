@@ -8,6 +8,17 @@ package sui.mui;
 	which is why nothing in `mui` mentions `sui`. Moved here, unchanged, from the
 	`#if (mui_backend == "sui")` branch it used to live in.
 **/
+// The roles this backend can honour, stated where a macro can read them.
+//
+// `mui.macros.Surfaces` refuses a declaration whose role is missing from this
+// list, naming this backend — degradation the application accepts on purpose
+// (`@:surface(Role, optional)`) rather than degradation it never hears about.
+// Widen this the day a host lands, never to quiet a build.
+//
+// Preferences is the Settings scene (⌘,), Auxiliary the extra windows,
+// Commands the menu bar; Companion rides the describer installed below.
+// Glance waits for WidgetKit.
+@:hostedRoles(Preferences, Auxiliary, Commands, Companion)
 @:autoBuild(mui.macros.Surfaces.build())
 class App extends sui.App {
     public function new() {

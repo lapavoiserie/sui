@@ -385,6 +385,25 @@ class SwiftGenerator {
         // gets its own macOS window scene, rendered live by id.
         var auxSurfaceIds = dynamicMode ? auxiliarySurfaceIds(cls) : [];
 
+        // The three ternaries above read "not on the static path", and for
+        // years that meant a declaration this backend states it hosts was
+        // dropped here without a word — the very silence `@:hostedRoles`
+        // exists to end, hiding one level below it. The static path is
+        // decommissioned; an application that declares surfaces and asks for
+        // it is asking for two things that cannot both happen.
+        if (!dynamicMode) {
+            var dropped = [];
+            if (preferencesSurfaceId(cls) != null) dropped.push("Preferences");
+            if (declaresCommandsSurface(cls)) dropped.push("Commands");
+            if (auxiliarySurfaceIds(cls).length > 0) dropped.push("Auxiliary");
+            if (dropped.length > 0) {
+                Context.error('[SUI] the static SwiftUI path hosts no surface, so this application\'s '
+                    + '${dropped.join(", ")} declaration(s) would be silently dropped.\n'
+                    + '  Drop -D ' + sui.macros.RenderPath.STATIC_DEFINE + ' to use the dynamic renderer, which hosts them.',
+                    Context.currentPos());
+            }
+        }
+
         // 5. Emit App.swift (after needsRuntimeBridge is finalized)
         var appSwift = new StringBuf();
         appSwift.add("import SwiftUI\n\n");
