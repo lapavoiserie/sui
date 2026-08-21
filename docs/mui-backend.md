@@ -44,6 +44,34 @@ six of them honest.
 transform moved here from `mui` — where it used to sit beside five others that
 had nothing to do with it.
 
+## The describer — serving detached surfaces
+
+A mui app on sui can serve surfaces that live OUTSIDE this process: a
+Companion panel projected to another machine over cafos today, widget
+snapshots when P4a lands. Both start from the same step — turning sui views
+into `nui.Node` — and `sui.nui.Describe` is that step, signed onto the shared
+`mui.surface.Describe` register by `sui.mui.App`'s constructor.
+
+Describers speak the **canonical** mui prop names (`text`,
+`label`+`onClick`, `isOn`+`onToggle`, `text`+`placeholder`+`onText`,
+`value`+`min`+`max`+`onValue`) — never sui's internal spellings
+(`textBinding`, `isOnBinding`) — so a snapshot of a sui-served tree and of a
+cui- or wui-served one look the same on the wire, and one sink renders both.
+
+Describing **samples**, which on sui means resolving: `LiveProps` defers
+every displayed value into a `liveBuild` thunk, and the describer runs it —
+the same move `ViewSource.valueOf` makes — so the wire carries the current
+value, and the projecting effect subscribes to the cells the tree displays.
+A `ConditionalView`'s condition is evaluated live, a `ForEach` splices into
+its siblings, a `ViewComponent` expands through `body()`. Two-way controls
+write back through the state registry with `set()` — a remote edit must
+reach this machine's own SwiftUI too, which is why it is not
+`_applyFromSwift`'s echo-free apply.
+
+Checked end to end by `tests/run_describe.sh`: canon, LiveProps sampling,
+snapshot round-trip, and remote-shaped invocations landing in closures and
+`@:state` cells.
+
 ## See also
 
 - [Adding a backend](https://lapavoiserie.github.io/mui/#/adding-a-backend) — the

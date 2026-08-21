@@ -18,6 +18,11 @@ class App extends sui.App {
         // construction.
         sui.runtime.ViewNodeBridge.extraRootsOf = muiRoots;
         sui.runtime.ViewNodeBridge.commandSetsOf = muiCommandSets;
+        // The View->Node describer, for the detached corner (Companion
+        // projection now, widget snapshots in P4a): signing the shared
+        // register is what lets a macOS app serve a surface to another
+        // machine.
+        mui.surface.Describe.impl = v -> sui.nui.Describe.describe(v);
     }
 
     /** Set the application title. Maps to sui's appName. **/
