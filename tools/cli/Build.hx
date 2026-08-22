@@ -92,6 +92,9 @@ class Build {
         // deleted without taking anything good with it.
         var cppOut = '$buildDir/cpp';
         var swiftGenDir = '$buildDir/swift';
+        // hxcpp's own archive, named by us. Device and simulator differ in
+        // architecture and SDK, so they are different files.
+        var hxcppLib = '$buildDir/lib/libhxcpp-' + (forDevice ? "device" : "sim") + ".a";
         ensureDirectory(buildDir);
         ensureDirectory('$buildDir/Sources');
 
@@ -113,6 +116,27 @@ class Build {
             // Pass platform define for conditional compilation (#if sui_ios, #if sui_macos, #if sui_visionos)
             Sys.println('  Compiling $buildFile');
             var haxeArgs = [buildFile, "-D", 'sui_$platform', "-D", 'cpp-output=$cppOut', "-D", 'swift-output=$swiftGenDir'];
+
+            // Let hxcpp build the static library, and tell it exactly where.
+            //
+            // It already builds a correct one: `gcc-toolchain.xml`'s
+            // static_link linker carries <recreate value="1"/>, so the archive
+            // is made from scratch on every link and CANNOT carry a stale
+            // member. The CLI used to ignore it and re-archive an object
+            // directory by hand, which is how objects from other builds -- and
+            // from other backends -- got in.
+            //
+            // `finish-setup.xml` sets static_link automatically for the Apple
+            // embedded toolchains but not for macOS, where the haxe target then
+            // emits `__main__.o` (a C main() that clashes with Swift's @main,
+            // which is why the CLI filtered it by name) instead of `__lib__.o`.
+            // Setting it here makes all three platforms the same shape.
+            //
+            // The name is ours, so nothing has to be derived: no LIBEXTRA
+            // arithmetic, no glob, and device and simulator archives coexist
+            // instead of overwriting each other.
+            haxeArgs.push("-D"); haxeArgs.push("static_link=1");
+            haxeArgs.push("-D"); haxeArgs.push('HAXE_FULL_OUTPUT_NAME=$hxcppLib');
 
             // Wipe the Swift tree before every compile. SwiftGenerator writes
             // all of it, so nothing is lost -- and afterwards the presence of
@@ -185,56 +209,39 @@ class Build {
         if (nativeBridge) {
             ensureDirectory('$buildDir/lib');
 
-            // `ar rcs` *updates* an archive: a member from the previous build
-            // stays in it unless something replaces it by name. Switching
-            // render paths leaves the other one's bridge object behind, and the
-            // two define the same extern "C" entry points -- "duplicate symbol
-            // _haxe_bridge_invoke_action", from a file this build never
-            // compiled. Start the archive empty instead.
-            if (needsRecompile && FileSystem.exists('$buildDir/lib/libhaxe.a')) {
-                FileSystem.deleteFile('$buildDir/lib/libhaxe.a');
-            }
-
             if (needsRecompile || !FileSystem.exists('$buildDir/lib/libhaxe.a')) {
-                // Step 2: Build hxcpp static library + compile C++ bridge
-                Sys.println("[2/4] Building hxcpp static library + C++ bridge...");
+                Sys.println("[2/4] Assembling the static library + C++ bridge...");
             } else {
                 Sys.println("[2/4] Bridge unchanged, skipping...");
             }
 
-            // Create static library from hxcpp object files (excluding __main__.o)
-            // hxcpp keeps one directory per toolchain under obj/, and a project
-            // built for more than one platform keeps them all: darwinarm64
-            // beside iphonesim-c11. Archiving the lot mixes arm64 and x86_64
-            // objects, and `ar` answers "Inappropriate file type or format" --
-            // which reads as a broken build rather than as two builds in one
-            // box. Take only the toolchain this target uses.
-            var cppObjDir = objDirFor('$cppOut/obj', platform, forDevice);
-            if (cppObjDir != null && FileSystem.exists(cppObjDir)) {
-                // Collect all .o files
-                var oFiles:Array<String> = [];
-                collectObjectFiles(cppObjDir, oFiles);
-                if (oFiles.length > 0) {
-                    var arArgs = ["rcs", '$buildDir/lib/libhaxe.a'];
-                    for (o in oFiles) arArgs.push(o);
-                    Sys.command("ar", arArgs);
-                }
+            // hxcpp was told where to put its archive; if it is not there, this
+            // build did not produce one and nothing downstream can be trusted.
+            // The previous version answered a missing object directory by
+            // silently archiving nothing -- which is how a visionOS build
+            // shipped a library holding only two bridge objects.
+            if (!FileSystem.exists(hxcppLib)) {
+                Sys.println('Error: hxcpp produced no static library at $hxcppLib.');
+                Sys.println("  The build did not honour -D HAXE_FULL_OUTPUT_NAME, or it did not link.");
+                Sys.exit(1);
             }
 
             // Find hxcpp include path
             var hxcppDir = findHxcppDir();
 
             // Compile the C++ bridge against hxcpp headers.
-            // Architecture must match hxcpp's output:
-            //   macOS / iphoneos (device): arm64
-            //   iphonesim (simulator): x86_64 (hxcpp iphonesim-toolchain hardcodes this)
-            var isSimulator = !forDevice && (platform == "ios" || platform == "visionos");
-            var bridgeArch = isSimulator ? "x86_64" : "arm64";
+            //
+            // The architecture is READ from hxcpp's archive rather than
+            // guessed. The guess was "x86_64 for any simulator", which is what
+            // hxcpp's iphonesim toolchain hardcodes -- and wrong for a visionOS
+            // simulator, which is arm64 only. Asking the artefact costs one
+            // `lipo` and cannot drift.
             var platformDefine = switch (platform) {
                 case "ios": forDevice ? "-DHX_IOS" : "-DIPHONESIM=IPHONESIM";
                 case "visionos": "-DHX_VISIONOS";
                 default: "-DHX_MACOS";
             };
+            var bridgeArch = archOf(hxcppLib);
             var clangArgs = [
                 "-c", "-std=c++17",
                 '-I$hxcppDir/include',
@@ -242,6 +249,11 @@ class Build {
                 platformDefine, "-DHXCPP_M64",
                 "-DHXCPP_VISIT_ALLOCS", "-DHX_SMART_STRINGS",
                 "-DHXCPP_API_LEVEL=430",
+                // `common-defines.xml` adds this to every file hxcpp compiles
+                // under static_link, and `hx/CFFI.h` and `hx/Macros.h` read it.
+                // The hand-written list here never had it, so the bridge and
+                // the library it links into saw different headers.
+                "-DSTATIC_LINK",
                 "-arch", bridgeArch,
             ];
             if (bridgeArch == "arm64") clangArgs.push("-DHXCPP_ARM64");
@@ -278,8 +290,29 @@ class Build {
                     Sys.println('Error: C++ bridge compilation failed for ${bs.src}.');
                     Sys.exit(1);
                 }
-                // Add the bridge object to the static library
-                Sys.command("ar", ["rcs", '$buildDir/lib/libhaxe.a', bs.obj]);
+            }
+
+            // One shot, always overwriting: hxcpp's archive plus the bridge
+            // objects. `ar r` *updates* an archive -- a member from a previous
+            // build survives unless something replaces it by name -- which is
+            // what left one render path's bridge object in the other's library
+            // and produced "duplicate symbol _haxe_bridge_invoke_action" from
+            // a file that build never compiled. `libtool -static -o` has no
+            // such history.
+            var libtoolArgs = ["-static", "-o", '$buildDir/lib/libhaxe.a', hxcppLib];
+            for (bs in bridgeSources) libtoolArgs.push(bs.obj);
+            if (Sys.command("libtool", libtoolArgs) != 0) {
+                Sys.println("Error: could not assemble libhaxe.a.");
+                Sys.exit(1);
+            }
+
+            // One architecture, or the link that follows fails somewhere far
+            // from here. Cheap, and it is the assertion that would have caught
+            // a visionOS library built from iPhone-simulator objects.
+            var archs = archOf('$buildDir/lib/libhaxe.a');
+            if (archs != bridgeArch) {
+                Sys.println('Error: libhaxe.a is "$archs" but the bridge was built "$bridgeArch".');
+                Sys.exit(1);
             }
         }
 
@@ -843,6 +876,20 @@ class Build {
         return Sys.getCwd();
     }
 
+    /**
+        The single architecture of a Mach-O archive, asked of the file itself.
+
+        `lipo -archs` answers with a space-separated list; anything but one
+        entry means the archive mixes architectures, and the caller says so
+        rather than letting the link fail somewhere unrecognisable.
+    **/
+    static function archOf(path:String):String {
+        var proc = new sys.io.Process("lipo", ["-archs", path]);
+        var out = StringTools.trim(proc.stdout.readAll().toString());
+        proc.close();
+        return out;
+    }
+
     static function ensureDirectory(path:String) {
         if (!FileSystem.exists(path)) {
             FileSystem.createDirectory(path);
@@ -1001,48 +1048,6 @@ class Build {
             }
         }
         return newest;
-    }
-
-    /** Recursively collect .o files, excluding __main__.o **/
-    /**
-        The hxcpp toolchain directory this target's objects are in.
-
-        Named by hxcpp, not by us: `darwinarm64` / `darwin64` for macOS,
-        `iphonesim-*` for the simulator, `iphoneos-*` for a device. Matching by
-        prefix rather than listing exact names keeps this working when hxcpp
-        changes a suffix, which is where the `-c11` comes from.
-
-        Returns null when nothing matches, so the caller reports a missing build
-        rather than archiving another platform's objects.
-    **/
-    static function objDirFor(objRoot:String, platform:String, forDevice:Bool):Null<String> {
-        if (!FileSystem.exists(objRoot)) return null;
-
-        var prefixes = switch (platform) {
-            case "ios": forDevice ? ["iphoneos"] : ["iphonesim"];
-            case "visionos": forDevice ? ["xros", "appletvos"] : ["xrsim", "iphonesim"];
-            default: ["darwin", "mac"];
-        };
-
-        for (entry in FileSystem.readDirectory(objRoot)) {
-            var path = '$objRoot/$entry';
-            if (!FileSystem.isDirectory(path)) continue;
-            for (prefix in prefixes) {
-                if (StringTools.startsWith(entry, prefix)) return path;
-            }
-        }
-        return null;
-    }
-
-    static function collectObjectFiles(dir:String, result:Array<String>) {
-        for (entry in FileSystem.readDirectory(dir)) {
-            var path = '$dir/$entry';
-            if (FileSystem.isDirectory(path)) {
-                collectObjectFiles(path, result);
-            } else if (entry.endsWith(".o") && entry.indexOf("__main__") == -1) {
-                result.push(path);
-            }
-        }
     }
 
     /** Find the hxcpp include directory. **/
