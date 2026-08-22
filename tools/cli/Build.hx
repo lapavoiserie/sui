@@ -1294,6 +1294,19 @@ class Build {
             // the durable-state plan measured it before anything was built on
             // it: booting and sampling came to under a megabyte of heap.
             widgetBlock = "      CODE_SIGN_ENTITLEMENTS: Entitlements.plist\n";
+
+            // WidgetKit arrived on visionOS in 26.0. The application does not
+            // need that -- it runs happily on 2.0 -- so the floor is raised on
+            // the EXTENSION alone, which is legal (an embedded extension may
+            // ask for more than its host) and is how an OS-version-gated
+            // feature is meant to be expressed: the widget simply does not load
+            // on an older system, and the app is untouched.
+            //
+            // Discovered by building it: "'Timeline' is only available in
+            // visionOS 26.0 or newer".
+            var widgetFloor = platform == "visionos"
+                ? "      XROS_DEPLOYMENT_TARGET: \"26.0\"\n"
+                : "";
             widgetTarget = '  ${config.appName}GlanceWidget:
     type: app-extension
     platform: $pk
@@ -1308,6 +1321,7 @@ class Build {
       INFOPLIST_FILE: Widget/Info.plist
       CODE_SIGN_ENTITLEMENTS: WidgetEntitlements.plist
       SKIP_INSTALL: true
+${widgetFloor}
       LIBRARY_SEARCH_PATHS:
         - "$(PROJECT_DIR)/lib"
       OTHER_LDFLAGS:

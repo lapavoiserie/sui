@@ -839,7 +839,17 @@ class SwiftGenerator {
             "    SuiGlanceStore.write(String(cString: json))",
         ]);
         if (hasWidget) {
-            lines.push("    WidgetCenter.shared.reloadAllTimelines()");
+            // Availability-guarded, because this file is compiled into the
+            // APPLICATION target as well as the extension, and the application
+            // keeps the platform's own floor. WidgetKit reached visionOS only
+            // in 26.0, so an app targeting visionOS 2.0 cannot name
+            // WidgetCenter unconditionally -- while the same app on iOS has had
+            // it since 14.0. One `#available` covers both without a `#if os`
+            // ladder, and on a system too old to host the widget the reload is
+            // simply not attempted: there is nothing there to reload.
+            lines.push("    if #available(iOS 14.0, macOS 11.0, visionOS 26.0, *) {");
+            lines.push("        WidgetCenter.shared.reloadAllTimelines()");
+            lines.push("    }");
         } else {
             lines.push("    // No widget in this application: the snapshot is stored and");
             lines.push("    // nothing reads it. Cheaper than a symbol that does not exist.");
