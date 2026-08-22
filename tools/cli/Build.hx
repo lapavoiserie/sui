@@ -163,8 +163,29 @@ class Build {
                 haxeArgs.push("-D");
                 haxeArgs.push(forDevice ? "iphoneos" : "iphonesim");
             } else if (platform == "visionos") {
-                haxeArgs.push("-D");
-                haxeArgs.push(forDevice ? "xros" : "xrsimulator");
+                // hxcpp has no visionOS toolchain of its own, so sui ships two
+                // and puts them where hxcpp looks: it searches "." — its own
+                // working directory, which is the C++ output — for
+                // `toolchain/<name>-toolchain.xml`.
+                //
+                // Without this, `-D xrsimulator` is a define nothing reads:
+                // the build falls through to the mac toolchain and the objects
+                // land in obj/darwinarm64, after which the CLI used to archive
+                // an earlier iPhone build's objects instead. A visionOS app
+                // that was never compiled for visionOS, and nothing said so.
+                var chain = forDevice ? "xros" : "xrsimulator";
+                installToolchain(chain, cppOut);
+                haxeArgs.push("-D"); haxeArgs.push(chain);
+                haxeArgs.push("-D"); haxeArgs.push('toolchain=$chain');
+                // `setDefaultToolchain` is skipped entirely once `toolchain` is
+                // set (BuildTool.hx:155), so what it would have set has to be
+                // said here, and so does what `finish-setup.xml` conditions on
+                // the iPhone toolchains.
+                haxeArgs.push("-D"); haxeArgs.push("apple=apple");
+                haxeArgs.push("-D"); haxeArgs.push('LIBEXTRA=.$chain-64');
+                haxeArgs.push("-D"); haxeArgs.push("HXCPP_M64=1");
+                haxeArgs.push("-D"); haxeArgs.push("HXCPP_ARM64=1");
+                haxeArgs.push("-D"); haxeArgs.push('SUI_XROS_MIN=' + deploymentTarget(platform));
             }
             var startedAt = Sys.time();
             var haxeResult = Sys.command("haxe", haxeArgs);
@@ -446,6 +467,21 @@ class Build {
 
         if (buildResult != 0) {
             Sys.println("Error: xcodebuild failed.");
+            // Xcode can have a platform's SDK without its platform component,
+            // and then says "<platform> N.N is not installed" about a
+            // destination rather than about what is missing. Worth translating,
+            // because everything before this step DID work: the C++ is
+            // compiled and the library linked for the right platform. The one
+            // thing this family of bugs must never do again is let a partial
+            // success read as a full one — or a full one read as a failure.
+            if (platform == "visionos" && platformNotInstalled(buildDir, config.appName, "visionOS")) {
+                Sys.println("");
+                Sys.println("  Xcode has the visionOS SDK but not the visionOS platform component.");
+                Sys.println("  Install it from Xcode > Settings > Components.");
+                Sys.println("");
+                Sys.println('  The Haxe and hxcpp half of this build succeeded: $buildDir/lib/libhaxe.a');
+                Sys.println("  is compiled for visionOS. Only Xcode's own step could not run.");
+            }
             Sys.exit(1);
         }
 
@@ -888,6 +924,53 @@ class Build {
         var out = StringTools.trim(proc.stdout.readAll().toString());
         proc.close();
         return out;
+    }
+
+    /**
+        Put sui's own hxcpp toolchain where hxcpp will find it.
+
+        hxcpp resolves `toolchain/<name>-toolchain.xml` through an include path
+        whose only project-relative entry is `.` — its working directory, which
+        is the C++ output directory. Copying rather than pointing at the
+        library keeps that resolution simple and means an updated sui ships an
+        updated toolchain without anyone re-running anything.
+
+        Refuses by name when the file is missing, because the alternative is
+        hxcpp's own "Could not find include file", which names a relative path
+        inside a generated directory and tells nobody where it should come
+        from.
+    **/
+    static function installToolchain(name:String, cppOut:String) {
+        var source = getLibPath() + '/toolchain/$name-toolchain.xml';
+        if (!FileSystem.exists(source)) {
+            Sys.println('Error: sui ships no hxcpp toolchain for "$name".');
+            Sys.println('  Looked for: $source');
+            Sys.exit(1);
+        }
+        ensureDirectory(cppOut);
+        ensureDirectory('$cppOut/toolchain');
+        copyIfDifferent(source, '$cppOut/toolchain/$name-toolchain.xml');
+    }
+
+    /**
+        Whether Xcode reports a platform as not installed for this project.
+
+        Asked of `xcodebuild -showdestinations`, which is where the real reason
+        appears: with the SDK present but the platform component missing it
+        lists every destination as ineligible and says "<platform> N.N is not
+        installed". The SDK list is no help -- the SDK is there in the broken
+        case too, which is exactly what makes the failure confusing.
+    **/
+    static function platformNotInstalled(buildDir:String, scheme:String, name:String):Bool {
+        return try {
+            var oldCwd = Sys.getCwd();
+            Sys.setCwd(buildDir);
+            var proc = new sys.io.Process("xcodebuild", ["-scheme", scheme, "-showdestinations"]);
+            var out = proc.stdout.readAll().toString() + proc.stderr.readAll().toString();
+            proc.close();
+            Sys.setCwd(oldCwd);
+            out.indexOf(name) >= 0 && out.indexOf("is not installed") >= 0;
+        } catch (_:Dynamic) false;
     }
 
     static function ensureDirectory(path:String) {
