@@ -1000,7 +1000,18 @@ class SwiftGenerator {
             "    var body: some WidgetConfiguration {",
             "        StaticConfiguration(kind: \"SuiGlance\", provider: SuiGlanceProvider()) { entry in",
             "            SuiGlanceView(entry: entry)",
+            // visionOS draws widgets on glass it supplies itself. An opaque
+            // container background painted over it comes out BLACK, and the
+            // content -- which still resolves its colours for a light surface
+            // -- is then black on black: a widget that renders perfectly and
+            // shows nothing. Found by looking at one on a wall, which is the
+            // only way it could have been found. The same class of bug as the
+            // Android widget that drew black text with no background.
+            "            #if os(visionOS)",
+            "                .containerBackground(.clear, for: .widget)",
+            "            #else",
             "                .containerBackground(.fill.tertiary, for: .widget)",
+            "            #endif",
             "        }",
             "        .configurationDisplayName(\"" + className + "\")",
             "        .description(\"The application's @:surface(Glance) declaration.\")",
