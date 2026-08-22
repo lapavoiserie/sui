@@ -29,7 +29,7 @@ fi
 # Platform settings
 DEPLOY_TARGET="17.0"
 PLATFORM_KEY="iOS"
-DESTINATION="platform=iOS Simulator,name=iPhone 17 Pro"
+DESTINATION="platform=iOS Simulator,name=iPhone 16"
 
 if [ "$PLATFORM" = "ipad" ]; then
   PLATFORM="ios"  # iPadOS is iOS in Xcode

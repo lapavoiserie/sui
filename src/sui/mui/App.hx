@@ -20,9 +20,10 @@ package sui.mui;
 // stays off until the build asks for it with -D mui_cafos.
 //
 // Preferences is the Settings scene (⌘,), Auxiliary the extra windows,
-// Commands the menu bar; Companion rides the describer installed below.
-// Glance waits for WidgetKit.
-@:hostedRoles(Preferences, Auxiliary, Commands, Companion)
+// Commands the menu bar, Glance a WidgetKit widget — sampled, since the
+// widget is a separate binary the application cannot reach into; Companion
+// rides the describer installed below.
+@:hostedRoles(Preferences, Auxiliary, Commands, Glance, Companion)
 @:autoBuild(mui.macros.Surfaces.build())
 class App extends sui.App {
     public function new() {
@@ -38,6 +39,28 @@ class App extends sui.App {
         // register is what lets a macOS app serve a surface to another
         // machine.
         mui.surface.Describe.impl = v -> sui.nui.Describe.describe(v);
+        // How this backend takes a new sample. WidgetKit's widget is a
+        // separate binary in its own sandbox, so "taking a sample" means
+        // leaving one where that binary can read it: the native shim writes
+        // the snapshot to the App Group both targets are entitled to and
+        // tells WidgetCenter to reload. Nothing else here is a snapshot
+        // surface, so nothing else answers.
+        mui.surface.Resample.impl = (role, _) -> {
+            if (role != mui.surface.SurfaceRole.Glance) return;
+            var json = sui.mui.GlanceBridge.sample(this);
+            if (json != null) sui.mui.GlancePublish.publish(json);
+        };
+
+        // Remembered, not sampled: the host asks for a picture when the
+        // application leaves the foreground, and the application asks with
+        // Resample.request whenever its content became worth showing.
+        sui.mui.GlanceBridge.attach(this);
+
+        // The first picture is NOT taken here: this constructor runs
+        // before the subclass has initialised its @:state fields, so the
+        // declaration's thunk would read a null cell and take the whole boot
+        // down with it. The host publishes when the application leaves the
+        // foreground, and whenever the application asks.
     }
 
     /** Set the application title. Maps to sui's appName. **/

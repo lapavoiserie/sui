@@ -248,6 +248,34 @@ class Build {
                 File.copy('$swiftGenDir/$file', '$buildDir/Sources/$file');
             }
         }
+        // The widget extension, when the application declared the surface it
+        // draws. It is a SEPARATE BINARY with its own sandbox, so it gets its
+        // own directory rather than joining Sources — and the two of them can
+        // only meet through an App Group, which both must be entitled to.
+        // iOS only, for now, and the reason is signing rather than WidgetKit:
+        // macOS refuses to build a target carrying an entitlements file
+        // without a provisioning profile ("requires a provisioning profile"),
+        // while the iOS simulator is content with ad-hoc signing. An App Group
+        // is the only way an app and its extension can share anything, so a
+        // macOS widget waits for a signing identity — not for more code.
+        var hasWidget = platform == "ios" && FileSystem.exists('$swiftGenDir/Widget');
+        if (hasWidget) {
+            ensureDirectory('$buildDir/Widget');
+            for (file in FileSystem.readDirectory('$swiftGenDir/Widget'))
+                File.copy('$swiftGenDir/Widget/$file', '$buildDir/Widget/$file');
+            var group = 'group.${config.bundleIdentifier}';
+            // Written only when the content changes: xcodebuild refuses an
+            // entitlements file whose mtime moved since the last build
+            // ("modified during the build"), and rewriting identical bytes
+            // every time is exactly that.
+            saveIfDifferent('$buildDir/Entitlements.plist', appGroupEntitlements(group));
+            // Kept OUT of the Widget directory: that directory is a source
+            // group, so anything in it becomes a resource of the extension —
+            // and an entitlements file the build copies is an entitlements
+            // file "modified during the build".
+            saveIfDifferent('$buildDir/WidgetEntitlements.plist', appGroupEntitlements(group));
+        }
+
         // Copy bridge header if present
         if (isBridgeApp && FileSystem.exists('$swiftGenDir/HaxeBridgeC.h')) {
             File.copy('$swiftGenDir/HaxeBridgeC.h', '$buildDir/Sources/HaxeBridgeC.h');
@@ -289,7 +317,7 @@ class Build {
         mergeKuiPayload(cwd, config);
 
         // Generate project.yml
-        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge));
+        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge, hasWidget));
 
         if (xcodeOnly) {
             runXcodegen(buildDir);
@@ -901,7 +929,37 @@ class Build {
         };
     }
 
-    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false):String {
+    /**
+        The one thing an app and its widget extension can share.
+
+        Two binaries, two sandboxes: the only sanctioned way for the
+        application to leave a snapshot where the widget can read it is an App
+        Group both are entitled to. The name follows the bundle identifier, so
+        each side computes it from its own — the extension's is the app's plus
+        a suffix — and neither has to be told.
+    **/
+    /** Write only when the bytes differ, so an unchanged file keeps its
+        timestamp. **/
+    static function saveIfDifferent(path:String, content:String):Void {
+        if (FileSystem.exists(path) && File.getContent(path) == content) return;
+        File.saveContent(path, content);
+    }
+
+    static function appGroupEntitlements(group:String):String {
+        return '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.security.application-groups</key>
+\t<array>
+\t\t<string>$group</string>
+\t</array>
+</dict>
+</plist>
+';
+    }
+
+    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false, hasWidget:Bool = false):String {
         var pk = platformKey(platform);
         var dt = deploymentTarget(platform);
 
@@ -950,6 +1008,7 @@ class Build {
 
         var packagesBlock = "";
         var depsBlock = "    dependencies: []\n";
+        if (hasWidget) depsBlock = '    dependencies:\n      - target: ${config.appName}GlanceWidget\n';
         if (config.swiftPackages != null && config.swiftPackages.length > 0) {
             packagesBlock = "packages:\n";
             depsBlock = "    dependencies:\n";
@@ -957,6 +1016,31 @@ class Build {
                 packagesBlock += '  ${pkg.product}:\n    url: ${pkg.url}\n    from: ${pkg.from}\n';
                 depsBlock += '      - package: ${pkg.product}\n';
             }
+        }
+
+        // The widget extension is a second target, and the app depends on it
+        // so that building the app embeds it. Both carry the App Group
+        // entitlement: without it on BOTH sides the container is not shared
+        // and the widget reads nothing, silently.
+        var widgetBlock = "";
+        var widgetTarget = "";
+        if (hasWidget) {
+            widgetBlock = "      CODE_SIGN_ENTITLEMENTS: Entitlements.plist\n";
+            widgetTarget = '  ${config.appName}GlanceWidget:
+    type: app-extension
+    platform: $pk
+    sources:
+      - path: Widget
+        type: group
+        excludes:
+          - "Info.plist"
+      - path: Sources/SuiGlanceShim.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${config.bundleIdentifier}.glancewidget
+      INFOPLIST_FILE: Widget/Info.plist
+      CODE_SIGN_ENTITLEMENTS: WidgetEntitlements.plist
+      SKIP_INSTALL: true
+';
         }
 
         return '${packagesBlock}name: ${config.appName}
@@ -980,7 +1064,7 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-$networking$signing$bridge$depsBlock';
+$networking$signing$bridge$widgetBlock$depsBlock$widgetTarget';
     }
 }
 

@@ -44,6 +44,68 @@ six of them honest.
 transform moved here from `mui` — where it used to sit beside five others that
 had nothing to do with it.
 
+## Surfaces: the WidgetKit widget
+
+`@:surface(Glance)` becomes a **WidgetKit widget** on iOS. It is the
+snapshot-detached corner again, and the gap is wider here than anywhere else:
+an Android widget is drawn by the launcher from views *our* process built,
+while a WidgetKit widget is a **separate binary** — an app extension, its own
+process, its own sandbox — that cannot call into the application at all.
+
+So the picture has to land somewhere both binaries can read. That is an **App
+Group** container, the only thing iOS lets them share, and both targets carry
+the entitlement for it. Everything before that is identical to the other
+hosts: the declaration's thunk runs, `sui.nui.Describe` turns the tree into
+`nui` nodes, and `nui.Snapshot.project` turns those into pure data — the same
+shape a Companion frame carries over the network and the same shape the
+Android widget stores. One contract, three distances.
+
+```
+{"type":"VStack","props":{"spacing":8},"children":[
+  {"type":"Text","props":{"text":"Count: 0"}},
+  {"type":"Button","props":{"label":"+1"},"actions":{"onClick":0}}]}
+```
+
+A new picture is taken when the application leaves the foreground — the same
+moment `aui` publishes on — and whenever the application asks with
+`mui.surface.Resample.request(Glance)`.
+
+**Not at construction.** The obvious place is wrong and fails loudly: a sui
+`mui.App`'s constructor runs *before* the subclass has initialised its
+`@:state` fields, so sampling there reads a null cell and takes the whole boot
+down with it. The constructor only *remembers* the application
+(`GlanceBridge.attach`); the scene-phase observer samples it later, when it is
+whole.
+
+### Three things that are not obvious
+
+- **The publish symbol is resolved at runtime**, with `dlsym(RTLD_DEFAULT)`,
+  not linked. `sui.mui.GlancePublish` is compiled into every application that
+  touches `mui.surface.Resample` — including the plain Haxe executable a macOS
+  build links *before Xcode ever sees it*, a link with no Swift in it. A weak
+  declaration does not save that: on Darwin `weak` marks a definition, and an
+  undefined weak reference still has to resolve.
+- **The extension's `Info.plist` must name every key itself.** An explicit
+  `INFOPLIST_FILE` turns off the synthesis `GENERATE_INFOPLIST_FILE` performs,
+  and an extension with no `CFBundleIdentifier` is reported as "Embedded
+  binary's bundle identifier is not prefixed with the parent app's" — which
+  points at the prefix rather than at the absence.
+- **The entitlements file lives outside the `Widget` directory.** That
+  directory is a source group, so anything inside it becomes a resource of the
+  extension, and an entitlements file the build copies is an entitlements file
+  "modified during the build".
+
+### What is not built yet
+
+**iOS only.** A macOS widget is not more code, it is a signing identity:
+macOS refuses to build a target carrying an entitlements file without a
+provisioning profile, while the iOS simulator is content with ad-hoc signing.
+
+**Display only.** A tap in a WidgetKit widget is an `AppIntent`, and an intent
+runs in a process where the application's closures are not — a different
+problem from Android's, where the tap already lands in our own process. The
+action ids are in the tree, waiting: `"actions":{"onClick":0}` above is one.
+
 ## The describer — serving detached surfaces
 
 A mui app on sui can serve surfaces that live OUTSIDE this process: a
