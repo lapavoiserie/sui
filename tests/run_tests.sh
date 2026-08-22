@@ -94,7 +94,11 @@ fi
 echo ""
 echo "--- Test 7: CLI compilation ---"
 cd ..
-if haxe -cp tools -cp src -main tools.cli.CLI -neko "${TMPDIR:-/tmp}/cli_test.n" 2>&1; then
+# The libraries the CLI actually uses. Without -lib kui this compiled
+# `kui.build.Sidecar` to "Type not found" and the test had been failing red
+# ever since the CLI learned to read a capability manifest -- which is the
+# worst state for a test: present, ignored, and hiding whatever came after.
+if haxe -cp tools -cp src -lib kui -lib rui -lib nui -main tools.cli.CLI -neko "${TMPDIR:-/tmp}/cli_test.n" 2>&1; then
     echo "PASS: CLI compiles"
     PASS=$((PASS + 1))
 else
