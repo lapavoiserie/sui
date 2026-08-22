@@ -26,12 +26,29 @@ import nui.Snapshot.ActionTable;
 	## What crosses, and what cannot
 
 	Not the closures. `project` registers them in an `ActionTable` and writes
-	their ids into the tree; the table stays here, in the application's
-	process, which the extension will never share. A widget that only displays
-	needs nothing more, and that is this slice. Interaction across an app
-	extension is an `AppIntent`, and the intent runs where the closures are
-	not — that is the piece still to build, and it is a different problem from
-	Android's, where the tap already lands in our own process.
+	their ids into the tree; the table stays in the process that sampled, and
+	the extension will never share ours.
+
+	## So the extension runs its own instance
+
+	A tap in a WidgetKit widget is an `AppIntent`, and it runs in the
+	extension's process — where our closures are not. Android's tap lands in
+	the application's own process and simply finds them; here there is nothing
+	to find.
+
+	The answer is not to send the action somewhere. It is to have an
+	application **there**: the extension boots the same Haxe runtime, builds
+	the same application, samples the same declaration — which rebuilds an
+	`ActionTable` in *its* process — and invokes. Ids are keyed by PLACE, so
+	the button in the same slot has the same id in both processes, and the id
+	the launcher sends resolves against a table it never saw built.
+
+	Two instances of one application then exist, with two sets of cells, and
+	that is exactly why the durable store came first: a cell declared
+	`@:state(durable)` is the same value in both, and everything else is the
+	instance's own. A closure that reads an ordinary cell in the extension
+	reads a draft that never existed — the danger the plan names, and the one
+	worth a compile-time check when this widens past a counter.
 **/
 @:keep
 class GlanceBridge {
@@ -81,6 +98,24 @@ class GlanceBridge {
 	public static function sampleAgain():Null<String> {
 		var mine = _sampled;
 		return mine == null ? null : sample(mine);
+	}
+
+	/**
+		Run the closure the widget's tap names.
+
+		The caller must have sampled first, in this process, or the table is
+		empty and the id names nothing. `GlancePublish.invokeAndPublish` is
+		what does that in order; nothing else should call this directly.
+
+		An id that resolves to nothing is not silence: `ActionTable.invoke`
+		says so. In a cold extension the usual cause is a tree whose shape
+		changed between the picture the launcher kept and this sample — a list
+		one item shorter — and the honest answer is to say which id went
+		missing rather than to run a neighbour's closure.
+	**/
+	public static function invoke(id:Int, ?arg:String):Void {
+		if (_table == null) return;
+		_table.invoke(id, arg);
 	}
 
 	/**

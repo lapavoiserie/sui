@@ -36,6 +36,59 @@ class GlancePublish {
 	}
 
 	/**
+		A tap in the widget, run in the widget's own process.
+
+		Called from the generated C entry `sui_glance_invoke`, which the
+		extension's `AppIntent` reaches after `sui_glance_boot_headless`. The
+		order of these four steps is the whole of it, and none of them may
+		move:
+
+		1. **Name ourselves.** Writes from here are the extension's, not the
+		   application's. The sequence arbitrates, never the name — but a store
+		   a human reads should say who wrote what.
+		2. **Rehydrate.** The application may have changed a durable cell since
+		   this process last looked, and an extension process is kept alive
+		   between taps; what it holds is only right after asking the store.
+		3. **Sample, then invoke.** Sampling rebuilds the `ActionTable` in this
+		   process, which is what makes the launcher's id resolve at all — ids
+		   are keyed by place, so the same button gets the same id here as it
+		   got in the application.
+		4. **Sample again and publish.** The closure has just changed a cell,
+		   the picture the launcher holds is now one tap old, and nobody else
+		   is going to notice.
+
+		Sampling twice is not waste: the first is what makes the id mean
+		anything, the second is what the user sees.
+	**/
+	@:keep public static function invokeAndPublish(id:Int):Void {
+		rui.state.Durable.writer = "glance";
+		rui.state.Durable.rehydrate();
+
+		var before = sui.mui.GlanceBridge.sampleAgain();
+		if (before == null) return; // no Glance declaration: nothing to act on
+		sui.mui.GlanceBridge.invoke(id);
+
+		var after = sui.mui.GlanceBridge.sampleAgain();
+		if (after != null) publish(after);
+	}
+
+	/**
+		The application came back to the foreground.
+
+		Called from the generated C entry `sui_app_resumed`. One integer read
+		when nothing changed, which is what lets this sit on a lifecycle event
+		instead of a timer — and a timer is what it would have to be otherwise,
+		since nothing tells one process that another one wrote.
+
+		The moment is named on purpose. Cells rewritten from a background
+		thread under a running effect is a different and much worse problem
+		than a number that is a few hundred milliseconds stale.
+	**/
+	@:keep public static function resumed():Void {
+		rui.state.Durable.rehydrate();
+	}
+
+	/**
 		Hand the snapshot to the native side, if there is one to hand it to.
 
 		The symbol is looked up at RUNTIME rather than linked, and that is

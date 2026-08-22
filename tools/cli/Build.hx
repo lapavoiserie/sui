@@ -1025,6 +1025,15 @@ class Build {
         var widgetBlock = "";
         var widgetTarget = "";
         if (hasWidget) {
+            // The extension links the SAME hxcpp static library the app does.
+            // That is what makes the widget's buttons work: a tap arrives as an
+            // AppIntent in THIS process, so the closures have to exist here --
+            // the extension boots the runtime headless, builds its own instance
+            // of the application, samples, and invokes.
+            //
+            // It costs the extension the runtime's size, which is why step 0 of
+            // the durable-state plan measured it before anything was built on
+            // it: booting and sampling came to under a megabyte of heap.
             widgetBlock = "      CODE_SIGN_ENTITLEMENTS: Entitlements.plist\n";
             widgetTarget = '  ${config.appName}GlanceWidget:
     type: app-extension
@@ -1040,6 +1049,11 @@ class Build {
       INFOPLIST_FILE: Widget/Info.plist
       CODE_SIGN_ENTITLEMENTS: WidgetEntitlements.plist
       SKIP_INSTALL: true
+      LIBRARY_SEARCH_PATHS:
+        - "$(PROJECT_DIR)/lib"
+      OTHER_LDFLAGS:
+        - "-lhaxe"
+        - "-lc++"
 ';
         }
 
