@@ -808,6 +808,12 @@ class SwiftGenerator {
             "@_silgen_name(\"sui_glance_resample\")",
             "func sui_glance_resample()",
             "",
+            "/// Boot the Haxe runtime with no window and no view tree — what a",
+            "/// widget extension does before it can sample or act. A no-op after",
+            "/// the first call; the app itself boots through viewnode_boot.",
+            "@_silgen_name(\"sui_glance_boot_headless\")",
+            "func sui_glance_boot_headless()",
+            "",
             "@_cdecl(\"sui_glance_publish\")",
             "public func sui_glance_publish(_ json: UnsafePointer<CChar>) {",
             "    SuiGlanceStore.write(String(cString: json))",
@@ -1015,6 +1021,35 @@ class SwiftGenerator {
         // saw in the app is what the widget should show.
         if (declaresGlanceSurface(cls)) {
             buf.add("\n#include <sui/mui/GlancePublish.h>\n");
+
+            // Boot with NO mounting, for a process that has no window.
+            //
+            // A widget extension is a separate binary: it can link this same
+            // runtime, but it has no view tree to hand anyone and no business
+            // building one. So it boots hxcpp, constructs the application, and
+            // stops — which is enough, because `sui.mui.App`'s constructor
+            // calls `GlanceBridge.attach(this)`, so the instance is reachable
+            // for sampling from that moment.
+            //
+            // `viewnode_boot` would additionally call `setApp`, which builds
+            // the whole Primary tree: work nobody in this process will read,
+            // paid inside a widget's very small budget.
+            buf.add("extern \"C\" void sui_glance_boot_headless(void) {\n");
+            buf.add("    static bool _headlessBooted = false;\n");
+            buf.add("    if (_headlessBooted) return;\n");
+            buf.add("    int dummy = 0;\n");
+            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    try {\n");
+            buf.add("        hx::Boot(); __boot_all();\n");
+            buf.add('        $cppSym::__new();\n');
+            buf.add("        _headlessBooted = true;\n");
+            buf.add("    } catch (::Dynamic _e) {\n");
+            buf.add('        fprintf(stderr, "[sui] headless boot: Haxe exception\\n");\n');
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] headless boot: C++ exception\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n");
+
             buf.add("extern \"C\" void sui_glance_resample(void) {\n");
             buf.add("    int dummy = 0;\n");
             buf.add("    hx::SetTopOfStack(&dummy, true);\n");
