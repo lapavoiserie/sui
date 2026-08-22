@@ -9,3 +9,6 @@ DerivedData/
 *.pch
 .DS_Store
 *.usdz
+
+# Editing leftovers. Two of these rode into a commit on a `git add -A`.
+*.bak
