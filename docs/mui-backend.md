@@ -95,6 +95,15 @@ whole.
   extension, and an entitlements file the build copies is an entitlements file
   "modified during the build".
 
+And one thing that is *not* a trap, recorded because it cost hours anyway:
+**the widget gallery populates when you tap its search field.** An empty
+gallery is not evidence of anything. Nor is the line `Filtering out extension
+… no descriptors` in `chronod`'s log: it is the ordinary purge that precedes
+`Updating descriptor cache`, and it appears in builds that work perfectly. If
+you need to know whether the system has your widget, the question to ask is
+whether `Updating descriptor cache` appears, and the place to ask it is
+`xcrun simctl spawn <UDID> log show --predicate 'subsystem == "com.apple.chrono"'`.
+
 ### What is not built yet
 
 **iOS only.** A macOS widget is not more code, it is a signing identity:
