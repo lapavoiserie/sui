@@ -355,13 +355,22 @@ class Build {
         // draws. It is a SEPARATE BINARY with its own sandbox, so it gets its
         // own directory rather than joining Sources — and the two of them can
         // only meet through an App Group, which both must be entitled to.
-        // iOS only, for now, and the reason is signing rather than WidgetKit:
-        // macOS refuses to build a target carrying an entitlements file
-        // without a provisioning profile ("requires a provisioning profile"),
-        // while the iOS simulator is content with ad-hoc signing. An App Group
-        // is the only way an app and its extension can share anything, so a
-        // macOS widget waits for a signing identity — not for more code.
-        var hasWidget = platform == "ios" && FileSystem.exists('$swiftGenDir/Widget');
+        //
+        // iOS and visionOS. Both are ad-hoc signed on their simulators, which
+        // is all an App Group entitlement needs there. **macOS is the one left
+        // out, and for signing rather than for WidgetKit**: it refuses to build
+        // a target carrying an entitlements file without a provisioning profile
+        // ("requires a provisioning profile"). A macOS widget waits for a
+        // signing identity, not for more code.
+        //
+        // The generator has been emitting the widget's Swift for every platform
+        // that declares Glance all along; this condition was the only thing
+        // throwing it away. Which is worth noting as its own small lesson: the
+        // visionOS widget was one boolean from existing, and nothing said so,
+        // because a build that quietly produces less than it could looks
+        // exactly like a build that produced everything.
+        var hasWidget = (platform == "ios" || platform == "visionos")
+            && FileSystem.exists('$swiftGenDir/Widget');
         if (!hasWidget) clearWidget(buildDir);
         if (hasWidget) {
             ensureDirectory('$buildDir/Widget');
