@@ -44,7 +44,11 @@ class SwiftGenerator {
             // one has no renderer vocabulary to be outside of.
             sui.macros.DynamicCoverage.register();
         }
-        var outputDir = Context.defined("swift-output") ? Context.definedValue("swift-output") : "build/swift";
+        // Where this build writes. Both directories are the caller's to name,
+        // because one build file serves three platforms and cannot name three
+        // outputs -- see sui.macros.Output for what that cost before.
+        sui.macros.Output.redirectCpp();
+        var outputDir = sui.macros.Output.swiftDir();
 
         Context.onGenerate(function(types:Array<haxe.macro.Type>) {
             // First pass: collect Observable structs and ViewComponent types
@@ -4567,12 +4571,21 @@ class SwiftGenerator {
         return s;
     }
 
+    /**
+        Create a directory and every parent of it.
+
+        The leading separator is kept. Dropping it turned an absolute path into
+        a relative one — `/Users/x/build` became `Users/x/build` under the
+        current directory — which nothing noticed while the only caller passed
+        `build/swift`, and which failed the moment the output directory became
+        absolute.
+    **/
     static function ensureDir(path:String):Void {
         var parts = path.split("/");
-        var current = "";
+        var current = path.charAt(0) == "/" ? "" : null;
         for (part in parts) {
             if (part == "") continue;
-            current = current == "" ? part : '$current/$part';
+            current = current == null ? part : '$current/$part';
             if (!sys.FileSystem.exists(current))
                 sys.FileSystem.createDirectory(current);
         }

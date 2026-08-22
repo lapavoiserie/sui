@@ -37,12 +37,19 @@ class Build {
         // Device flag: --device or --device=MyiPhone
         var forDevice = false;
         var deviceName:String = null;
+        // The freshness check watches this project's sources and sui's own; it
+        // cannot watch every -lib in the build file without resolving them all.
+        // So a change in rui, nui, kui or mui is invisible to it, and this is
+        // the honest way out rather than a heuristic that is right most days.
+        var force = false;
         for (arg in args) {
             if (arg == "--device") {
                 forDevice = true;
             } else if (arg.startsWith("--device=")) {
                 forDevice = true;
                 deviceName = arg.substr(9);
+            } else if (arg == "--force") {
+                force = true;
             }
         }
 
@@ -74,25 +81,56 @@ class Build {
         }
 
         var buildDir = '$cwd/build/$platform';
+        // The generated trees are this platform's, not the project's. One
+        // build file serves three platforms and can only name one output, so
+        // for years all three wrote into build/cpp and build/swift and nothing
+        // ever pruned either -- see sui.macros.Output for what that cost.
+        //
+        // Under build/<platform>/ rather than build/cpp/<platform>/, so that
+        // `rm -rf build/ios` is a complete and obvious per-platform clean and
+        // the legacy shared tree is left standing alone where it can be
+        // deleted without taking anything good with it.
+        var cppOut = '$buildDir/cpp';
+        var swiftGenDir = '$buildDir/swift';
         ensureDirectory(buildDir);
         ensureDirectory('$buildDir/Sources');
 
         // Step 1: Run Haxe compiler — generates both C++ and Swift via macro
         // Check if we can skip recompilation (incremental rebuild)
         var oldCwd = Sys.getCwd();
-        var needsRecompile = !isHxcppUpToDate(cwd, platform, hotReload);
+        Sys.setCwd(cwd);
+        var buildFile = resolveBuildFile();
+        Sys.setCwd(oldCwd);
+        if (buildFile == null) {
+            Sys.println("Error: no build file. Looked for build-sui.hxml, then build.hxml.");
+            Sys.exit(1);
+        }
+        var needsRecompile = force || !isHxcppUpToDate(cwd, platform, hotReload, forDevice, buildFile);
 
         if (needsRecompile) {
             Sys.println("[1/3] Compiling Haxe (C++ & Swift generation)...");
             Sys.setCwd(cwd);
             // Pass platform define for conditional compilation (#if sui_ios, #if sui_macos, #if sui_visionos)
-            var buildFile = resolveBuildFile();
-            if (buildFile == null) {
-                Sys.println("Error: no build file. Looked for build-sui.hxml, then build.hxml.");
-                Sys.exit(1);
-            }
             Sys.println('  Compiling $buildFile');
-            var haxeArgs = [buildFile, "-D", 'sui_$platform'];
+            var haxeArgs = [buildFile, "-D", 'sui_$platform', "-D", 'cpp-output=$cppOut', "-D", 'swift-output=$swiftGenDir'];
+
+            // Wipe the Swift tree before every compile. SwiftGenerator writes
+            // all of it, so nothing is lost -- and afterwards the presence of
+            // `Widget/` or `HaxeBridgeC.cpp` is a statement about THIS compile
+            // rather than about some earlier one. Two of this file's tests
+            // (hasWidget, isBridgeApp) are file-existence probes, and that is
+            // what makes them exact.
+            removeDirectoryContents(swiftGenDir);
+
+            // And the kui manifest, so that its existence afterwards means
+            // this build wrote it. `kui.macros.Emit` deliberately writes
+            // nothing when a build declares no native payload -- a documented
+            // contract with a test behind it -- so without this the previous
+            // build's file survives and gets read as if it were ours. One line
+            // here beats changing another library's contract.
+            var kuiSidecar = '$cppOut/kui-payload.json';
+            if (FileSystem.exists(kuiSidecar)) FileSystem.deleteFile(kuiSidecar);
+
             // Dynamic renderer: SwiftGenerator emits SuiBootC.cpp and force-keeps
             // the bridge classes only under this define.
             if (staticPath) { haxeArgs.push("-D"); haxeArgs.push("sui_static"); }
@@ -104,23 +142,34 @@ class Build {
                 haxeArgs.push("-D");
                 haxeArgs.push(forDevice ? "xros" : "xrsimulator");
             }
+            var startedAt = Sys.time();
             var haxeResult = Sys.command("haxe", haxeArgs);
             Sys.setCwd(oldCwd);
             if (haxeResult != 0) {
                 Sys.println("Error: Haxe compilation failed.");
                 Sys.exit(1);
             }
+            // The redirect has to be checked, not assumed. One test catches
+            // all of: the generator macro missing from the build file, the
+            // define ignored, and a haxe that exited 0 without generating.
+            if (!FileSystem.exists('$cppOut/Build.xml')
+                || FileSystem.stat('$cppOut/Build.xml').mtime.getTime() / 1000 < startedAt - 2) {
+                Sys.println('Error: no C++ was generated in $cppOut.');
+                Sys.println('  The build file did not honour -D cpp-output. Is');
+                Sys.println('    --macro sui.macros.SwiftGenerator.register()');
+                Sys.println('  present in $buildFile?');
+                Sys.exit(1);
+            }
             // Record what this output is for, so the next build can tell
             // "nothing changed" from "you asked for something else".
             try {
-                File.saveContent(stampPath(cwd), buildStamp(platform, hotReload));
+                File.saveContent(stampPath(cwd, platform), buildStamp(platform, hotReload, forDevice));
             } catch (_:Dynamic) {}
         } else {
             Sys.println("[1/3] Haxe unchanged, skipping recompilation...");
         }
 
         // Check for generated files
-        var swiftGenDir = '$cwd/build/swift';
         if (!FileSystem.exists(swiftGenDir)) {
             Sys.println("Error: No Swift files generated. Is --macro sui.macros.SwiftGenerator.register() in build.hxml?");
             Sys.exit(1);
@@ -160,7 +209,7 @@ class Build {
             // objects, and `ar` answers "Inappropriate file type or format" --
             // which reads as a broken build rather than as two builds in one
             // box. Take only the toolchain this target uses.
-            var cppObjDir = objDirFor('$cwd/build/cpp/obj', platform, forDevice);
+            var cppObjDir = objDirFor('$cppOut/obj', platform, forDevice);
             if (cppObjDir != null && FileSystem.exists(cppObjDir)) {
                 // Collect all .o files
                 var oFiles:Array<String> = [];
@@ -189,7 +238,7 @@ class Build {
             var clangArgs = [
                 "-c", "-std=c++17",
                 '-I$hxcppDir/include',
-                '-I$cwd/build/cpp/include',
+                '-I$cppOut/include',
                 platformDefine, "-DHXCPP_M64",
                 "-DHXCPP_VISIT_ALLOCS", "-DHX_SMART_STRINGS",
                 "-DHXCPP_API_LEVEL=430",
@@ -259,10 +308,15 @@ class Build {
         // is the only way an app and its extension can share anything, so a
         // macOS widget waits for a signing identity — not for more code.
         var hasWidget = platform == "ios" && FileSystem.exists('$swiftGenDir/Widget');
+        if (!hasWidget) clearWidget(buildDir);
         if (hasWidget) {
             ensureDirectory('$buildDir/Widget');
+            // Copied only when the content differs, for the same reason the
+            // entitlements below are: touching Widget/Info.plist or the
+            // extension's Swift forces a full extension recompile every build,
+            // and xcodebuild refuses an entitlements file whose mtime moved.
             for (file in FileSystem.readDirectory('$swiftGenDir/Widget'))
-                File.copy('$swiftGenDir/Widget/$file', '$buildDir/Widget/$file');
+                copyIfDifferent('$swiftGenDir/Widget/$file', '$buildDir/Widget/$file');
             var group = 'group.${config.bundleIdentifier}';
             // Written only when the content changes: xcodebuild refuses an
             // entitlements file whose mtime moved since the last build
@@ -305,7 +359,7 @@ class Build {
 
         // Copy user-provided Swift files from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
-        copyKuiSwiftFiles(cwd, buildDir);
+        copyKuiSwiftFiles(cwd, platform, buildDir);
 
         // Read what kui capabilities need — here, and not beside
         // readProjectConfig where it started. The sidecar is written by the Haxe
@@ -314,7 +368,7 @@ class Build {
         // wrong platform's after switching targets. It cost an iOS build that
         // linked no UIKit while the macOS one linked IOKit correctly, which
         // looked like an iOS problem and was an ordering one.
-        mergeKuiPayload(cwd, config);
+        mergeKuiPayload(cwd, platform, config);
 
         // Generate project.yml
         File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge, hasWidget));
@@ -508,13 +562,40 @@ class Build {
         dynamic project, referring to symbols the dynamic library does not
         export. Xcode compiled them because they were on disk, not because
         anything asked for them. **/
-    static function clearSources(buildDir:String) {
-        var dir = '$buildDir/Sources';
-        if (!FileSystem.exists(dir)) return;
-        for (entry in FileSystem.readDirectory(dir)) {
-            var path = '$dir/$entry';
-            if (!FileSystem.isDirectory(path)) FileSystem.deleteFile(path);
+    /** Copy only when the bytes differ, so an unchanged file keeps its mtime.
+        Same reason as `saveIfDifferent`: on Apple, a moved mtime is not free —
+        it recompiles an extension, and on an entitlements file it is an
+        outright build failure. **/
+    static function copyIfDifferent(from:String, to:String) {
+        if (FileSystem.exists(to)) {
+            try {
+                if (File.getBytes(from).compare(File.getBytes(to)) == 0) return;
+            } catch (_:Dynamic) {}
         }
+        File.copy(from, to);
+    }
+
+    static function clearSources(buildDir:String) {
+        // Recursive. Skipping directories left whatever a previous build had
+        // put in one -- and the widget extension is a directory, so a Glance
+        // surface generated once kept its Swift beside every later build of
+        // the same platform.
+        removeDirectoryContents('$buildDir/Sources');
+    }
+
+    /**
+        Take down the widget extension's own files when this build has none.
+
+        `hasWidget` is now exact (the Swift tree is wiped before each compile),
+        but the *assembled* side is not swept by `clearSources`: `Widget/` and
+        the two entitlements files live beside `Sources/`, not in it. Left
+        behind, xcodegen keeps finding an Info.plist for an extension the
+        project no longer declares.
+    **/
+    static function clearWidget(buildDir:String) {
+        if (FileSystem.exists('$buildDir/Widget')) removeDirectoryTree('$buildDir/Widget');
+        for (plist in ["Entitlements.plist", "WidgetEntitlements.plist"])
+            if (FileSystem.exists('$buildDir/$plist')) FileSystem.deleteFile('$buildDir/$plist');
     }
 
     static function copyRuntimeFiles(buildDir:String) {
@@ -593,8 +674,8 @@ class Build {
 
         A project with no capabilities finds no sidecar and nothing changes.
     **/
-    static function mergeKuiPayload(cwd:String, config:ProjectConfig):Void {
-        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+    static function mergeKuiPayload(cwd:String, platform:String, config:ProjectConfig):Void {
+        var payload = readKuiPayload(cwd, platform);
         if (!payload.any()) return;
 
         var frameworks = payload.strings("xcode", "frameworks");
@@ -618,9 +699,37 @@ class Build {
         Sys.println("  [kui] " + payload.names().join(", "));
     }
 
+    /**
+        The kui manifest for THIS build, refusing one that is not.
+
+        The CLI deletes the file before every compile, so its presence here
+        means this build wrote it. The platform check is therefore unreachable
+        — which is exactly what makes it worth having: it fires only when one
+        of the isolation assumptions has broken, and it names both platforms
+        instead of quietly linking another one's frameworks.
+
+        Before the trees were separated, that is precisely what happened: a
+        visionOS project.yml inherited `-framework Foundation` from an iOS
+        build, because `kui.macros.Emit` writes nothing when a build declares
+        no payload and the previous file was still lying there.
+    **/
+    static function readKuiPayload(cwd:String, platform:String):kui.build.Sidecar {
+        var payload = kui.build.Sidecar.read('$cwd/build/$platform/cpp');
+        if (!payload.any()) return payload;
+
+        var declared = payload.platform();
+        if (declared != null && declared != platform) {
+            Sys.println('Error: build/$platform/cpp/kui-payload.json was written for "$declared".');
+            Sys.println('  A capability manifest from another platform would link that');
+            Sys.println("  platform's frameworks into this one. Run `sui clean` and rebuild.");
+            Sys.exit(1);
+        }
+        return payload;
+    }
+
     /** Swift a capability ships, copied beside the application's own. **/
-    static function copyKuiSwiftFiles(cwd:String, buildDir:String) {
-        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+    static function copyKuiSwiftFiles(cwd:String, platform:String, buildDir:String) {
+        var payload = readKuiPayload(cwd, platform);
         for (source in payload.strings("xcode", "sources")) {
             if (!FileSystem.exists(source)) {
                 Sys.println('  [kui] missing source: $source');
@@ -740,6 +849,35 @@ class Build {
         }
     }
 
+    /**
+        Empty a directory, keeping the directory itself.
+
+        Used on the Swift tree before every compile. The generator writes all
+        of it, so nothing is lost -- and what is *not* rewritten is precisely
+        the problem this removes: `hasWidget` and `isBridgeApp` are
+        file-existence probes, and a file from an earlier compile made them
+        answer about a build that is no longer happening. A widget generated
+        once for iOS kept the flag true for macOS for as long as the tree
+        stood.
+    **/
+    static function removeDirectoryContents(path:String) {
+        if (!FileSystem.exists(path)) return;
+        for (entry in FileSystem.readDirectory(path)) {
+            var child = '$path/$entry';
+            if (FileSystem.isDirectory(child)) removeDirectoryTree(child);
+            else FileSystem.deleteFile(child);
+        }
+    }
+
+    static function removeDirectoryTree(path:String) {
+        for (entry in FileSystem.readDirectory(path)) {
+            var child = '$path/$entry';
+            if (FileSystem.isDirectory(child)) removeDirectoryTree(child);
+            else FileSystem.deleteFile(child);
+        }
+        FileSystem.deleteDirectory(path);
+    }
+
     /** Check if hxcpp output is up-to-date (all .hx source files are older than build output). **/
     /** What the output in `build/` was produced for. **/
     /**
@@ -762,17 +900,31 @@ class Build {
         return null;
     }
 
-    static function buildStamp(platform:String, hotReload:Bool):String {
-        return platform + "|" + (hotReload ? "dynamic" : "static");
+    /**
+        What the output in `build/<platform>/` was produced for.
+
+        `forDevice` is in it because it changes everything: `-D iphoneos` and
+        `-D iphonesim` are a different SDK and a different architecture, and
+        without it `sui build ios --device` right after `sui build ios` was
+        judged "up to date" and shipped a simulator binary signed for a phone.
+
+        The leading version means an older stamp can never accidentally match a
+        newer format; bump it whenever what is in here changes.
+    **/
+    static function buildStamp(platform:String, hotReload:Bool, forDevice:Bool):String {
+        return "2|" + platform + "|" + (hotReload ? "dynamic" : "static") + "|" + (forDevice ? "device" : "sim");
     }
 
-    static function stampPath(cwd:String):String {
-        return '$cwd/build/.sui-build-mode';
+    /** Beside the platform's own tree, not at the root of `build/`: two
+        platforms had one stamp between them, so each switch invalidated the
+        other's perfectly good output. **/
+    static function stampPath(cwd:String, platform:String):String {
+        return '$cwd/build/$platform/.sui-build-stamp';
     }
 
-    static function isHxcppUpToDate(cwd:String, platform:String, hotReload:Bool):Bool {
-        var swiftDir = '$cwd/build/swift';
-        var cppDir = '$cwd/build/cpp';
+    static function isHxcppUpToDate(cwd:String, platform:String, hotReload:Bool, forDevice:Bool, buildFile:Null<String>):Bool {
+        var swiftDir = '$cwd/build/$platform/swift';
+        var cppDir = '$cwd/build/$platform/cpp';
 
         // Must have previous build output
         if (!FileSystem.exists(swiftDir) || !FileSystem.exists(cppDir)) return false;
@@ -785,10 +937,10 @@ class Build {
         // static build's Swift was copied into a dynamic project. That failed as
         // "cannot find 'AppState' in scope" -- a name from a mode the developer
         // had just left, in a file they never wrote.
-        var stamp = stampPath(cwd);
+        var stamp = stampPath(cwd, platform);
         if (!FileSystem.exists(stamp)) return false;
         try {
-            if (StringTools.trim(File.getContent(stamp)) != buildStamp(platform, hotReload)) return false;
+            if (StringTools.trim(File.getContent(stamp)) != buildStamp(platform, hotReload, forDevice)) return false;
         } catch (_:Dynamic) {
             return false;
         }
@@ -800,9 +952,11 @@ class Build {
         // Also check the sui library source
         var libSrc = getLibPath() + "/src";
         if (FileSystem.exists(libSrc)) newestSource = Math.max(newestSource, newestModTime(libSrc, ".hx"));
-        // Check build.hxml
-        if (FileSystem.exists('$cwd/build.hxml')) {
-            var stat = FileSystem.stat('$cwd/build.hxml');
+        // The build file that will actually be compiled -- which may be
+        // `build-sui.hxml`. Statting `build.hxml` unconditionally meant editing
+        // the one this project uses did not trigger a rebuild.
+        if (buildFile != null && FileSystem.exists('$cwd/$buildFile')) {
+            var stat = FileSystem.stat('$cwd/$buildFile');
             newestSource = Math.max(newestSource, stat.mtime.getTime());
         }
         // Check sui.json
@@ -816,11 +970,19 @@ class Build {
 
         if (newestSource == 0) return false;
 
-        // Find oldest Swift output file
-        var oldestOutput = newestModTime(swiftDir, ".swift");
-        if (oldestOutput == 0) return false;
-
-        return newestSource < oldestOutput;
+        // Against Build.xml, which hxcpp writes at the end of a successful
+        // generation. The previous version took the NEWEST .swift as the
+        // baseline while its comment said "oldest" -- so a source edited after
+        // some outputs but before others read as up to date. One file written
+        // once, at a known moment, has no such gap.
+        //
+        // Not covered, and worth saying rather than pretending: a change in
+        // `rui`, `nui`, `kui` or `mui` is not seen, because resolving those
+        // would mean resolving every -lib in the build file. `sui build
+        // --force` is the honest way out.
+        var generated = '$cppDir/Build.xml';
+        if (!FileSystem.exists(generated)) return false;
+        return newestSource < FileSystem.stat(generated).mtime.getTime();
     }
 
     /** Get the newest modification time of files with given extension in a directory (recursive). **/
