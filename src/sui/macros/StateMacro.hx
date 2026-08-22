@@ -164,10 +164,12 @@ class StateMacro {
 
         for (field in fields) {
             var isState = false;
+            var stateMeta:Null<MetadataEntry> = null;
             if (field.meta != null) {
                 for (m in field.meta) {
                     if (m.name == ":state") {
                         isState = true;
+                        stateMeta = m;
                         break;
                     }
                 }
@@ -199,6 +201,15 @@ class StateMacro {
             var fieldName = field.name;
             stateFieldNames.set(fieldName, true);
 
+            // `@:state(durable)` -- the cell is born from the device store
+            // rather than from the default. Wrapping the default expression
+            // matters here more than anywhere: sui's State constructor pushes
+            // the initial value to Swift, so a cell corrected after
+            // construction would leave the screen on the default.
+            var durable = rui.macros.DurableState.requestOf(field, stateMeta, origType);
+            if (durable != null)
+                defaultExpr = rui.macros.DurableState.hydrate(durable, defaultExpr);
+
             var stateType:ComplexType = TPath({
                 pack: ["sui", "state"],
                 name: "State",
@@ -216,6 +227,8 @@ class StateMacro {
 
             var nameExpr = macro $v{fieldName};
             stateInits.push(macro $i{fieldName} = new sui.state.State($defaultExpr, $nameExpr));
+            if (durable != null)
+                stateInits.push(rui.macros.DurableState.bindCall(durable, macro this, fieldName, field.pos));
         }
 
         // Walk every method body, replacing bridged-modifier calls

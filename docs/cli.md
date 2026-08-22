@@ -91,14 +91,31 @@ MyApp/
   project.yml          # xcodegen project specification
 ```
 
-After `build`, additional artifacts are created:
+After `build`, everything a platform needs lives under one directory named
+after it:
 
 ```
 MyApp/
-  export/              # hxcpp C++ output
-  generated/           # Generated Swift files
-  build/               # Xcode build products
-  project.xcodeproj/   # Generated Xcode project
+  build/
+    ios/
+      cpp/             # generated C++, Build.xml, obj/, kui-payload.json
+      swift/           # generated Swift
+      lib/             # libhxcpp-sim.a (hxcpp's) and libhaxe.a (that + the bridge)
+      Sources/         # what Xcode compiles
+      Widget/          # the widget extension, when one is declared
+      MyApp.xcodeproj/
+      DerivedData/
+      .sui-build-stamp
+    macos/  visionos/  # the same shape, one per platform built
 ```
 
-Use `clean` to remove all generated artifacts.
+One directory per platform, so `rm -rf build/ios` is a complete per-platform
+clean and no two platforms can see each other's output. They used to share
+`build/cpp` and `build/swift`, which is how one platform's objects — and
+another *backend*'s — ended up inside a library.
+
+`clean` removes the whole `build/` tree.
+
+A hand-run `haxe build-sui.hxml` still writes wherever its own `-cpp` says,
+usually `build/cpp`. That tree belongs to whoever runs haxe directly; `sui
+build` neither reads nor writes it.

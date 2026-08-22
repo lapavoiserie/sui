@@ -1,0 +1,119 @@
+<xml>
+
+<!--
+  visionOS device, for hxcpp.
+
+  hxcpp 4.3.2 ships toolchains for iphoneos, iphonesim, appletvos, appletvsim,
+  watchos and watchsimulator, and none for visionOS. `BuildTool.setDefaultToolchain`
+  therefore has no branch for `-D xros`, the define is inert, and a
+  "visionOS" build silently compiled with the **mac** toolchain — after which
+  sui's CLI archived whatever iPhone-simulator objects an earlier build had
+  left lying around. That is the hole this file fills.
+
+  The device half of `xrsimulator-toolchain.xml`; read that file for how hxcpp
+  is made to find either of them. The only differences here are the SDK name
+  and a target triple with no `-simulator` suffix.
+
+  ## What differs from iphonesim-toolchain.xml, and why
+
+  - **`-target arm64-apple-xros<min>`** rather than `-arch` plus
+    `-miphoneos-version-min` plus an explicit `-isysroot`. `xcrun --sdk` sets
+    SDKROOT, which clang honours; the iPhone file's `-isysroot` is a
+    `${DEVELOPER_DIR}` path carrying an SDK version number, which cannot be
+    written portably here.
+  - **arm64.** The only architecture Apple Vision Pro runs.
+  - **Its own objdir.** `obj/xros…`, so visionOS objects can never be
+    confused with another platform's. The absence of exactly this line is why
+    they were landing in `obj/darwinarm64`.
+
+  The compiler flags themselves come from hxcpp's own `gcc-toolchain.xml` and
+  `common-defines.xml`, included below, rather than being copied here — a
+  second copy of a flag list is a second thing to drift.
+-->
+
+<set name="HXCPP_CPP11" value="1" unless="HXCPP_NO_CPP11" />
+<set name="ARCH" value="-64" if="HXCPP_M64" />
+
+<set name="SUI_XROS_MIN" value="2.0" unless="SUI_XROS_MIN" />
+
+<set name="HXCPP_USE_LIBTOOL" value="1" />
+<set name="HXCPP_LIBTOOL" value="xcrun --sdk xros libtool" />
+<include name="toolchain/gcc-toolchain.xml"/>
+
+<set name="OBJGCC" value="-c11" if="HXCPP_CPP11" />
+<set name="OBJDBG" value="-dbg" if="debug" />
+
+<!-- The toolchain states its own preconditions. Without static_link the haxe
+     target emits __main__.o, whose C main() clashes with Swift's @main entry,
+     and the archive this produces cannot be linked into an app. -->
+<error value="sui's visionOS toolchain needs -D static_link=1" unless="static_link" />
+
+<compiler id="xrOS" exe="clang++" if="xros">
+  <exe name="xcrun --sdk xros clang++" />
+  <flag value="-c"/>
+  <pchflag value="-x" />
+  <pchflag value="c++-header" />
+  <cppflag value="-stdlib=libc++" />
+  <cppflag value="-std=c++11" if="HXCPP_CPP11" />
+  <mmflag value="-stdlib=libc++" />
+  <mmflag value="-std=c++11" if="HXCPP_CPP11" />
+  <flag value="-g" if="HXCPP_DEBUG_LINK"/>
+  <flag value="-O2" unless="debug"/>
+  <flag value="-fmessage-length=0"/>
+  <flag value="-pipe"/>
+  <flag value="-Wno-trigraphs"/>
+  <flag value="-fno-stack-protector"/>
+  <flag value="-Wno-overflow" />
+  <cppflag value="-Wno-invalid-offsetof" />
+  <cppflag value="-Wno-return-type-c-linkage" />
+  <mmflag value="-Wno-return-type-c-linkage" />
+  <flag value="-fpascal-strings"/>
+  <flag value="-Wreturn-type"/>
+  <mmflag value="-fobjc-arc" if="OBJC_ARC" />
+  <flag value="-DOBJC_ARC" if="OBJC_ARC" />
+  <flag value="-Wno-unused-variable"/>
+
+  <flag value="-target"/>
+  <flag value="arm64-apple-xros${SUI_XROS_MIN}"/>
+
+  <!-- `IPHONE` is BORROWED, not claimed. hxcpp guards the calls an Apple
+       embedded platform does not have — `system`, `fork`, the process API —
+       on `IPHONE || APPLETV || HX_APPLEWATCH` (src/hx/libs/std/Sys.cpp:43,
+       :299, :809), and it knows no name for visionOS. Without one of those,
+       `Sys.cpp` fails to compile with "'system' is unavailable: not available
+       on visionOS" — the platform itself saying what hxcpp has not been told.
+       visionOS is iOS-derived and shares exactly those restrictions, so this
+       is the honest name to borrow until hxcpp has its own.
+       `HX_VISIONOS` below is what Haxe code should branch on. -->
+  <flag value="-DIPHONE=IPHONE"/>
+  <flag value="-DHX_VISIONOS=HX_VISIONOS"/>
+  <flag value="-DXROS=XROS"/>
+  <flag value="-Wno-parentheses" />
+  <flag value="-Wno-null-dereference" />
+  <flag value="-Wno-unused-value" />
+  <flag value="-Wno-bool-conversion" />
+  <include name="toolchain/common-defines.xml" />
+  <flag value="-I${HXCPP}/include"/>
+  <flag value="-fexceptions"/>
+  <flag value="-fstrict-aliasing"/>
+
+  <outflag value="-o"/>
+  <ext value=".o"/>
+  <objdir value="obj/xros${OBJGCC}${OBJDBG}/" />
+</compiler>
+
+<linker id="dll" exe="clang++" >
+  <exe name="xcrun --sdk xros clang++" />
+  <flag value="-stdlib=libc++" />
+  <flag value="-dynamiclib"/>
+  <flag value="-target"/>
+  <flag value="arm64-apple-xros${SUI_XROS_MIN}"/>
+  <flag value="-Wl,-undefined,dynamic_lookup"/>
+  <flag value="-fpic"/>
+  <flag value="-fPIC"/>
+  <flag value="-fvisibility=hidden"/>
+  <ext value=".xros.dylib"/>
+  <outflag value="-o "/>
+</linker>
+
+</xml>

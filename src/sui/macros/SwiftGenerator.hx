@@ -44,7 +44,11 @@ class SwiftGenerator {
             // one has no renderer vocabulary to be outside of.
             sui.macros.DynamicCoverage.register();
         }
-        var outputDir = Context.defined("swift-output") ? Context.definedValue("swift-output") : "build/swift";
+        // Where this build writes. Both directories are the caller's to name,
+        // because one build file serves three platforms and cannot name three
+        // outputs -- see sui.macros.Output for what that cost before.
+        sui.macros.Output.redirectCpp();
+        var outputDir = sui.macros.Output.swiftDir();
 
         Context.onGenerate(function(types:Array<haxe.macro.Type>) {
             // First pass: collect Observable structs and ViewComponent types
@@ -439,10 +443,31 @@ class SwiftGenerator {
         if (needsAppStateInApp) {
             appSwift.add("\n    @Bindable var appState = AppState.shared\n");
         }
+        // A Glance surface is a snapshot: something has to say when the
+        // picture is worth retaking. The application says so itself with
+        // `mui.surface.Resample.request`, and the host says so when the
+        // application leaves the foreground — the same moment aui publishes
+        // on, and the honest one: what you last saw is what the widget should
+        // show.
+        var hasGlance = declaresGlanceSurface(cls);
+        if (hasGlance) {
+            appSwift.add("    @Environment(\\.scenePhase) private var scenePhase\n\n");
+        }
+
         appSwift.add("\n    var body: some Scene {\n");
         appSwift.add('        WindowGroup("${esc(appName)}") {\n');
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
+        if (hasGlance) {
+            appSwift.add("        .onChange(of: scenePhase) { _, phase in\n");
+            // Leaving: publish, so the widget shows what was last seen.
+            // Arriving: rehydrate, because the widget's own process may have
+            // written a durable cell while this one was away -- which is the
+            // whole point of the widget's buttons doing anything.
+            appSwift.add("            if phase == .active { sui_app_resumed() }\n");
+            appSwift.add("            else { sui_glance_resample() }\n");
+            appSwift.add("        }\n");
+        }
         if (commandsSwift != "" && !dynamicMode) {
             appSwift.add("        .commands {\n");
             appSwift.add(commandsSwift);
@@ -660,6 +685,24 @@ class SwiftGenerator {
             sys.io.File.saveContent('$outputDir/SuiBootC.cpp', generateBootCpp(cls));
         }
 
+        // The snapshot shim, emitted for EVERY application.
+        //
+        // `sui.mui.GlancePublish` calls this symbol, and that class is
+        // compiled into any app that touches `mui.surface.Resample` — so a
+        // symbol that existed only for widget-declaring apps would turn a
+        // missing feature into a link error. With no widget it stores the
+        // snapshot and reloads nothing, which costs a write nobody reads.
+        sys.io.File.saveContent('$outputDir/SuiGlanceShim.swift', generateGlanceShim(declaresGlanceSurface(cls)));
+
+        // The widget itself, only for an application that declares the
+        // surface it draws.
+        if (declaresGlanceSurface(cls)) {
+            var widgetDir = outputDir + "/Widget";
+            ensureDir(widgetDir);
+            sys.io.File.saveContent('$widgetDir/SuiGlanceWidget.swift', generateGlanceWidget(className));
+            sys.io.File.saveContent('$widgetDir/Info.plist', glanceWidgetInfoPlist());
+        }
+
         // Generate Swift structs for ViewComponent subclasses.
         //
         // Static path only. A component's struct reads `appState`, which a
@@ -694,6 +737,323 @@ class SwiftGenerator {
         instantiation uses the direct hxcpp symbol (as the static bridge does),
         which is more robust than reflection and forces the app + ViewNodeBridge
         symbols to be linked. Mirrors the boot sequence of `haxe_bridge_init`. **/
+    /**
+        Whether this application declares a `Glance` surface — the widget is
+        emitted only when it does. Read off the metadata: this runs at
+        generation time, before anything has run.
+    **/
+    static function declaresGlanceSurface(cls:haxe.macro.Type.ClassType):Bool {
+        var at = cls;
+        while (at != null) {
+            for (field in at.fields.get()) {
+                if (!field.meta.has(":surface")) continue;
+                for (m in field.meta.extract(":surface")) {
+                    if (m.params == null || m.params.length == 0) continue;
+                    switch (m.params[0].expr) {
+                        case EConst(CIdent("Glance")): return true;
+                        case _:
+                    }
+                }
+            }
+            at = at.superClass == null ? null : at.superClass.t.get();
+        }
+        return false;
+    }
+
+    /**
+        The C symbol `sui.mui.GlancePublish` calls, and the only place the two
+        binaries meet.
+
+        A WidgetKit widget is a separate binary in its own sandbox: it cannot
+        call this application, and this application cannot draw into it. What
+        they share is an **App Group container**, so publishing a snapshot is
+        writing it there and asking WidgetCenter to reload — the extension
+        then reads what it finds, whenever the system next lets it draw.
+
+        The group is derived from the bundle identifier rather than written in
+        by the generator, which does not know it: it comes from `sui.json` and
+        is applied by the CLI. Both binaries can compute the same name from
+        their own — the extension's id is the app's plus a suffix.
+    **/
+    static function generateGlanceShim(hasWidget:Bool):String {
+        var lines = [
+            "// AUTO-GENERATED by sui.macros.SwiftGenerator — do not edit.",
+            "import Foundation",
+        ];
+        if (hasWidget) lines.push("import WidgetKit");
+        lines = lines.concat([
+            "",
+            "/// Where a published snapshot is left for the widget to find.",
+            "///",
+            "/// Emitted for every application, widget or not: `sui.mui.GlancePublish`",
+            "/// is compiled into any app that touches `mui.surface.Resample`, and a",
+            "/// symbol that existed only for widget-declaring apps would turn a",
+            "/// missing feature into a link error.",
+            "enum SuiGlanceStore {",
+            "    /// The app's own identifier, whichever binary is asking: an",
+            "    /// extension's is the app's with a suffix.",
+            "    static var appBundleId: String {",
+            "        let id = Bundle.main.bundleIdentifier ?? \"\"",
+            "        return id.hasSuffix(\".glancewidget\")",
+            "            ? String(id.dropLast(\".glancewidget\".count))",
+            "            : id",
+            "    }",
+            "",
+            "    static var groupId: String { \"group.\" + appBundleId }",
+            "    static let key = \"sui.glance.snapshot\"",
+            "",
+            "    static func write(_ json: String) {",
+            "        UserDefaults(suiteName: groupId)?.set(json, forKey: key)",
+            "    }",
+            "",
+            "    static func read() -> String? {",
+            "        UserDefaults(suiteName: groupId)?.string(forKey: key)",
+            "    }",
+            "}",
+            "",
+            "/// The other direction: Swift asking for a new sample. Declared here",
+            "/// rather than in a bridging header, which would make every sui app",
+            "/// carry a symbol only a widget-declaring one defines.",
+            "@_silgen_name(\"sui_glance_resample\")",
+            "func sui_glance_resample()",
+            "",
+            "/// Boot the Haxe runtime with no window and no view tree — what a",
+            "/// widget extension does before it can sample or act. A no-op after",
+            "/// the first call; the app itself boots through viewnode_boot.",
+            "@_silgen_name(\"sui_glance_boot_headless\")",
+            "func sui_glance_boot_headless()",
+            "",
+            "/// A tap, by the id the snapshot carried. Called from the widget",
+            "/// extension after a headless boot; the id resolves there because",
+            "/// snapshot ids are keyed by place, not by pointer.",
+            "@_silgen_name(\"sui_glance_invoke\")",
+            "func sui_glance_invoke(_ id: Int32)",
+            "",
+            "/// The application returning to the foreground: take in whatever",
+            "/// the widget's process wrote while this one was away.",
+            "@_silgen_name(\"sui_app_resumed\")",
+            "func sui_app_resumed()",
+            "",
+            "@_cdecl(\"sui_glance_publish\")",
+            "public func sui_glance_publish(_ json: UnsafePointer<CChar>) {",
+            "    SuiGlanceStore.write(String(cString: json))",
+        ]);
+        if (hasWidget) {
+            lines.push("    WidgetCenter.shared.reloadAllTimelines()");
+        } else {
+            lines.push("    // No widget in this application: the snapshot is stored and");
+            lines.push("    // nothing reads it. Cheaper than a symbol that does not exist.");
+        }
+        lines.push("}");
+        lines.push("");
+        return lines.join("\n");
+    }
+
+    /**
+        The widget extension: a WidgetKit timeline whose entry is the stored
+        snapshot, inflated into SwiftUI.
+
+        The vocabulary walked here is the canonical mui one the describers
+        emit — VStack/HStack/Text/Button — not SwiftUI's, so this reads the
+        same trees a cui sink or an Android widget would.
+
+        Interactive. A tap is an `AppIntent`, and the intent runs in the
+        extension's process — where the application's closures are not. Rather
+        than send the action anywhere, the extension **runs its own instance**:
+        it boots the same runtime headless, samples the same declaration, and
+        invokes the id. Place-keyed ids are what make that work at all.
+
+        Two instances of one application then exist, with two sets of cells.
+        `@:state(durable)` is what makes a cell the same value in both, which
+        is why the durable store had to land before this did.
+    **/
+    static function generateGlanceWidget(className:String):String {
+        var lines = [
+            "// AUTO-GENERATED by sui.macros.SwiftGenerator — do not edit.",
+            "import AppIntents",
+            "import SwiftUI",
+            "import WidgetKit",
+            "",
+            "/// What a tap in this widget is.",
+            "///",
+            "/// A widget is drawn by the launcher and touched there; what comes",
+            "/// back to us is this intent, run in the EXTENSION's process — where",
+            "/// the application's closures are not. So the extension boots the",
+            "/// same Haxe runtime, builds the same application, samples the same",
+            "/// declaration (which rebuilds an action table in this process), and",
+            "/// invokes. The id resolves because snapshot ids are keyed by place:",
+            "/// the button in the same slot gets the same id in both processes.",
+            "///",
+            "/// Whatever durable cell the closure writes lands in the App Group",
+            "/// store, and the application takes it in when it next comes to the",
+            "/// foreground. Anything not declared durable is this process's own,",
+            "/// and the application will never see it.",
+            "struct SuiGlanceAction: AppIntent {",
+            "    static var title: LocalizedStringResource = \"Glance action\"",
+            "",
+            "    @Parameter(title: \"action\") var action: Int",
+            "",
+            "    init() {}",
+            "    init(action: Int) { self.action = action }",
+            "",
+            "    func perform() async throws -> some IntentResult {",
+            "        sui_glance_boot_headless()",
+            "        sui_glance_invoke(Int32(action))",
+            "        return .result()",
+            "    }",
+            "}",
+            "",
+            "struct SuiGlanceEntry: TimelineEntry {",
+            "    let date: Date",
+            "    let json: String?",
+            "}",
+            "",
+            "struct SuiGlanceProvider: TimelineProvider {",
+            "    func placeholder(in context: Context) -> SuiGlanceEntry {",
+            "        SuiGlanceEntry(date: Date(), json: nil)",
+            "    }",
+            "",
+            "    func getSnapshot(in context: Context, completion: @escaping (SuiGlanceEntry) -> Void) {",
+            "        completion(SuiGlanceEntry(date: Date(), json: SuiGlanceStore.read()))",
+            "    }",
+            "",
+            "    /// One entry, never expiring on a schedule: this surface is not a",
+            "    /// clock. The application says when the picture changed, through",
+            "    /// mui.surface.Resample, and WidgetCenter reloads then.",
+            "    func getTimeline(in context: Context, completion: @escaping (Timeline<SuiGlanceEntry>) -> Void) {",
+            "        let entry = SuiGlanceEntry(date: Date(), json: SuiGlanceStore.read())",
+            "        completion(Timeline(entries: [entry], policy: .never))",
+            "    }",
+            "}",
+            "",
+            "/// One snapshot node, as SwiftUI.",
+            "struct SuiGlanceNode: View {",
+            "    let node: [String: Any]",
+            "",
+            "    var body: some View {",
+            "        let type = node[\"type\"] as? String ?? \"\"",
+            "        let props = node[\"props\"] as? [String: Any]",
+            "        switch type {",
+            "        case \"VStack\": VStack(alignment: .leading, spacing: 4) { children }",
+            "        case \"HStack\": HStack(spacing: 6) { children }",
+            "        case \"Text\": Text(props?[\"text\"] as? String ?? \"\")",
+            "        // A Button carries the id its closure was registered under,",
+            "        // in the snapshot's `actions` object rather than in `props`:",
+            "        // a callback is not a value, and nui keeps the two apart. An",
+            "        // absent key -- NOT a zero, which is a perfectly good id --",
+            "        // means the snapshot recorded no action, and it draws as a",
+            "        // label rather than as a control that does nothing.",
+            "        case \"Button\":",
+            "            let label = props?[\"label\"] as? String ?? \"\"",
+            "            let actions = node[\"actions\"] as? [String: Any]",
+            "            if let action = actions?[\"onClick\"] as? Int {",
+            "                Button(intent: SuiGlanceAction(action: action)) {",
+            "                    Text(label).bold()",
+            "                }",
+            "                .buttonStyle(.plain)",
+            "            } else {",
+            "                Text(label).bold()",
+            "            }",
+            "        // A type this widget has no drawing for is NAMED, not dropped:",
+            "        // the tree arrived as data, so a surprise is a fact about the",
+            "        // sender rather than a mistake in this build.",
+            "        default: Text(\"?\" + type).foregroundStyle(.secondary)",
+            "        }",
+            "    }",
+            "",
+            "    @ViewBuilder private var children: some View {",
+            "        let kids = node[\"children\"] as? [[String: Any]] ?? []",
+            "        ForEach(Array(kids.enumerated()), id: \\.offset) { _, kid in",
+            "            SuiGlanceNode(node: kid)",
+            "        }",
+            "    }",
+            "}",
+            "",
+            "struct SuiGlanceView: View {",
+            "    let entry: SuiGlanceEntry",
+            "",
+            "    var body: some View {",
+            "        if let json = entry.json,",
+            "           let data = json.data(using: .utf8),",
+            "           let tree = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {",
+            "            SuiGlanceNode(node: tree)",
+            "                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)",
+            "        } else {",
+            "            // Placed but never published to: the application has not run",
+            "            // since. Say so rather than draw a blank.",
+            "            Text(\"…\").foregroundStyle(.secondary)",
+            "        }",
+            "    }",
+            "}",
+            "",
+            "struct SuiGlanceWidget: Widget {",
+            "    var body: some WidgetConfiguration {",
+            "        StaticConfiguration(kind: \"SuiGlance\", provider: SuiGlanceProvider()) { entry in",
+            "            SuiGlanceView(entry: entry)",
+            "                .containerBackground(.fill.tertiary, for: .widget)",
+            "        }",
+            "        .configurationDisplayName(\"" + className + "\")",
+            "        .description(\"The application's @:surface(Glance) declaration.\")",
+            "        .supportedFamilies([.systemSmall, .systemMedium])",
+            "    }",
+            "}",
+            "",
+            "@main",
+            "struct SuiGlanceBundle: WidgetBundle {",
+            "    var body: some Widget { SuiGlanceWidget() }",
+            "}",
+            "",
+        ];
+        return lines.join("\n");
+    }
+
+    /**
+        What makes the extension a widget extension rather than any other —
+        and what tells Xcode who it is.
+
+        An explicit `INFOPLIST_FILE` turns OFF the synthesis that
+        `GENERATE_INFOPLIST_FILE` performs, so every key the build settings
+        would have filled in has to be here, referring back to them. Leaving
+        out `CFBundleIdentifier` produced an extension with none, and the only
+        thing said about it was "Embedded binary's bundle identifier is not
+        prefixed with the parent app's" — which points at the prefix rather
+        than at the absence.
+    **/
+    static function glanceWidgetInfoPlist():String {
+        return [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+            "<plist version=\"1.0\">",
+            "<dict>",
+            "\t<key>CFBundleDevelopmentRegion</key>",
+            "\t<string>$(DEVELOPMENT_LANGUAGE)</string>",
+            "\t<key>CFBundleDisplayName</key>",
+            "\t<string>$(PRODUCT_NAME)</string>",
+            "\t<key>CFBundleExecutable</key>",
+            "\t<string>$(EXECUTABLE_NAME)</string>",
+            "\t<key>CFBundleIdentifier</key>",
+            "\t<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>",
+            "\t<key>CFBundleInfoDictionaryVersion</key>",
+            "\t<string>6.0</string>",
+            "\t<key>CFBundleName</key>",
+            "\t<string>$(PRODUCT_NAME)</string>",
+            "\t<key>CFBundlePackageType</key>",
+            "\t<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>",
+            "\t<key>CFBundleShortVersionString</key>",
+            "\t<string>1.0</string>",
+            "\t<key>CFBundleVersion</key>",
+            "\t<string>1</string>",
+            "\t<key>NSExtension</key>",
+            "\t<dict>",
+            "\t\t<key>NSExtensionPointIdentifier</key>",
+            "\t\t<string>com.apple.widgetkit-extension</string>",
+            "\t</dict>",
+            "</dict>",
+            "</plist>",
+            ""
+        ].join("\n");
+    }
+
     static function generateBootCpp(cls:haxe.macro.Type.ClassType):String {
         var name = cls.name;
         var headerPath = cls.pack.length > 0 ? cls.pack.join("/") + "/" + name + ".h" : name + ".h";
@@ -719,6 +1079,86 @@ class SwiftGenerator {
         buf.add('        fprintf(stderr, "[sui] viewnode_boot: C++ exception during boot\\n");\n');
         buf.add("    }\n");
         buf.add("}\n");
+
+        // The way Swift asks for a new sample.
+        //
+        // Emitted only for an application that declares a Glance, because it
+        // names `sui.mui.GlancePublish` — a class a plain sui application,
+        // built without mui, does not have. The scene-phase observer in the
+        // generated App.swift calls this when the application leaves the
+        // foreground, which is the same moment aui publishes on: what you last
+        // saw in the app is what the widget should show.
+        if (declaresGlanceSurface(cls)) {
+            buf.add("\n#include <sui/mui/GlancePublish.h>\n");
+
+            // Boot with NO mounting, for a process that has no window.
+            //
+            // A widget extension is a separate binary: it can link this same
+            // runtime, but it has no view tree to hand anyone and no business
+            // building one. So it boots hxcpp, constructs the application, and
+            // stops — which is enough, because `sui.mui.App`'s constructor
+            // calls `GlanceBridge.attach(this)`, so the instance is reachable
+            // for sampling from that moment.
+            //
+            // `viewnode_boot` would additionally call `setApp`, which builds
+            // the whole Primary tree: work nobody in this process will read,
+            // paid inside a widget's very small budget.
+            buf.add("extern \"C\" void sui_glance_boot_headless(void) {\n");
+            buf.add("    static bool _headlessBooted = false;\n");
+            buf.add("    if (_headlessBooted) return;\n");
+            buf.add("    int dummy = 0;\n");
+            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    try {\n");
+            buf.add("        hx::Boot(); __boot_all();\n");
+            buf.add('        $cppSym::__new();\n');
+            buf.add("        _headlessBooted = true;\n");
+            buf.add("    } catch (::Dynamic _e) {\n");
+            buf.add('        fprintf(stderr, "[sui] headless boot: Haxe exception\\n");\n');
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] headless boot: C++ exception\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n");
+
+            buf.add("extern \"C\" void sui_glance_resample(void) {\n");
+            buf.add("    int dummy = 0;\n");
+            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::mui::GlancePublish_obj::resampleAndPublish();\n");
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] sui_glance_resample: exception while sampling\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n");
+
+            // A tap in the widget, arriving in the EXTENSION's process. What it
+            // carries is an id, because a closure cannot cross a process
+            // boundary -- and it resolves because ids are keyed by place, so
+            // sampling here hands the same button the same id the application
+            // gave it. See sui.mui.GlancePublish.invokeAndPublish for why the
+            // four steps inside are in that order.
+            buf.add("extern \"C\" void sui_glance_invoke(int id) {\n");
+            buf.add("    int dummy = 0;\n");
+            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::mui::GlancePublish_obj::invokeAndPublish(id);\n");
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] sui_glance_invoke: exception while acting\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n");
+
+            // The application coming back to the foreground. One integer read
+            // when nothing changed; what it catches is a durable cell the
+            // widget's process wrote while this one was away.
+            buf.add("extern \"C\" void sui_app_resumed(void) {\n");
+            buf.add("    int dummy = 0;\n");
+            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    try {\n");
+            buf.add("        ::sui::mui::GlancePublish_obj::resumed();\n");
+            buf.add("    } catch (...) {\n");
+            buf.add('        fprintf(stderr, "[sui] sui_app_resumed: exception while rehydrating\\n");\n');
+            buf.add("    }\n");
+            buf.add("}\n");
+        }
+
         return buf.toString();
     }
 
@@ -4131,12 +4571,21 @@ class SwiftGenerator {
         return s;
     }
 
+    /**
+        Create a directory and every parent of it.
+
+        The leading separator is kept. Dropping it turned an absolute path into
+        a relative one — `/Users/x/build` became `Users/x/build` under the
+        current directory — which nothing noticed while the only caller passed
+        `build/swift`, and which failed the moment the output directory became
+        absolute.
+    **/
     static function ensureDir(path:String):Void {
         var parts = path.split("/");
-        var current = "";
+        var current = path.charAt(0) == "/" ? "" : null;
         for (part in parts) {
             if (part == "") continue;
-            current = current == "" ? part : '$current/$part';
+            current = current == null ? part : '$current/$part';
             if (!sys.FileSystem.exists(current))
                 sys.FileSystem.createDirectory(current);
         }

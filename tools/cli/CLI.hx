@@ -88,6 +88,7 @@ Platforms:
 
 Options:
   --device             Build/run on a real device (requires signing)
+  --force              Recompile even if the output looks up to date
   --device=NAME        Target a specific device by name
   --release            Build Release configuration
   --verbose / -v       Show xcodebuild output

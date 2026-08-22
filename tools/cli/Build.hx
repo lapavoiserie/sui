@@ -37,12 +37,19 @@ class Build {
         // Device flag: --device or --device=MyiPhone
         var forDevice = false;
         var deviceName:String = null;
+        // The freshness check watches this project's sources and sui's own; it
+        // cannot watch every -lib in the build file without resolving them all.
+        // So a change in rui, nui, kui or mui is invisible to it, and this is
+        // the honest way out rather than a heuristic that is right most days.
+        var force = false;
         for (arg in args) {
             if (arg == "--device") {
                 forDevice = true;
             } else if (arg.startsWith("--device=")) {
                 forDevice = true;
                 deviceName = arg.substr(9);
+            } else if (arg == "--force") {
+                force = true;
             }
         }
 
@@ -74,25 +81,80 @@ class Build {
         }
 
         var buildDir = '$cwd/build/$platform';
+        // The generated trees are this platform's, not the project's. One
+        // build file serves three platforms and can only name one output, so
+        // for years all three wrote into build/cpp and build/swift and nothing
+        // ever pruned either -- see sui.macros.Output for what that cost.
+        //
+        // Under build/<platform>/ rather than build/cpp/<platform>/, so that
+        // `rm -rf build/ios` is a complete and obvious per-platform clean and
+        // the legacy shared tree is left standing alone where it can be
+        // deleted without taking anything good with it.
+        var cppOut = '$buildDir/cpp';
+        var swiftGenDir = '$buildDir/swift';
+        // hxcpp's own archive, named by us. Device and simulator differ in
+        // architecture and SDK, so they are different files.
+        var hxcppLib = '$buildDir/lib/libhxcpp-' + (forDevice ? "device" : "sim") + ".a";
         ensureDirectory(buildDir);
         ensureDirectory('$buildDir/Sources');
 
         // Step 1: Run Haxe compiler — generates both C++ and Swift via macro
         // Check if we can skip recompilation (incremental rebuild)
         var oldCwd = Sys.getCwd();
-        var needsRecompile = !isHxcppUpToDate(cwd, platform, hotReload);
+        Sys.setCwd(cwd);
+        var buildFile = resolveBuildFile();
+        Sys.setCwd(oldCwd);
+        if (buildFile == null) {
+            Sys.println("Error: no build file. Looked for build-sui.hxml, then build.hxml.");
+            Sys.exit(1);
+        }
+        var needsRecompile = force || !isHxcppUpToDate(cwd, platform, hotReload, forDevice, buildFile);
 
         if (needsRecompile) {
             Sys.println("[1/3] Compiling Haxe (C++ & Swift generation)...");
             Sys.setCwd(cwd);
             // Pass platform define for conditional compilation (#if sui_ios, #if sui_macos, #if sui_visionos)
-            var buildFile = resolveBuildFile();
-            if (buildFile == null) {
-                Sys.println("Error: no build file. Looked for build-sui.hxml, then build.hxml.");
-                Sys.exit(1);
-            }
             Sys.println('  Compiling $buildFile');
-            var haxeArgs = [buildFile, "-D", 'sui_$platform'];
+            var haxeArgs = [buildFile, "-D", 'sui_$platform', "-D", 'cpp-output=$cppOut', "-D", 'swift-output=$swiftGenDir'];
+
+            // Let hxcpp build the static library, and tell it exactly where.
+            //
+            // It already builds a correct one: `gcc-toolchain.xml`'s
+            // static_link linker carries <recreate value="1"/>, so the archive
+            // is made from scratch on every link and CANNOT carry a stale
+            // member. The CLI used to ignore it and re-archive an object
+            // directory by hand, which is how objects from other builds -- and
+            // from other backends -- got in.
+            //
+            // `finish-setup.xml` sets static_link automatically for the Apple
+            // embedded toolchains but not for macOS, where the haxe target then
+            // emits `__main__.o` (a C main() that clashes with Swift's @main,
+            // which is why the CLI filtered it by name) instead of `__lib__.o`.
+            // Setting it here makes all three platforms the same shape.
+            //
+            // The name is ours, so nothing has to be derived: no LIBEXTRA
+            // arithmetic, no glob, and device and simulator archives coexist
+            // instead of overwriting each other.
+            haxeArgs.push("-D"); haxeArgs.push("static_link=1");
+            haxeArgs.push("-D"); haxeArgs.push('HAXE_FULL_OUTPUT_NAME=$hxcppLib');
+
+            // Wipe the Swift tree before every compile. SwiftGenerator writes
+            // all of it, so nothing is lost -- and afterwards the presence of
+            // `Widget/` or `HaxeBridgeC.cpp` is a statement about THIS compile
+            // rather than about some earlier one. Two of this file's tests
+            // (hasWidget, isBridgeApp) are file-existence probes, and that is
+            // what makes them exact.
+            removeDirectoryContents(swiftGenDir);
+
+            // And the kui manifest, so that its existence afterwards means
+            // this build wrote it. `kui.macros.Emit` deliberately writes
+            // nothing when a build declares no native payload -- a documented
+            // contract with a test behind it -- so without this the previous
+            // build's file survives and gets read as if it were ours. One line
+            // here beats changing another library's contract.
+            var kuiSidecar = '$cppOut/kui-payload.json';
+            if (FileSystem.exists(kuiSidecar)) FileSystem.deleteFile(kuiSidecar);
+
             // Dynamic renderer: SwiftGenerator emits SuiBootC.cpp and force-keeps
             // the bridge classes only under this define.
             if (staticPath) { haxeArgs.push("-D"); haxeArgs.push("sui_static"); }
@@ -101,26 +163,58 @@ class Build {
                 haxeArgs.push("-D");
                 haxeArgs.push(forDevice ? "iphoneos" : "iphonesim");
             } else if (platform == "visionos") {
-                haxeArgs.push("-D");
-                haxeArgs.push(forDevice ? "xros" : "xrsimulator");
+                // hxcpp has no visionOS toolchain of its own, so sui ships two
+                // and puts them where hxcpp looks: it searches "." — its own
+                // working directory, which is the C++ output — for
+                // `toolchain/<name>-toolchain.xml`.
+                //
+                // Without this, `-D xrsimulator` is a define nothing reads:
+                // the build falls through to the mac toolchain and the objects
+                // land in obj/darwinarm64, after which the CLI used to archive
+                // an earlier iPhone build's objects instead. A visionOS app
+                // that was never compiled for visionOS, and nothing said so.
+                var chain = forDevice ? "xros" : "xrsimulator";
+                installToolchain(chain, cppOut);
+                haxeArgs.push("-D"); haxeArgs.push(chain);
+                haxeArgs.push("-D"); haxeArgs.push('toolchain=$chain');
+                // `setDefaultToolchain` is skipped entirely once `toolchain` is
+                // set (BuildTool.hx:155), so what it would have set has to be
+                // said here, and so does what `finish-setup.xml` conditions on
+                // the iPhone toolchains.
+                haxeArgs.push("-D"); haxeArgs.push("apple=apple");
+                haxeArgs.push("-D"); haxeArgs.push('LIBEXTRA=.$chain-64');
+                haxeArgs.push("-D"); haxeArgs.push("HXCPP_M64=1");
+                haxeArgs.push("-D"); haxeArgs.push("HXCPP_ARM64=1");
+                haxeArgs.push("-D"); haxeArgs.push('SUI_XROS_MIN=' + deploymentTarget(platform));
             }
+            var startedAt = Sys.time();
             var haxeResult = Sys.command("haxe", haxeArgs);
             Sys.setCwd(oldCwd);
             if (haxeResult != 0) {
                 Sys.println("Error: Haxe compilation failed.");
                 Sys.exit(1);
             }
+            // The redirect has to be checked, not assumed. One test catches
+            // all of: the generator macro missing from the build file, the
+            // define ignored, and a haxe that exited 0 without generating.
+            if (!FileSystem.exists('$cppOut/Build.xml')
+                || FileSystem.stat('$cppOut/Build.xml').mtime.getTime() / 1000 < startedAt - 2) {
+                Sys.println('Error: no C++ was generated in $cppOut.');
+                Sys.println('  The build file did not honour -D cpp-output. Is');
+                Sys.println('    --macro sui.macros.SwiftGenerator.register()');
+                Sys.println('  present in $buildFile?');
+                Sys.exit(1);
+            }
             // Record what this output is for, so the next build can tell
             // "nothing changed" from "you asked for something else".
             try {
-                File.saveContent(stampPath(cwd), buildStamp(platform, hotReload));
+                File.saveContent(stampPath(cwd, platform), buildStamp(platform, hotReload, forDevice));
             } catch (_:Dynamic) {}
         } else {
             Sys.println("[1/3] Haxe unchanged, skipping recompilation...");
         }
 
         // Check for generated files
-        var swiftGenDir = '$cwd/build/swift';
         if (!FileSystem.exists(swiftGenDir)) {
             Sys.println("Error: No Swift files generated. Is --macro sui.macros.SwiftGenerator.register() in build.hxml?");
             Sys.exit(1);
@@ -136,63 +230,51 @@ class Build {
         if (nativeBridge) {
             ensureDirectory('$buildDir/lib');
 
-            // `ar rcs` *updates* an archive: a member from the previous build
-            // stays in it unless something replaces it by name. Switching
-            // render paths leaves the other one's bridge object behind, and the
-            // two define the same extern "C" entry points -- "duplicate symbol
-            // _haxe_bridge_invoke_action", from a file this build never
-            // compiled. Start the archive empty instead.
-            if (needsRecompile && FileSystem.exists('$buildDir/lib/libhaxe.a')) {
-                FileSystem.deleteFile('$buildDir/lib/libhaxe.a');
-            }
-
             if (needsRecompile || !FileSystem.exists('$buildDir/lib/libhaxe.a')) {
-                // Step 2: Build hxcpp static library + compile C++ bridge
-                Sys.println("[2/4] Building hxcpp static library + C++ bridge...");
+                Sys.println("[2/4] Assembling the static library + C++ bridge...");
             } else {
                 Sys.println("[2/4] Bridge unchanged, skipping...");
             }
 
-            // Create static library from hxcpp object files (excluding __main__.o)
-            // hxcpp keeps one directory per toolchain under obj/, and a project
-            // built for more than one platform keeps them all: darwinarm64
-            // beside iphonesim-c11. Archiving the lot mixes arm64 and x86_64
-            // objects, and `ar` answers "Inappropriate file type or format" --
-            // which reads as a broken build rather than as two builds in one
-            // box. Take only the toolchain this target uses.
-            var cppObjDir = objDirFor('$cwd/build/cpp/obj', platform, forDevice);
-            if (cppObjDir != null && FileSystem.exists(cppObjDir)) {
-                // Collect all .o files
-                var oFiles:Array<String> = [];
-                collectObjectFiles(cppObjDir, oFiles);
-                if (oFiles.length > 0) {
-                    var arArgs = ["rcs", '$buildDir/lib/libhaxe.a'];
-                    for (o in oFiles) arArgs.push(o);
-                    Sys.command("ar", arArgs);
-                }
+            // hxcpp was told where to put its archive; if it is not there, this
+            // build did not produce one and nothing downstream can be trusted.
+            // The previous version answered a missing object directory by
+            // silently archiving nothing -- which is how a visionOS build
+            // shipped a library holding only two bridge objects.
+            if (!FileSystem.exists(hxcppLib)) {
+                Sys.println('Error: hxcpp produced no static library at $hxcppLib.');
+                Sys.println("  The build did not honour -D HAXE_FULL_OUTPUT_NAME, or it did not link.");
+                Sys.exit(1);
             }
 
             // Find hxcpp include path
             var hxcppDir = findHxcppDir();
 
             // Compile the C++ bridge against hxcpp headers.
-            // Architecture must match hxcpp's output:
-            //   macOS / iphoneos (device): arm64
-            //   iphonesim (simulator): x86_64 (hxcpp iphonesim-toolchain hardcodes this)
-            var isSimulator = !forDevice && (platform == "ios" || platform == "visionos");
-            var bridgeArch = isSimulator ? "x86_64" : "arm64";
+            //
+            // The architecture is READ from hxcpp's archive rather than
+            // guessed. The guess was "x86_64 for any simulator", which is what
+            // hxcpp's iphonesim toolchain hardcodes -- and wrong for a visionOS
+            // simulator, which is arm64 only. Asking the artefact costs one
+            // `lipo` and cannot drift.
             var platformDefine = switch (platform) {
                 case "ios": forDevice ? "-DHX_IOS" : "-DIPHONESIM=IPHONESIM";
                 case "visionos": "-DHX_VISIONOS";
                 default: "-DHX_MACOS";
             };
+            var bridgeArch = archOf(hxcppLib);
             var clangArgs = [
                 "-c", "-std=c++17",
                 '-I$hxcppDir/include',
-                '-I$cwd/build/cpp/include',
+                '-I$cppOut/include',
                 platformDefine, "-DHXCPP_M64",
                 "-DHXCPP_VISIT_ALLOCS", "-DHX_SMART_STRINGS",
                 "-DHXCPP_API_LEVEL=430",
+                // `common-defines.xml` adds this to every file hxcpp compiles
+                // under static_link, and `hx/CFFI.h` and `hx/Macros.h` read it.
+                // The hand-written list here never had it, so the bridge and
+                // the library it links into saw different headers.
+                "-DSTATIC_LINK",
                 "-arch", bridgeArch,
             ];
             if (bridgeArch == "arm64") clangArgs.push("-DHXCPP_ARM64");
@@ -229,8 +311,29 @@ class Build {
                     Sys.println('Error: C++ bridge compilation failed for ${bs.src}.');
                     Sys.exit(1);
                 }
-                // Add the bridge object to the static library
-                Sys.command("ar", ["rcs", '$buildDir/lib/libhaxe.a', bs.obj]);
+            }
+
+            // One shot, always overwriting: hxcpp's archive plus the bridge
+            // objects. `ar r` *updates* an archive -- a member from a previous
+            // build survives unless something replaces it by name -- which is
+            // what left one render path's bridge object in the other's library
+            // and produced "duplicate symbol _haxe_bridge_invoke_action" from
+            // a file that build never compiled. `libtool -static -o` has no
+            // such history.
+            var libtoolArgs = ["-static", "-o", '$buildDir/lib/libhaxe.a', hxcppLib];
+            for (bs in bridgeSources) libtoolArgs.push(bs.obj);
+            if (Sys.command("libtool", libtoolArgs) != 0) {
+                Sys.println("Error: could not assemble libhaxe.a.");
+                Sys.exit(1);
+            }
+
+            // One architecture, or the link that follows fails somewhere far
+            // from here. Cheap, and it is the assertion that would have caught
+            // a visionOS library built from iPhone-simulator objects.
+            var archs = archOf('$buildDir/lib/libhaxe.a');
+            if (archs != bridgeArch) {
+                Sys.println('Error: libhaxe.a is "$archs" but the bridge was built "$bridgeArch".');
+                Sys.exit(1);
             }
         }
 
@@ -248,6 +351,39 @@ class Build {
                 File.copy('$swiftGenDir/$file', '$buildDir/Sources/$file');
             }
         }
+        // The widget extension, when the application declared the surface it
+        // draws. It is a SEPARATE BINARY with its own sandbox, so it gets its
+        // own directory rather than joining Sources — and the two of them can
+        // only meet through an App Group, which both must be entitled to.
+        // iOS only, for now, and the reason is signing rather than WidgetKit:
+        // macOS refuses to build a target carrying an entitlements file
+        // without a provisioning profile ("requires a provisioning profile"),
+        // while the iOS simulator is content with ad-hoc signing. An App Group
+        // is the only way an app and its extension can share anything, so a
+        // macOS widget waits for a signing identity — not for more code.
+        var hasWidget = platform == "ios" && FileSystem.exists('$swiftGenDir/Widget');
+        if (!hasWidget) clearWidget(buildDir);
+        if (hasWidget) {
+            ensureDirectory('$buildDir/Widget');
+            // Copied only when the content differs, for the same reason the
+            // entitlements below are: touching Widget/Info.plist or the
+            // extension's Swift forces a full extension recompile every build,
+            // and xcodebuild refuses an entitlements file whose mtime moved.
+            for (file in FileSystem.readDirectory('$swiftGenDir/Widget'))
+                copyIfDifferent('$swiftGenDir/Widget/$file', '$buildDir/Widget/$file');
+            var group = 'group.${config.bundleIdentifier}';
+            // Written only when the content changes: xcodebuild refuses an
+            // entitlements file whose mtime moved since the last build
+            // ("modified during the build"), and rewriting identical bytes
+            // every time is exactly that.
+            saveIfDifferent('$buildDir/Entitlements.plist', appGroupEntitlements(group));
+            // Kept OUT of the Widget directory: that directory is a source
+            // group, so anything in it becomes a resource of the extension —
+            // and an entitlements file the build copies is an entitlements
+            // file "modified during the build".
+            saveIfDifferent('$buildDir/WidgetEntitlements.plist', appGroupEntitlements(group));
+        }
+
         // Copy bridge header if present
         if (isBridgeApp && FileSystem.exists('$swiftGenDir/HaxeBridgeC.h')) {
             File.copy('$swiftGenDir/HaxeBridgeC.h', '$buildDir/Sources/HaxeBridgeC.h');
@@ -277,7 +413,7 @@ class Build {
 
         // Copy user-provided Swift files from swift/ directory
         copyUserSwiftFiles(cwd, buildDir);
-        copyKuiSwiftFiles(cwd, buildDir);
+        copyKuiSwiftFiles(cwd, platform, buildDir);
 
         // Read what kui capabilities need — here, and not beside
         // readProjectConfig where it started. The sidecar is written by the Haxe
@@ -286,10 +422,10 @@ class Build {
         // wrong platform's after switching targets. It cost an iOS build that
         // linked no UIKit while the macOS one linked IOKit correctly, which
         // looked like an iOS problem and was an ordering one.
-        mergeKuiPayload(cwd, config);
+        mergeKuiPayload(cwd, platform, config);
 
         // Generate project.yml
-        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge));
+        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge, hasWidget));
 
         if (xcodeOnly) {
             runXcodegen(buildDir);
@@ -331,6 +467,21 @@ class Build {
 
         if (buildResult != 0) {
             Sys.println("Error: xcodebuild failed.");
+            // Xcode can have a platform's SDK without its platform component,
+            // and then says "<platform> N.N is not installed" about a
+            // destination rather than about what is missing. Worth translating,
+            // because everything before this step DID work: the C++ is
+            // compiled and the library linked for the right platform. The one
+            // thing this family of bugs must never do again is let a partial
+            // success read as a full one — or a full one read as a failure.
+            if (platform == "visionos" && platformNotInstalled(buildDir, config.appName, "visionOS")) {
+                Sys.println("");
+                Sys.println("  Xcode has the visionOS SDK but not the visionOS platform component.");
+                Sys.println("  Install it from Xcode > Settings > Components.");
+                Sys.println("");
+                Sys.println('  The Haxe and hxcpp half of this build succeeded: $buildDir/lib/libhaxe.a');
+                Sys.println("  is compiled for visionOS. Only Xcode's own step could not run.");
+            }
             Sys.exit(1);
         }
 
@@ -480,13 +631,40 @@ class Build {
         dynamic project, referring to symbols the dynamic library does not
         export. Xcode compiled them because they were on disk, not because
         anything asked for them. **/
-    static function clearSources(buildDir:String) {
-        var dir = '$buildDir/Sources';
-        if (!FileSystem.exists(dir)) return;
-        for (entry in FileSystem.readDirectory(dir)) {
-            var path = '$dir/$entry';
-            if (!FileSystem.isDirectory(path)) FileSystem.deleteFile(path);
+    /** Copy only when the bytes differ, so an unchanged file keeps its mtime.
+        Same reason as `saveIfDifferent`: on Apple, a moved mtime is not free —
+        it recompiles an extension, and on an entitlements file it is an
+        outright build failure. **/
+    static function copyIfDifferent(from:String, to:String) {
+        if (FileSystem.exists(to)) {
+            try {
+                if (File.getBytes(from).compare(File.getBytes(to)) == 0) return;
+            } catch (_:Dynamic) {}
         }
+        File.copy(from, to);
+    }
+
+    static function clearSources(buildDir:String) {
+        // Recursive. Skipping directories left whatever a previous build had
+        // put in one -- and the widget extension is a directory, so a Glance
+        // surface generated once kept its Swift beside every later build of
+        // the same platform.
+        removeDirectoryContents('$buildDir/Sources');
+    }
+
+    /**
+        Take down the widget extension's own files when this build has none.
+
+        `hasWidget` is now exact (the Swift tree is wiped before each compile),
+        but the *assembled* side is not swept by `clearSources`: `Widget/` and
+        the two entitlements files live beside `Sources/`, not in it. Left
+        behind, xcodegen keeps finding an Info.plist for an extension the
+        project no longer declares.
+    **/
+    static function clearWidget(buildDir:String) {
+        if (FileSystem.exists('$buildDir/Widget')) removeDirectoryTree('$buildDir/Widget');
+        for (plist in ["Entitlements.plist", "WidgetEntitlements.plist"])
+            if (FileSystem.exists('$buildDir/$plist')) FileSystem.deleteFile('$buildDir/$plist');
     }
 
     static function copyRuntimeFiles(buildDir:String) {
@@ -565,8 +743,8 @@ class Build {
 
         A project with no capabilities finds no sidecar and nothing changes.
     **/
-    static function mergeKuiPayload(cwd:String, config:ProjectConfig):Void {
-        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+    static function mergeKuiPayload(cwd:String, platform:String, config:ProjectConfig):Void {
+        var payload = readKuiPayload(cwd, platform);
         if (!payload.any()) return;
 
         var frameworks = payload.strings("xcode", "frameworks");
@@ -590,9 +768,37 @@ class Build {
         Sys.println("  [kui] " + payload.names().join(", "));
     }
 
+    /**
+        The kui manifest for THIS build, refusing one that is not.
+
+        The CLI deletes the file before every compile, so its presence here
+        means this build wrote it. The platform check is therefore unreachable
+        — which is exactly what makes it worth having: it fires only when one
+        of the isolation assumptions has broken, and it names both platforms
+        instead of quietly linking another one's frameworks.
+
+        Before the trees were separated, that is precisely what happened: a
+        visionOS project.yml inherited `-framework Foundation` from an iOS
+        build, because `kui.macros.Emit` writes nothing when a build declares
+        no payload and the previous file was still lying there.
+    **/
+    static function readKuiPayload(cwd:String, platform:String):kui.build.Sidecar {
+        var payload = kui.build.Sidecar.read('$cwd/build/$platform/cpp');
+        if (!payload.any()) return payload;
+
+        var declared = payload.platform();
+        if (declared != null && declared != platform) {
+            Sys.println('Error: build/$platform/cpp/kui-payload.json was written for "$declared".');
+            Sys.println('  A capability manifest from another platform would link that');
+            Sys.println("  platform's frameworks into this one. Run `sui clean` and rebuild.");
+            Sys.exit(1);
+        }
+        return payload;
+    }
+
     /** Swift a capability ships, copied beside the application's own. **/
-    static function copyKuiSwiftFiles(cwd:String, buildDir:String) {
-        var payload = kui.build.Sidecar.read('$cwd/build/cpp');
+    static function copyKuiSwiftFiles(cwd:String, platform:String, buildDir:String) {
+        var payload = readKuiPayload(cwd, platform);
         for (source in payload.strings("xcode", "sources")) {
             if (!FileSystem.exists(source)) {
                 Sys.println('  [kui] missing source: $source');
@@ -706,10 +912,100 @@ class Build {
         return Sys.getCwd();
     }
 
+    /**
+        The single architecture of a Mach-O archive, asked of the file itself.
+
+        `lipo -archs` answers with a space-separated list; anything but one
+        entry means the archive mixes architectures, and the caller says so
+        rather than letting the link fail somewhere unrecognisable.
+    **/
+    static function archOf(path:String):String {
+        var proc = new sys.io.Process("lipo", ["-archs", path]);
+        var out = StringTools.trim(proc.stdout.readAll().toString());
+        proc.close();
+        return out;
+    }
+
+    /**
+        Put sui's own hxcpp toolchain where hxcpp will find it.
+
+        hxcpp resolves `toolchain/<name>-toolchain.xml` through an include path
+        whose only project-relative entry is `.` — its working directory, which
+        is the C++ output directory. Copying rather than pointing at the
+        library keeps that resolution simple and means an updated sui ships an
+        updated toolchain without anyone re-running anything.
+
+        Refuses by name when the file is missing, because the alternative is
+        hxcpp's own "Could not find include file", which names a relative path
+        inside a generated directory and tells nobody where it should come
+        from.
+    **/
+    static function installToolchain(name:String, cppOut:String) {
+        var source = getLibPath() + '/toolchain/$name-toolchain.xml';
+        if (!FileSystem.exists(source)) {
+            Sys.println('Error: sui ships no hxcpp toolchain for "$name".');
+            Sys.println('  Looked for: $source');
+            Sys.exit(1);
+        }
+        ensureDirectory(cppOut);
+        ensureDirectory('$cppOut/toolchain');
+        copyIfDifferent(source, '$cppOut/toolchain/$name-toolchain.xml');
+    }
+
+    /**
+        Whether Xcode reports a platform as not installed for this project.
+
+        Asked of `xcodebuild -showdestinations`, which is where the real reason
+        appears: with the SDK present but the platform component missing it
+        lists every destination as ineligible and says "<platform> N.N is not
+        installed". The SDK list is no help -- the SDK is there in the broken
+        case too, which is exactly what makes the failure confusing.
+    **/
+    static function platformNotInstalled(buildDir:String, scheme:String, name:String):Bool {
+        return try {
+            var oldCwd = Sys.getCwd();
+            Sys.setCwd(buildDir);
+            var proc = new sys.io.Process("xcodebuild", ["-scheme", scheme, "-showdestinations"]);
+            var out = proc.stdout.readAll().toString() + proc.stderr.readAll().toString();
+            proc.close();
+            Sys.setCwd(oldCwd);
+            out.indexOf(name) >= 0 && out.indexOf("is not installed") >= 0;
+        } catch (_:Dynamic) false;
+    }
+
     static function ensureDirectory(path:String) {
         if (!FileSystem.exists(path)) {
             FileSystem.createDirectory(path);
         }
+    }
+
+    /**
+        Empty a directory, keeping the directory itself.
+
+        Used on the Swift tree before every compile. The generator writes all
+        of it, so nothing is lost -- and what is *not* rewritten is precisely
+        the problem this removes: `hasWidget` and `isBridgeApp` are
+        file-existence probes, and a file from an earlier compile made them
+        answer about a build that is no longer happening. A widget generated
+        once for iOS kept the flag true for macOS for as long as the tree
+        stood.
+    **/
+    static function removeDirectoryContents(path:String) {
+        if (!FileSystem.exists(path)) return;
+        for (entry in FileSystem.readDirectory(path)) {
+            var child = '$path/$entry';
+            if (FileSystem.isDirectory(child)) removeDirectoryTree(child);
+            else FileSystem.deleteFile(child);
+        }
+    }
+
+    static function removeDirectoryTree(path:String) {
+        for (entry in FileSystem.readDirectory(path)) {
+            var child = '$path/$entry';
+            if (FileSystem.isDirectory(child)) removeDirectoryTree(child);
+            else FileSystem.deleteFile(child);
+        }
+        FileSystem.deleteDirectory(path);
     }
 
     /** Check if hxcpp output is up-to-date (all .hx source files are older than build output). **/
@@ -734,17 +1030,31 @@ class Build {
         return null;
     }
 
-    static function buildStamp(platform:String, hotReload:Bool):String {
-        return platform + "|" + (hotReload ? "dynamic" : "static");
+    /**
+        What the output in `build/<platform>/` was produced for.
+
+        `forDevice` is in it because it changes everything: `-D iphoneos` and
+        `-D iphonesim` are a different SDK and a different architecture, and
+        without it `sui build ios --device` right after `sui build ios` was
+        judged "up to date" and shipped a simulator binary signed for a phone.
+
+        The leading version means an older stamp can never accidentally match a
+        newer format; bump it whenever what is in here changes.
+    **/
+    static function buildStamp(platform:String, hotReload:Bool, forDevice:Bool):String {
+        return "2|" + platform + "|" + (hotReload ? "dynamic" : "static") + "|" + (forDevice ? "device" : "sim");
     }
 
-    static function stampPath(cwd:String):String {
-        return '$cwd/build/.sui-build-mode';
+    /** Beside the platform's own tree, not at the root of `build/`: two
+        platforms had one stamp between them, so each switch invalidated the
+        other's perfectly good output. **/
+    static function stampPath(cwd:String, platform:String):String {
+        return '$cwd/build/$platform/.sui-build-stamp';
     }
 
-    static function isHxcppUpToDate(cwd:String, platform:String, hotReload:Bool):Bool {
-        var swiftDir = '$cwd/build/swift';
-        var cppDir = '$cwd/build/cpp';
+    static function isHxcppUpToDate(cwd:String, platform:String, hotReload:Bool, forDevice:Bool, buildFile:Null<String>):Bool {
+        var swiftDir = '$cwd/build/$platform/swift';
+        var cppDir = '$cwd/build/$platform/cpp';
 
         // Must have previous build output
         if (!FileSystem.exists(swiftDir) || !FileSystem.exists(cppDir)) return false;
@@ -757,10 +1067,10 @@ class Build {
         // static build's Swift was copied into a dynamic project. That failed as
         // "cannot find 'AppState' in scope" -- a name from a mode the developer
         // had just left, in a file they never wrote.
-        var stamp = stampPath(cwd);
+        var stamp = stampPath(cwd, platform);
         if (!FileSystem.exists(stamp)) return false;
         try {
-            if (StringTools.trim(File.getContent(stamp)) != buildStamp(platform, hotReload)) return false;
+            if (StringTools.trim(File.getContent(stamp)) != buildStamp(platform, hotReload, forDevice)) return false;
         } catch (_:Dynamic) {
             return false;
         }
@@ -772,9 +1082,11 @@ class Build {
         // Also check the sui library source
         var libSrc = getLibPath() + "/src";
         if (FileSystem.exists(libSrc)) newestSource = Math.max(newestSource, newestModTime(libSrc, ".hx"));
-        // Check build.hxml
-        if (FileSystem.exists('$cwd/build.hxml')) {
-            var stat = FileSystem.stat('$cwd/build.hxml');
+        // The build file that will actually be compiled -- which may be
+        // `build-sui.hxml`. Statting `build.hxml` unconditionally meant editing
+        // the one this project uses did not trigger a rebuild.
+        if (buildFile != null && FileSystem.exists('$cwd/$buildFile')) {
+            var stat = FileSystem.stat('$cwd/$buildFile');
             newestSource = Math.max(newestSource, stat.mtime.getTime());
         }
         // Check sui.json
@@ -788,11 +1100,19 @@ class Build {
 
         if (newestSource == 0) return false;
 
-        // Find oldest Swift output file
-        var oldestOutput = newestModTime(swiftDir, ".swift");
-        if (oldestOutput == 0) return false;
-
-        return newestSource < oldestOutput;
+        // Against Build.xml, which hxcpp writes at the end of a successful
+        // generation. The previous version took the NEWEST .swift as the
+        // baseline while its comment said "oldest" -- so a source edited after
+        // some outputs but before others read as up to date. One file written
+        // once, at a known moment, has no such gap.
+        //
+        // Not covered, and worth saying rather than pretending: a change in
+        // `rui`, `nui`, `kui` or `mui` is not seen, because resolving those
+        // would mean resolving every -lib in the build file. `sui build
+        // --force` is the honest way out.
+        var generated = '$cppDir/Build.xml';
+        if (!FileSystem.exists(generated)) return false;
+        return newestSource < FileSystem.stat(generated).mtime.getTime();
     }
 
     /** Get the newest modification time of files with given extension in a directory (recursive). **/
@@ -811,48 +1131,6 @@ class Build {
             }
         }
         return newest;
-    }
-
-    /** Recursively collect .o files, excluding __main__.o **/
-    /**
-        The hxcpp toolchain directory this target's objects are in.
-
-        Named by hxcpp, not by us: `darwinarm64` / `darwin64` for macOS,
-        `iphonesim-*` for the simulator, `iphoneos-*` for a device. Matching by
-        prefix rather than listing exact names keeps this working when hxcpp
-        changes a suffix, which is where the `-c11` comes from.
-
-        Returns null when nothing matches, so the caller reports a missing build
-        rather than archiving another platform's objects.
-    **/
-    static function objDirFor(objRoot:String, platform:String, forDevice:Bool):Null<String> {
-        if (!FileSystem.exists(objRoot)) return null;
-
-        var prefixes = switch (platform) {
-            case "ios": forDevice ? ["iphoneos"] : ["iphonesim"];
-            case "visionos": forDevice ? ["xros", "appletvos"] : ["xrsim", "iphonesim"];
-            default: ["darwin", "mac"];
-        };
-
-        for (entry in FileSystem.readDirectory(objRoot)) {
-            var path = '$objRoot/$entry';
-            if (!FileSystem.isDirectory(path)) continue;
-            for (prefix in prefixes) {
-                if (StringTools.startsWith(entry, prefix)) return path;
-            }
-        }
-        return null;
-    }
-
-    static function collectObjectFiles(dir:String, result:Array<String>) {
-        for (entry in FileSystem.readDirectory(dir)) {
-            var path = '$dir/$entry';
-            if (FileSystem.isDirectory(path)) {
-                collectObjectFiles(path, result);
-            } else if (entry.endsWith(".o") && entry.indexOf("__main__") == -1) {
-                result.push(path);
-            }
-        }
     }
 
     /** Find the hxcpp include directory. **/
@@ -901,7 +1179,37 @@ class Build {
         };
     }
 
-    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false):String {
+    /**
+        The one thing an app and its widget extension can share.
+
+        Two binaries, two sandboxes: the only sanctioned way for the
+        application to leave a snapshot where the widget can read it is an App
+        Group both are entitled to. The name follows the bundle identifier, so
+        each side computes it from its own — the extension's is the app's plus
+        a suffix — and neither has to be told.
+    **/
+    /** Write only when the bytes differ, so an unchanged file keeps its
+        timestamp. **/
+    static function saveIfDifferent(path:String, content:String):Void {
+        if (FileSystem.exists(path) && File.getContent(path) == content) return;
+        File.saveContent(path, content);
+    }
+
+    static function appGroupEntitlements(group:String):String {
+        return '<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.security.application-groups</key>
+\t<array>
+\t\t<string>$group</string>
+\t</array>
+</dict>
+</plist>
+';
+    }
+
+    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false, hasWidget:Bool = false):String {
         var pk = platformKey(platform);
         var dt = deploymentTarget(platform);
 
@@ -950,6 +1258,7 @@ class Build {
 
         var packagesBlock = "";
         var depsBlock = "    dependencies: []\n";
+        if (hasWidget) depsBlock = '    dependencies:\n      - target: ${config.appName}GlanceWidget\n';
         if (config.swiftPackages != null && config.swiftPackages.length > 0) {
             packagesBlock = "packages:\n";
             depsBlock = "    dependencies:\n";
@@ -957,6 +1266,45 @@ class Build {
                 packagesBlock += '  ${pkg.product}:\n    url: ${pkg.url}\n    from: ${pkg.from}\n';
                 depsBlock += '      - package: ${pkg.product}\n';
             }
+        }
+
+        // The widget extension is a second target, and the app depends on it
+        // so that building the app embeds it. Both carry the App Group
+        // entitlement: without it on BOTH sides the container is not shared
+        // and the widget reads nothing, silently.
+        var widgetBlock = "";
+        var widgetTarget = "";
+        if (hasWidget) {
+            // The extension links the SAME hxcpp static library the app does.
+            // That is what makes the widget's buttons work: a tap arrives as an
+            // AppIntent in THIS process, so the closures have to exist here --
+            // the extension boots the runtime headless, builds its own instance
+            // of the application, samples, and invokes.
+            //
+            // It costs the extension the runtime's size, which is why step 0 of
+            // the durable-state plan measured it before anything was built on
+            // it: booting and sampling came to under a megabyte of heap.
+            widgetBlock = "      CODE_SIGN_ENTITLEMENTS: Entitlements.plist\n";
+            widgetTarget = '  ${config.appName}GlanceWidget:
+    type: app-extension
+    platform: $pk
+    sources:
+      - path: Widget
+        type: group
+        excludes:
+          - "Info.plist"
+      - path: Sources/SuiGlanceShim.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${config.bundleIdentifier}.glancewidget
+      INFOPLIST_FILE: Widget/Info.plist
+      CODE_SIGN_ENTITLEMENTS: WidgetEntitlements.plist
+      SKIP_INSTALL: true
+      LIBRARY_SEARCH_PATHS:
+        - "$(PROJECT_DIR)/lib"
+      OTHER_LDFLAGS:
+        - "-lhaxe"
+        - "-lc++"
+';
         }
 
         return '${packagesBlock}name: ${config.appName}
@@ -980,7 +1328,7 @@ targets:
       INFOPLIST_KEY_UILaunchScreen_Generation: true
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
       INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-$networking$signing$bridge$depsBlock';
+$networking$signing$bridge$widgetBlock$depsBlock$widgetTarget';
     }
 }
 

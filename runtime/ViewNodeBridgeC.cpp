@@ -22,11 +22,20 @@
 #include <sui/state/Callbacks.h>
 
 // hxcpp's library entry (hx::Init, in StdLibs.o) references the generated app
-// main (___hxcpp_lib_main, from __main__.o). That object is left out of the
-// static lib because its C main() would clash with the Swift @main entry — and
-// we never call hx::Init anyway: the app is driven through viewnode_boot →
-// hx::Boot → ViewNodeBridge. Provide a weak stub so the otherwise-dead
-// reference resolves; a real definition, if ever linked, takes precedence.
+// main (___hxcpp_lib_main). This weak stub was here because the CLI used to
+// assemble the static library by hand and had to leave out __main__.o, whose
+// C main() would clash with the Swift @main entry — leaving that reference
+// with nothing to resolve it.
+//
+// **Vestigial since the CLI stopped doing that.** Every platform now builds
+// under `static_link`, so hxcpp emits `__lib__.o` — the real library entry,
+// with no `main()` — instead of `__main__.o`, and that defines this symbol
+// properly. A strong definition beats a weak one, so what is below is no
+// longer reached on any supported target.
+//
+// Kept rather than deleted, for one reason: it costs nothing, and removing it
+// would make a build that somehow produced a library without `__lib__.o` fail
+// at link time in a place that names neither the cause nor the fix.
 extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 
 // Wrap an opaque node pointer back into a typed ::sui::View. Null-safe: a null
