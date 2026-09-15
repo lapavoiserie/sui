@@ -114,6 +114,7 @@ class ViewNodeBridge {
         Lifetime inside its host; sui's roots are all driven from the app.)
     **/
     public static function rebuild():Void {
+        if (_foreign != null) _foreign.rebuild();
         if (_app == null) return;
         // Reset first: a body can throw, and a scope left open would
         // attribute the next generation's reads to the failed one.
@@ -159,6 +160,10 @@ class ViewNodeBridge {
     **/
     public static function isStructural(name:String):Bool {
         if (name == null || name == "") return true;
+        // A received tree displays none of this application's cells, so the
+        // narrow path has nothing to update: a write is how the application
+        // says a tree arrived (see `readThrough`).
+        if (_foreign != null) return true;
         if (_roots.length == 0) return true;
         var displayed = false;
         for (root in _roots) {
@@ -320,6 +325,8 @@ class ViewNodeBridge {
 
     /** Called from the C bridge when a native input changes. **/
     public static function setData(path:String, value:String):Void {
+        // An edit on a received control runs the action it carries.
+        if (_foreign != null && sui.nui.Received.edit(_foreign, path, value)) return;
         if (_dataSink != null) _dataSink(path, value);
     }
 
@@ -350,16 +357,62 @@ class ViewNodeBridge {
     }
 
     /** Get the Primary root's view node. Returns an opaque pointer. **/
-    public static function getRoot():View {
+    public static function getRoot():Dynamic {
+        if (_foreign != null) return _foreign.root();
         return _roots.length > 0 ? _roots[0].view : null;
     }
 
     /** Get a declared surface root's view node by its stable id ("body" is
         the Primary). Null when no such root is mounted — the Swift side draws
         nothing, which is the degradation contract. **/
-    public static function getRootFor(id:String):View {
+    public static function getRootFor(id:String):Dynamic {
+        if (_foreign != null && id == "body") return _foreign.root();
         for (root in _roots) if (root.id == id) return root.view;
         return null;
+    }
+
+    // --- A tree that arrived ---------------------------------------------------
+
+    static var _foreign:Null<nui.SelfSource> = null;
+
+    /**
+        Draw a tree this application did not build, in place of `body()`.
+
+        ```haxe
+        var tree:Null<nui.Node> = null;
+        sui.runtime.ViewNodeBridge.readThrough(new nui.SelfSource(() -> {
+            generation; // a cell, read here -- see below
+            return tree != null ? tree : waiting();
+        }));
+        reception.onTree = (t, _) -> { tree = t; generation++; };
+        ```
+
+        The same call `aui` has, and the same shape of application: a panel
+        written once draws a received tree on either. The tree is read directly
+        (`sui.nui.Received` answers the renderer's questions in canonical terms),
+        so an edit made on a received control runs the action it carries, and
+        goes home.
+
+        **Something must say a new tree arrived.** Writing a cell does: this
+        bridge rebuilds on any write to a cell no view displays, and the rebuild
+        re-evaluates the source's thunk. Only the Primary root is replaced; a
+        Preferences root the application declared stays its own.
+
+        Pass `null` to hand the screen back to `body()`.
+    **/
+    public static function readThrough(source:Null<nui.SelfSource>):Void {
+        _foreign = source;
+    }
+
+    /** Whether a received tree is drawing. **/
+    public static function reading():Bool {
+        return _foreign != null;
+    }
+
+    /** The node as a received one, or null when it is one of this app's views --
+        a Preferences root keeps drawing its own while a tree is received. **/
+    static function received(node:Dynamic):Null<nui.Node> {
+        return _foreign != null && Std.isOfType(node, nui.Node) ? (node : nui.Node) : null;
     }
 
     // --- View node accessors (called from C bridge) ---
@@ -388,69 +441,95 @@ class ViewNodeBridge {
 
 
     /** Get the viewType string (e.g., "VStack", "Text", "Button"). **/
-    public static function getViewType(node:View):String {
+    public static function getViewType(node:Dynamic):String {
+        var r = received(node);
+        if (r != null) return sui.nui.Received.typeOf(_foreign, r);
         return reader().typeOf(node);
     }
 
     /** Get the number of children. **/
-    public static function getChildCount(node:View):Int {
+    public static function getChildCount(node:Dynamic):Int {
+        var r = received(node);
+        if (r != null) return _foreign.childCount(r);
         return reader().childCount(node);
     }
 
     /** Get a child by index. **/
-    public static function getChild(node:View, index:Int):View {
+    public static function getChild(node:Dynamic, index:Int):Dynamic {
+        var r = received(node);
+        if (r != null) return _foreign.childAt(r, index);
         return reader().childAt(node, index);
     }
 
     /** Get a string property (e.g., "label", "content", "placeholder"). **/
-    public static function getStringProperty(node:View, key:String):String {
+    public static function getStringProperty(node:Dynamic, key:String):String {
+        var r = received(node);
+        if (r != null) return sui.nui.Received.stringProp(_foreign, r, key);
         return reader().stringProp(node, key);
     }
 
     /** Get an int property. **/
-    public static function getIntProperty(node:View, key:String):Int {
+    public static function getIntProperty(node:Dynamic, key:String):Int {
+        var r = received(node);
+        if (r != null) return _foreign.intProp(r, key);
         return reader().intProp(node, key);
     }
 
     /** Get a float property. **/
-    public static function getFloatProperty(node:View, key:String):Float {
+    public static function getFloatProperty(node:Dynamic, key:String):Float {
+        var r = received(node);
+        if (r != null) return _foreign.floatProp(r, key);
         return reader().floatProp(node, key);
     }
 
     /** Get a bool property. **/
-    public static function getBoolProperty(node:View, key:String):Bool {
+    public static function getBoolProperty(node:Dynamic, key:String):Bool {
+        var r = received(node);
+        if (r != null) return _foreign.boolProp(r, key);
         return reader().boolProp(node, key);
     }
 
     /** Check if a property exists. **/
-    public static function hasProperty(node:View, key:String):Bool {
+    public static function hasProperty(node:Dynamic, key:String):Bool {
+        var r = received(node);
+        if (r != null) return _foreign.hasProp(r, key);
         return reader().hasProp(node, key);
     }
 
     /** Get the number of modifiers. **/
-    public static function getModifierCount(node:View):Int {
+    public static function getModifierCount(node:Dynamic):Int {
+        var r = received(node);
+        if (r != null) return _foreign.modifierCount(r);
         return reader().modifierCount(node);
     }
 
     /** Get modifier type name at index. **/
-    public static function getModifierType(node:View, index:Int):String {
+    public static function getModifierType(node:Dynamic, index:Int):String {
+        var r = received(node);
+        if (r != null) return sui.nui.Received.modifierType(_foreign, r, index);
         return reader().modifierType(node, index);
     }
 
     /** Get modifier float parameter (e.g., padding value, opacity). **/
-    public static function getModifierFloat(node:View, index:Int, paramIndex:Int):Float {
+    public static function getModifierFloat(node:Dynamic, index:Int, paramIndex:Int):Float {
+        var r = received(node);
+        if (r != null) return _foreign.modifierFloat(r, index, paramIndex);
         return reader().modifierFloat(node, index, paramIndex);
     }
 
     /** Get modifier string parameter (e.g., color name, font style). **/
-    public static function getModifierString(node:View, index:Int, paramIndex:Int):String {
+    public static function getModifierString(node:Dynamic, index:Int, paramIndex:Int):String {
+        var r = received(node);
+        if (r != null) return _foreign.modifierString(r, index, paramIndex);
         return reader().modifierString(node, index, paramIndex);
     }
 
     // --- Text special accessors ---
 
     /** Get the text content (for Text views). **/
-    public static function getTextContent(node:View):String {
+    public static function getTextContent(node:Dynamic):String {
+        var r = received(node);
+        if (r != null) return sui.nui.Received.stringProp(_foreign, r, "text");
         node = reader().valueOf(node);
         if (node == null) return "";
         var content:Dynamic = Reflect.field(node, "content");
@@ -458,7 +537,8 @@ class ViewNodeBridge {
     }
 
     /** Get the swift expression for state-interpolated text. **/
-    public static function getTextExpression(node:View):String {
+    public static function getTextExpression(node:Dynamic):String {
+        if (received(node) != null) return "";
         node = reader().valueOf(node);
         if (node == null) return "";
         var expr:Dynamic = Reflect.field(node, "swiftExpression");
@@ -469,7 +549,9 @@ class ViewNodeBridge {
     // --- Button special accessors ---
 
     /** Get button label. **/
-    public static function getButtonLabel(node:View):String {
+    public static function getButtonLabel(node:Dynamic):String {
+        var r = received(node);
+        if (r != null) return sui.nui.Received.stringProp(_foreign, r, "label");
         node = reader().valueOf(node);
         if (node == null) return "";
         var label:Dynamic = Reflect.field(node, "label");
@@ -477,12 +559,16 @@ class ViewNodeBridge {
     }
 
     /** Get button action ID (for invoking via bridge). **/
-    public static function getButtonActionId(node:View):Int {
+    public static function getButtonActionId(node:Dynamic):Int {
+        var r = received(node);
+        if (r != null) return _foreign.actionId(r);
         return reader().actionId(node);
     }
 
     /** The cells a node's value depends on, joined for the C bridge. **/
-    public static function getValueDependencies(node:View):String {
+    public static function getValueDependencies(node:Dynamic):String {
+        // A received tree displays no cell of this application.
+        if (received(node) != null) return "";
         return reader().valueDependencies(node).join(",");
     }
 
@@ -491,15 +577,18 @@ class ViewNodeBridge {
     // A TabView pushes its tab contents into `children`, but the label and icon
     // beside each one stay in `tabs`. A host drawing the bar needs them.
 
-    public static function getTabCount(node:View):Int {
+    public static function getTabCount(node:Dynamic):Int {
+        if (received(node) != null) return 0;
         return reader().tabCount(node);
     }
 
-    public static function getTabTitle(node:View, index:Int):String {
+    public static function getTabTitle(node:Dynamic, index:Int):String {
+        if (received(node) != null) return "";
         return reader().tabTitle(reader().resolveWalked(node), index);
     }
 
-    public static function getTabIcon(node:View, index:Int):String {
+    public static function getTabIcon(node:Dynamic, index:Int):String {
+        if (received(node) != null) return "";
         return reader().tabIcon(reader().resolveWalked(node), index);
     }
 
@@ -541,7 +630,12 @@ class ViewNodeBridge {
         to the hxcpp GC. The dynamic renderer has no such problem: it holds the
         live view trees (each root record, a GC root), so the closure sitting on the node
         stays reachable. So we just call it — no id, no Callbacks indirection. **/
-    public static function invokeButtonAction(node:View):Void {
+    public static function invokeButtonAction(node:Dynamic):Void {
+        var r = received(node);
+        if (r != null) {
+            _foreign.invokeAction(r);
+            return;
+        }
         reader().invokeAction(node);
     }
 }

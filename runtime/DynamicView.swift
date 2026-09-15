@@ -575,7 +575,13 @@ struct DynamicView: View {
             }
 
         case "ProgressView":
-            ProgressView()
+            // A value makes a bar, none a spinner: the canonical ProgressView
+            // carries its value as a fraction, which a received tree does.
+            if let fraction = node.number("value") {
+                ProgressView(value: min(max(fraction, 0), 1))
+            } else {
+                ProgressView()
+            }
 
         case "ScrollView":
             ScrollView {
@@ -725,6 +731,7 @@ struct DynamicView: View {
 struct DynamicTextField: View {
     let node: ViewNode
     @State private var text: String
+    @FocusState private var focused: Bool
 
     init(node: ViewNode) {
         self.node = node
@@ -733,10 +740,22 @@ struct DynamicTextField: View {
 
     var body: some View {
         let label = node.property("label")
+        // The value the tree holds now. It changes without this view being
+        // recreated: a received tree's field is edited on another device too.
+        let external = node.property("value")
         return TextField(label, text: $text)
             .textFieldStyle(.roundedBorder)
+            .focused($focused)
             .onChange(of: text) { _, newValue in
-                viewnode_set_data(node.property("path"), newValue)
+                // Not an echo of what the tree already says.
+                if newValue != node.property("value") {
+                    viewnode_set_data(node.property("path"), newValue)
+                }
+            }
+            .onChange(of: external) { _, newValue in
+                // Never under the caret: a frame that raced the typing would
+                // take back the letters typed since it left.
+                if !focused { text = newValue }
             }
     }
 }
@@ -752,10 +771,15 @@ struct DynamicCheckBox: View {
     }
 
     var body: some View {
+        let external = node.property("value") == "true"
         Toggle(node.property("label"), isOn: $on)
             .onChange(of: on) { _, newValue in
-                viewnode_set_data(node.property("path"), newValue ? "true" : "false")
+                if newValue != (node.property("value") == "true") {
+                    viewnode_set_data(node.property("path"), newValue ? "true" : "false")
+                }
             }
+            // Follow the tree: a received switch is flipped elsewhere too.
+            .onChange(of: external) { _, newValue in on = newValue }
     }
 }
 
@@ -763,6 +787,7 @@ struct DynamicCheckBox: View {
 struct DynamicSlider: View {
     let node: ViewNode
     @State private var value: Double
+    @State private var dragging = false
 
     init(node: ViewNode) {
         self.node = node
@@ -773,10 +798,14 @@ struct DynamicSlider: View {
         let lo = Double(node.property("min")) ?? 0
         let hi = Double(node.property("max")) ?? 100
         let label = node.property("label")
+        let external = Double(node.property("value")) ?? 0
         return VStack(alignment: .leading, spacing: 2) {
             if !label.isEmpty { Text(label).font(.caption).foregroundStyle(.secondary) }
-            Slider(value: $value, in: lo...Swift.max(hi, lo + 0.0001))
+            Slider(value: $value, in: lo...Swift.max(hi, lo + 0.0001)) { editing in dragging = editing }
+                // Follow the tree, except under the hand that is moving it.
+                .onChange(of: external) { _, v in if !dragging { value = v } }
                 .onChange(of: value) { _, v in
+                    if v == (Double(node.property("value")) ?? 0) { return }
                     // Whole numbers write without a trailing ".0".
                     let s = v == v.rounded() ? String(Int(v)) : String(format: "%.2f", v)
                     viewnode_set_data(node.property("path"), s)
@@ -1693,6 +1722,10 @@ extension Color {
 /// different names, and conflating them would answer both questions wrongly.
 func suiColorValue(_ raw: String) -> Color {
     let name = raw.trimmingCharacters(in: .whitespaces)
+    // A bare hex, as some describers send a custom colour.
+    if name.hasPrefix("#"), let hex = Color(suiHex: name) {
+        return hex
+    }
     if name.hasPrefix("Custom(") && name.hasSuffix(")") {
         let hex = String(name.dropFirst("Custom(".count).dropLast())
         return Color(suiHex: hex) ?? .primary

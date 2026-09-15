@@ -11,7 +11,7 @@
  * direct-symbol path is both correct and more robust.)
  *
  * Nodes cross the boundary as opaque void* — the raw hx::Object* behind a
- * ::sui::View. GC note: each entry registers the stack top so allocations made
+ * sui View, or behind a nui Node when a received tree is drawing. GC note: each entry registers the stack top so allocations made
  * while building strings stay reachable; returned strings and pointers must be
  * copied by the caller before the next GC.
  */
@@ -38,10 +38,14 @@
 // at link time in a place that names neither the cause nor the fix.
 extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 
-// Wrap an opaque node pointer back into a typed ::sui::View. Null-safe: a null
-// pointer yields a null View, which every ViewNodeBridge method tolerates.
-static inline ::sui::View _asView(void* node) {
-    return ::sui::View((::sui::View_obj*)node);
+// Wrap an opaque node pointer back into a Haxe object. Untyped on purpose: a
+// node is a sui View of the application's own tree or a nui Node of a received
+// one (ViewNodeBridge.readThrough), and the Haxe side tells them apart by their
+// runtime class; a typed wrapper would read a received node as a View.
+// Null-safe: a null pointer yields a null Dynamic, which every ViewNodeBridge
+// method tolerates.
+static inline ::Dynamic _asView(void* node) {
+    return ::Dynamic((hx::Object*)node);
 }
 
 extern "C" {
@@ -138,7 +142,7 @@ void* viewnode_get_root(void) {
     hx::SetTopOfStack(&dummy, true);
     void* result = nullptr;
     try {
-        ::sui::View root = ::sui::runtime::ViewNodeBridge_obj::getRoot();
+        ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRoot();
         result = root.GetPtr();
     } catch (...) {}
     hx::SetTopOfStack((int*)0, false);
@@ -151,7 +155,7 @@ void* viewnode_root_for(const char* id) {
     hx::SetTopOfStack(&dummy, true);
     void* result = nullptr;
     try {
-        ::sui::View root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
+        ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
         result = root.GetPtr();
     } catch (...) {}
     hx::SetTopOfStack((int*)0, false);
@@ -253,7 +257,7 @@ void* viewnode_get_child(void* node, int32_t index) {
     hx::SetTopOfStack(&dummy, true);
     void* result = nullptr;
     try {
-        ::sui::View child = ::sui::runtime::ViewNodeBridge_obj::getChild(_asView(node), index);
+        ::Dynamic child = ::sui::runtime::ViewNodeBridge_obj::getChild(_asView(node), index);
         result = child.GetPtr();
     } catch (...) {}
     hx::SetTopOfStack((int*)0, false);

@@ -188,6 +188,56 @@ final class LevelMeterComponent: NSObject, SuiComponent {
 The view is rebuilt with a fresh `ViewNode` each time the tree is: read the props
 in `body`, keep state in `@State` or `@StateObject`.
 
+## Drawing a tree that arrived
+
+A panel another program builds — a `nui` tree received over `dui` — is drawn in
+place of `body()`:
+
+```haxe
+@:state var generation:Int = 0;
+var drawn:Null<nui.Node> = null;
+
+// in the constructor
+sui.runtime.ViewNodeBridge.readThrough(new nui.SelfSource(() -> {
+    generation;
+    return drawn != null ? drawn : waiting();
+}));
+reception.onTree = (tree, _) -> { drawn = tree; generation++; };
+```
+
+The same call as `aui`'s, so a panel application is written once for both.
+
+- **Read, not copied.** The renderer walks the received `nui.Node`s through
+  `nui.SelfSource`. Nodes cross the C bridge untyped, and the bridge tells a
+  received node from one of the application's views by its class, so a
+  Preferences root the application declared keeps drawing its own views.
+- **Canonical in, sui out.** `sui.nui.Received` answers the renderer's questions
+  for a canonical node: `TextInput` is drawn as a `TextField`, a `Toggle`'s
+  `isOn` is the value its checkbox reads, `padding` and `foregroundColor` are the
+  `Padding` and `ForegroundColor` modifiers, numbers cross as the text the
+  renderer parses. A type it has no case for may be a native component, looked up
+  as above.
+- **Edits go home.** A received control has no cell here. Its `path` names the
+  action its node carries, and an edit written to it runs that action with the
+  new value — which, on an inflated tree, sends it to the program that built it.
+  A tap runs `onClick` the same way.
+- **Controls follow the tree.** A switch, a slider or a field takes the value of
+  the next tree, since the value can change elsewhere: a field never under the
+  caret, a slider never under the hand moving it.
+- **A write says a tree arrived.** While a tree is received, any cell write
+  rebuilds, and the rebuild re-reads the source's thunk.
+
+`readThrough(null)` hands the screen back to `body()`.
+
+What it does not do yet: substitute a declared fallback for a received type it
+cannot draw. The renderer knows its components only by looking them up in Swift,
+so there is no answer on the Haxe side for `vui.Fallback.substitute` to ask. A
+type nobody draws shows its children, or nothing.
+
+> Frames written by `SUI_FRAME_DUMP` show a `TextField`, or a `ProgressView` with a
+> value, as a yellow placeholder: `ImageRenderer` cannot draw an AppKit-backed
+> control off screen. The window draws them.
+
 ## How it works
 
 Instead of generating Swift per view, sui compiles a fixed **`DynamicView.swift`**
@@ -336,7 +386,7 @@ The bridge surface, all `extern "C"`:
 | `viewnode_get_text` / `_get_property` | Node content. |
 | `viewnode_get_button_label` / `_invoke_action` | Buttons (direct dispatch). |
 | `viewnode_modifier_count` / `_type` / `_float` / `_string` | Modifier chain. |
-| `viewnode_set_data(path, value)` | Input edit → data sink. |
+| `viewnode_set_data(path, value)` | Input edit → data sink; on a received control, runs its action. |
 | `viewnode_fire_action(name, extraJson)` | Renderer action → action sink. |
 | `viewnode_theme_accent()` | The accent to tint controls with. |
 
