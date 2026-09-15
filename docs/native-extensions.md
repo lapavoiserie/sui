@@ -127,6 +127,9 @@ flowchart LR
 ```
 
 - Swift files in `swift/` are copied verbatim &mdash; no code generation
+- A `kui` or `vui` implementation's `xcode` payload is copied the same way; a `.h`
+  among its `sources` is also added to the bridging header, which is how its Swift
+  calls C compiled into the static library by its `hxcpp` payload
 - `@:swiftView` classes don't generate Swift structs &mdash; they reference yours
 - SPM packages are resolved at build time by Xcode
 - Custom Swift code has full access to SwiftUI, SPM packages, and generated app code

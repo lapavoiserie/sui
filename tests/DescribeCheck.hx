@@ -77,6 +77,18 @@ class DescribeCheck extends App {
 		check("a re-describe samples the new value",
 			PropValueTools.asBool(again.children[2].props.get("isOn")) == true);
 
+		// A native component is sent as the node it was made from, typed props
+		// intact: the far side's registry keys on exactly that.
+		var native = mui.surface.Describe.describe(new sui.ui.VStack(null, null, [
+			new sui.ui.NativeComponent(new nui.Node("LevelMeter")
+				.prop("stream", PString("vu.master"))
+				.prop("floorDb", PFloat(-60.0)))
+		]));
+		var sent = native.children[0];
+		check("a native component describes as its own node", sent.type == "LevelMeter"
+			&& PropValueTools.asString(sent.props.get("stream")) == "vu.master"
+			&& sent.props.get("floorDb").match(PFloat(-60.0)));
+
 		// --- The pipe: project -> wire -> invoke like a remote sink ---
 		var table = new nui.Snapshot.ActionTable();
 		var snap = nui.Snapshot.project(described, table);

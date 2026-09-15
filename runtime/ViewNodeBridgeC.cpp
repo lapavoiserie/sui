@@ -85,6 +85,21 @@ int32_t viewnode_poll(void) {
     return result;
 }
 
+// Defined with sui.runtime.ViewNodeBridge, beside the flag poll() clears.
+void sui_bridge_set_pump_requester(void (*requester)(void));
+
+// Install the host's requester and start watching the main thread's event loop.
+// Call on the main thread, after boot.
+void viewnode_set_pump_requester(void (*requester)(void)) {
+    sui_bridge_set_pump_requester(requester);
+    int dummy = 0;
+    hx::SetTopOfStack(&dummy, true);
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::watchMainEvents();
+    } catch (...) {}
+    hx::SetTopOfStack((int*)0, false);
+}
+
 // A native input changed: write value at data-model path back into the app.
 void viewnode_set_data(const char* path, const char* value) {
     int dummy = 0;

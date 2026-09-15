@@ -151,6 +151,43 @@ src/MyApp.hx:32: The dynamic renderer cannot draw "Badge".
 The covered set is read from `DynamicView.swift` itself, so it cannot drift from
 what the renderer actually draws.
 
+## Native components
+
+A component a library ships — a level meter from `vui`, say — is not a case of that `switch`,
+and should not have to become one. It reaches the renderer as a
+**`sui.ui.NativeComponent`**, built from a `nui.Node`:
+
+```haxe
+new sui.ui.NativeComponent(new nui.Node("LevelMeter").prop("stream", PString("vu.master")))
+```
+
+- **Not refused.** The coverage check does not judge it. Whoever builds one has
+  decided at compile time that an implementation is linked — `vui.Vui.view` does
+  not compile otherwise — so a check here would be a second opinion on the same
+  question.
+- **Found by class name.** The renderer's `default` branch looks the type up before
+  drawing an unknown one: a Swift class exported to Objective-C as
+  `SuiComponent_<type>` and conforming to `SuiComponent`.
+
+```swift
+@objc(SuiComponent_LevelMeter)
+final class LevelMeterComponent: NSObject, SuiComponent {
+    static func view(for node: ViewNode) -> AnyView { AnyView(LevelMeterView(node: node)) }
+}
+```
+
+  Swift has no static initialisers, so a component cannot add itself to a table
+  when it loads, and a table the build wrote would be a list of names kept in a
+  second place. The Objective-C runtime already is a registry by name, and linking
+  the file is what fills it. A type nobody registered draws what an unknown type
+  draws.
+- **Described as given.** `sui.nui.Describe` sends the node the component was made
+  from, typed props intact, so a Companion surface receives a `LevelMeter` and not a
+  guess.
+
+The view is rebuilt with a fresh `ViewNode` each time the tree is: read the props
+in `body`, keep state in `@State` or `@StateObject`.
+
 ## How it works
 
 Instead of generating Swift per view, sui compiles a fixed **`DynamicView.swift`**
@@ -215,6 +252,15 @@ flowchart LR
     D -->|changed| R["reloadCount++ (withAnimation)"]
     R --> RE["DynamicView re-reads the tree"]
 ```
+
+The poll is also **woken**. A frame read off a socket reaches Haxe queued onto the
+main thread's event loop (`dui.socket.Pump`, `cafos.client.Marshal`), and waiting
+for the next 100 ms tick to run it meant a panel showed ten updates a second
+whatever its source sent. So `ViewNodeBridge.watchMainEvents` keeps one thread in
+that loop's `wait()`, which returns each time something is queued, and asks the
+host for a pump through `viewnode_set_pump_requester` — once per visit, however
+many events were queued. The timer stays, for a `haxe.Timer` that comes due with
+nothing queued.
 
 Register a poll delegate from your app; return `true` when the tree should
 rebuild:
@@ -283,6 +329,7 @@ The bridge surface, all `extern "C"`:
 |---|---|
 | `viewnode_boot()` | Boot hxcpp + register the app (generated `SuiBootC.cpp`). |
 | `viewnode_poll()` | Pump the poll delegate; returns 1 if the tree changed. |
+| `viewnode_set_pump_requester(fn)` | Called from another thread when work is queued for Haxe; `fn` schedules a poll on the main thread. |
 | `viewnode_rebuild()` | Re-run `app.body()`. |
 | `viewnode_get_root()` | Opaque pointer to the root node. |
 | `viewnode_get_type` / `_child_count` / `_get_child` | Tree traversal. |

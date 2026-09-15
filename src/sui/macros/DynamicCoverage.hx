@@ -213,6 +213,22 @@ class DynamicCoverage {
 		return cls.name == "View" && cls.pack.join(".") == "sui";
 	}
 
+	/**
+		A node drawn by a component the application links (`sui.ui.NativeComponent`).
+
+		Its type is a runtime value, and its SwiftUI view is registered by the
+		library that implements it rather than written in `DynamicView.swift`.
+		Whether one is linked was decided where the node was built.
+	**/
+	static function isNativeComponent(cls:ClassType):Bool {
+		var current = cls;
+		while (current != null) {
+			if (current.name == "NativeComponent" && current.pack.join(".") == "sui.ui") return true;
+			current = current.superClass == null ? null : current.superClass.t.get();
+		}
+		return false;
+	}
+
 	/** A composition unit, expanded rather than drawn. **/
 	static function isComponent(cls:ClassType):Bool {
 		var current = cls;
@@ -234,7 +250,8 @@ class DynamicCoverage {
 				// other: restricting this to `sui.ui` would watch only our code
 				// and leave a user's node to fail in silence, which is the
 				// failure this check exists to remove.
-				if (extendsView(cls) && !isComponent(cls) && !isBaseView(cls) && !coveredByChain(cls, covered)) {
+				if (extendsView(cls) && !isComponent(cls) && !isBaseView(cls) && !isNativeComponent(cls)
+					&& !coveredByChain(cls, covered)) {
 					offenders.push({name: cls.name, pos: e.pos});
 				}
 			default:

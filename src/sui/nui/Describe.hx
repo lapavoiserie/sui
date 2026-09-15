@@ -155,7 +155,14 @@ class Describe {
 
 		// Most-derived first where hierarchies nest; sui types are mostly
 		// flat classes over a property-bag View, so class dispatch is safe.
-		if (Std.isOfType(v, sui.ui.Text)) {
+		if (Std.isOfType(v, sui.ui.NativeComponent)) {
+			// Already a node, in the canon of the library that defined it: sent
+			// as it was given. A copy, so a projection never holds the view's.
+			var given = (cast v : sui.ui.NativeComponent).node;
+			out = new Node(given.type);
+			for (key in given.props.keys()) out.prop(key, given.props.get(key));
+
+		} else if (Std.isOfType(v, sui.ui.Text)) {
 			var t:sui.ui.Text = cast v;
 			out = new Node("Text").prop("text", PString(t.content != null ? t.content : ""));
 

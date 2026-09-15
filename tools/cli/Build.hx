@@ -406,10 +406,15 @@ class Build {
             copyHotReloadFiles(buildDir);
         }
 
+        // Copy user-provided Swift files from swift/ directory
+        copyUserSwiftFiles(cwd, buildDir);
+        var kuiHeaders = copyKuiSwiftFiles(cwd, platform, buildDir);
+
         // Umbrella bridging header: Xcode exposes exactly one bridging header to
         // Swift, but a hot-reload app may need both the static bridge (actions)
         // and the dynamic ViewNode bridge. Generate one that includes whichever
-        // headers are present.
+        // headers are present -- and the C headers capabilities ship, which is
+        // how a Swift source in a payload reaches the C code compiled beside it.
         if (nativeBridge) {
             var umbrella = new StringBuf();
             umbrella.add("// AUTO-GENERATED — Swift ↔ hxcpp bridging umbrella header.\n");
@@ -417,12 +422,14 @@ class Build {
                 umbrella.add("#include \"HaxeBridgeC.h\"\n");
             if (FileSystem.exists('$buildDir/Sources/ViewNodeBridgeC.h'))
                 umbrella.add("#include \"ViewNodeBridgeC.h\"\n");
+            for (header in kuiHeaders)
+                umbrella.add('#include "$header"\n');
             File.saveContent('$buildDir/Sources/SuiBridging.h', umbrella.toString());
+        } else if (kuiHeaders.length > 0) {
+            // Nothing would import them: the Swift that needs them would fail
+            // to compile far from here, naming a C function and not the cause.
+            Sys.println('  [kui] ${kuiHeaders.join(", ")} need a bridging header, and this build has no native bridge.');
         }
-
-        // Copy user-provided Swift files from swift/ directory
-        copyUserSwiftFiles(cwd, buildDir);
-        copyKuiSwiftFiles(cwd, platform, buildDir);
 
         // Read what kui capabilities need — here, and not beside
         // readProjectConfig where it started. The sidecar is written by the Haxe
@@ -805,16 +812,27 @@ class Build {
         return payload;
     }
 
-    /** Swift a capability ships, copied beside the application's own. **/
-    static function copyKuiSwiftFiles(cwd:String, platform:String, buildDir:String) {
+    /**
+        Swift a capability ships, copied beside the application's own.
+
+        A `.h` among the sources is a C header for that Swift to call: the C it
+        declares is compiled into the static library through the capability's
+        `hxcpp` payload. Returned, so the bridging header can include it —
+        Swift sees C through that one header and nothing else.
+    **/
+    static function copyKuiSwiftFiles(cwd:String, platform:String, buildDir:String):Array<String> {
         var payload = readKuiPayload(cwd, platform);
+        var headers:Array<String> = [];
         for (source in payload.strings("xcode", "sources")) {
             if (!FileSystem.exists(source)) {
                 Sys.println('  [kui] missing source: $source');
                 continue;
             }
-            File.copy(source, '$buildDir/Sources/' + haxe.io.Path.withoutDirectory(source));
+            var name = haxe.io.Path.withoutDirectory(source);
+            File.copy(source, '$buildDir/Sources/' + name);
+            if (name.endsWith(".h") && headers.indexOf(name) < 0) headers.push(name);
         }
+        return headers;
     }
 
     public static function readProjectConfig(cwd:String):ProjectConfig {

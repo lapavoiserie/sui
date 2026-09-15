@@ -36,6 +36,11 @@ void viewnode_command_invoke(int32_t set, int32_t index);
 // Pump the app's poll delegate (e.g. drain a WebSocket queue) on the calling
 // thread; returns non-zero if the view tree changed and should be re-rendered.
 int32_t viewnode_poll(void);
+// Called from another thread whenever work is queued for the main thread's
+// Haxe event loop; the requester must only schedule a viewnode_poll() on the
+// main thread. One call per visit: it is not called again until poll has run.
+// Install on the main thread, after boot — that is what starts the watcher.
+void viewnode_set_pump_requester(void (*requester)(void));
 
 // A native input changed: write `value` at data-model `path` back into the app.
 void viewnode_set_data(const char* path, const char* value);

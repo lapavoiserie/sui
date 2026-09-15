@@ -206,6 +206,46 @@ struct ViewNode {
     }
 }
 
+// MARK: - Native components
+
+/// A SwiftUI view for a node type the renderer's switch does not know: a
+/// component shipped by a library, such as `vui`'s level meter.
+///
+/// ```swift
+/// @objc(SuiComponent_LevelMeter)
+/// final class LevelMeterComponent: NSObject, SuiComponent {
+///     static func view(for node: ViewNode) -> AnyView { AnyView(LevelMeterView(node: node)) }
+/// }
+/// ```
+///
+/// Found by the Objective-C name `SuiComponent_<type>`, and that is the whole
+/// registration. Swift has no static initialisers, so a component cannot add
+/// itself to a table when it loads, and a table written by the build would be a
+/// list of names kept in a second place. A class name is already a runtime
+/// registry, and linking the file is what fills it.
+///
+/// The node comes from Haxe as a `sui.ui.NativeComponent`; whether an
+/// implementation is linked was decided there, at compile time. The view is
+/// rebuilt with a new `ViewNode` each time the tree is, so it reads its props
+/// in `body` and keeps what it must keep in `@State`.
+protocol SuiComponent: AnyObject {
+    static func view(for node: ViewNode) -> AnyView
+}
+
+final class SuiComponents {
+    static let shared = SuiComponents()
+    /// Hits and misses both: an unknown type is asked for on every rebuild.
+    private var found: [String: SuiComponent.Type?] = [:]
+
+    func find(_ type: String) -> SuiComponent.Type? {
+        if type.isEmpty { return nil }
+        if let known = found[type] { return known }
+        let resolved = NSClassFromString("SuiComponent_" + type) as? SuiComponent.Type
+        found[type] = resolved
+        return resolved
+    }
+}
+
 // MARK: - Dynamic SwiftUI Renderer
 
 /// Renders a ViewNode as a SwiftUI view, recursively processing children.
@@ -547,8 +587,12 @@ struct DynamicView: View {
             }
 
         default:
-            // Unknown view type — render children if any
-            if node.childCount > 0 {
+            // A component the application links (`sui.ui.NativeComponent`),
+            // registered by type rather than written here -- see SuiComponents.
+            if let component = SuiComponents.shared.find(node.viewType) {
+                component.view(for: node)
+            } else if node.childCount > 0 {
+                // Unknown view type — render children if any
                 VStack {
                     ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
                         DynamicView(node: child).id(child.identity(at: index))
@@ -1298,6 +1342,25 @@ private func _suiStateChanged(_ name: String) {
     }
 }
 
+/// Pump Haxe as soon as work is queued for it, not at the next poll tick.
+///
+/// Called on the Haxe watcher thread (`ViewNodeBridge.watchMainEvents`) each
+/// time a frame, a stream value or any other event is queued for the main
+/// thread; the bridge calls it once per visit. It only hops: the pump itself
+/// runs on the main thread, like every other entry into Haxe.
+private func _suiRequestPump() {
+    DispatchQueue.main.async {
+        if viewnode_poll() != 0 {
+            NotificationCenter.default.post(name: .viewTreeDidReload, object: nil)
+        }
+    }
+}
+
+/// Installed once, by the first root view, after boot.
+private let _suiPumpRequesterInstalled: Void = {
+    viewnode_set_pump_requester(_suiRequestPump)
+}()
+
 struct HotReloadRootView: View {
     @State private var reloadCount = 0
 
@@ -1309,6 +1372,7 @@ struct HotReloadRootView: View {
     init() {
         _ = _suiRuntimeBooted
         viewnode_observe_state(_suiStateDidChange)
+        _ = _suiPumpRequesterInstalled
     }
 
     var body: some View {

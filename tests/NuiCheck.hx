@@ -63,6 +63,23 @@ class NuiCheck {
 		check("children are counted", src.childCount(root) == 2, Std.string(src.childCount(root)));
 		check("a child is reachable", src.typeOf(src.childAt(root, 1)) == "Button");
 
+		// --- a native component stands for itself, props readable ---
+		//
+		// Its type is the one the application registered in Swift; the walk
+		// must neither expand it nor turn it into an empty stack, as it does a
+		// bare `sui.View`.
+		var meter:View = new sui.ui.NativeComponent(new nui.Node("LevelMeter")
+			.prop("stream", PString("vu.master"))
+			.prop("channels", PInt(2))
+			.prop("floorDb", PFloat(-60.0)));
+		var ms = new ViewSource(new VStack(null, null, [meter]));
+		var placed = ms.childAt(ms.root(), 0);
+		check("a native component reports the type it was given", ms.typeOf(placed) == "LevelMeter", ms.typeOf(placed));
+		check("its string prop crosses as given", ms.stringProp(placed, "stream") == "vu.master", ms.stringProp(placed, "stream"));
+		check("its numbers cross as numbers", Std.parseFloat(ms.stringProp(placed, "floorDb")) == -60
+			&& Std.parseFloat(ms.stringProp(placed, "channels")) == 2, ms.stringProp(placed, "floorDb"));
+		check("and it has no children to invent", ms.childCount(placed) == 0);
+
 		// --- a component is described by what it renders ---
 		//
 		// The transpiler emitted a Swift struct per ViewComponent. A walker has

@@ -25,6 +25,26 @@ import sui.modifiers.ViewModifier;
     without ever crashing.
 **/
 @:keep
+#if (cpp && !cppia)
+@:cppFileCode('
+#include <atomic>
+typedef void (*sui_pump_requester)(void);
+static sui_pump_requester s_sui_pump_requester = nullptr;
+static std::atomic<bool> s_sui_pump_pending{false};
+
+// Installed by the host (viewnode_set_pump_requester), which then starts the
+// watcher. The requester only posts to the main queue: it runs on the watcher.
+extern "C" void sui_bridge_set_pump_requester(sui_pump_requester fn) {
+    s_sui_pump_requester = fn;
+}
+
+// One request until the host has pumped: a burst of queued events is one visit.
+static void sui_bridge_request_pump() {
+    sui_pump_requester requester = s_sui_pump_requester;
+    if (requester && !s_sui_pump_pending.exchange(true)) requester();
+}
+')
+#end
 class ViewNodeBridge {
     /** Current app instance. **/
     static var _app:Dynamic = null;
@@ -217,6 +237,11 @@ class ViewNodeBridge {
     /** Pump the poll delegate and rebuild if it reports a change. Returns true
         when the tree changed, so the native host can trigger a re-render. **/
     public static function poll():Bool {
+        // Cleared before pumping: an event queued while the pump runs asks
+        // for the next visit instead of being folded into this one.
+        #if (cpp && !cppia)
+        untyped __cpp__("s_sui_pump_pending = false");
+        #end
         pumpHaxeEvents();
         if (_poll == null) return false;
         var changed = _poll();
@@ -225,6 +250,44 @@ class ViewNodeBridge {
     }
 
     static var _pumpBroken = false;
+
+    static var _watching = false;
+
+    /**
+        Ask the host for a visit whenever work is queued for the main thread,
+        from any thread.
+
+        The 100 ms poll alone meant a frame arriving off a socket waited for
+        the next tick before anything drew it: `dui.socket.Pump` and
+        `cafos.client.Marshal` queue onto this thread's `sys.thread.EventLoop`,
+        and nothing looked at it in between. A level meter fed that way showed
+        ten values a second whatever the sender sent — the defect `wui` had,
+        measured by the Farceur session at 60 trees a second shown as ten.
+
+        The loop's `wait()` returns each time something is queued (`run`,
+        `repeat` and `runPromised` each release it), so one thread waits there
+        and asks the host each time. It consumes wake-ups nobody else uses: the
+        main thread only ever calls `progress()`.
+
+        Called on the main thread by `viewnode_set_pump_requester`, once the
+        host has installed its requester. The poll stays, for timers that come
+        due without anything being queued.
+    **/
+    public static function watchMainEvents():Void {
+        if (_watching) return;
+        #if (cpp && !cppia)
+        var events:Null<sys.thread.EventLoop> = try sys.thread.Thread.current().events catch (_:Dynamic) null;
+        if (events == null) return;
+        _watching = true;
+        final loop:sys.thread.EventLoop = events;
+        sys.thread.Thread.create(() -> {
+            while (true) {
+                loop.wait();
+                untyped __cpp__("sui_bridge_request_pump()");
+            }
+        });
+        #end
+    }
 
     /** Let Haxe's own scheduled work run. Without this a `haxe.Timer` an
         application creates never fires — silently. The entry point pumps the
