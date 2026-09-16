@@ -35,12 +35,6 @@ class Received {
 	/** What a `path` answers for a control whose edits run its action. **/
 	public static inline var PATH_PREFIX = "nui:";
 
-	/**
-		The hosts a received `Image` may load `https:` from. Empty by default:
-		a panel that fetched whatever a tree named would contact any host its
-		sender chose. A panel that wants remote pictures names the hosts.
-	**/
-	public static var trustedImageHosts:Array<String> = [];
 
 	/** The type the renderer switches on. **/
 	public static function typeOf(source:SelfSource, n:Node):String {
@@ -57,16 +51,6 @@ class Received {
 		if (n == null) return "";
 		return switch [n.type, key] {
 			case ["Toggle", "value"]: source.boolProp(n, "isOn") ? "true" : "false";
-			// A received picture's source, judged as received. What may not be
-			// loaded here arrives as `refused:` and a reason -- not empty: an
-			// Image with no src is the older asset-catalog kind to the renderer,
-			// which would draw nothing where the alt belongs.
-			case ["Image", "src"]:
-				var src = source.stringProp(n, "src");
-				switch (nui.ImageSource.check(src, true, trustedImageHosts)) {
-					case Invalid(reason): "refused:" + reason;
-					case _: src;
-				}
 			// A received picker selects by position.
 			case ["Picker", "selectionMode"]: "index";
 			case ["Picker", "value"]: Std.string(n.props.exists("selectedIndex") ? source.intProp(n, "selectedIndex") : -1);
