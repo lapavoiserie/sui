@@ -121,6 +121,32 @@ class ReceivedCheck {
 		ViewNodeBridge.setData("some.app.path", "x");
 		check("a path that is not ours is left to the application", clicks == before && typed.length == 1);
 
+		// --- pictures in a received tree ---
+		var pictures = new Node("VStack")
+			.child(new Node("Image").prop("src", PString("file:///etc/hosts")).prop("alt", PString("hosts")))
+			.child(new Node("Image").prop("src", PString("https://images.example.org/a.png")).prop("alt", PString("remote")))
+			.child(new Node("Image").prop("src", PString("data:image/png;base64,iVBORw0KGgo=")).prop("alt", PString("dot")))
+			.child(new Node("Icon").prop("name", PString("mic-off")).prop("label", PString("Muted")));
+		var previous = current;
+		current = pictures;
+		ViewNodeBridge.rebuild();
+		var shown = ViewNodeBridge.getRoot();
+		check("a received file: source arrives refused, never empty, so its alt is drawn",
+			StringTools.startsWith(ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 0), "src"), "refused:")
+			&& ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 0), "alt") == "hosts");
+		check("a received https: from an untrusted host too",
+			StringTools.startsWith(ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 1), "src"), "refused:"));
+		sui.nui.Received.trustedImageHosts = ["images.example.org"];
+		check("and passes once the panel trusts the host",
+			ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 1), "src") == "https://images.example.org/a.png");
+		sui.nui.Received.trustedImageHosts = [];
+		check("a received data: picture passes",
+			StringTools.startsWith(ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 2), "src"), "data:image/png"));
+		check("an Icon arrives with its name and label", ViewNodeBridge.getViewType(ViewNodeBridge.getChild(shown, 3)) == "Icon"
+			&& ViewNodeBridge.getStringProperty(ViewNodeBridge.getChild(shown, 3), "name") == "mic-off");
+		current = previous;
+		ViewNodeBridge.rebuild();
+
 		// --- a new tree arrives ---
 		current = tree("second");
 		check("any write rebuilds while a tree is received", ViewNodeBridge.isStructural("status"));

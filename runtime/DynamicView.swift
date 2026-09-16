@@ -246,6 +246,237 @@ final class SuiComponents {
     }
 }
 
+// MARK: - Icons and images
+
+/// The shared icon vocabulary (`nui.Icons`), as SF Symbols.
+///
+/// Every name was checked to exist on macOS. A name added to the vocabulary
+/// without a line here draws its label, which is what a received unknown name
+/// draws too.
+enum SuiIcons {
+    static let symbols: [String: String] = [
+        "add": "plus",
+        "close": "xmark",
+        "check": "checkmark",
+        "delete": "trash",
+        "edit": "pencil",
+        "search": "magnifyingglass",
+        "settings": "gearshape",
+        "home": "house",
+        "info": "info.circle",
+        "warning": "exclamationmark.triangle",
+        "error": "xmark.octagon",
+        "menu": "line.3.horizontal",
+        "more": "ellipsis",
+        "refresh": "arrow.clockwise",
+        "share": "square.and.arrow.up",
+        "star": "star",
+        "person": "person",
+        "lock": "lock",
+        "unlock": "lock.open",
+        "mail": "envelope",
+        "phone": "phone",
+        "save": "square.and.arrow.down",
+        "back": "chevron.left",
+        "forward": "chevron.right",
+        "up": "chevron.up",
+        "down": "chevron.down",
+        "play": "play.fill",
+        "pause": "pause.fill",
+        "stop": "stop.fill",
+        "record": "record.circle",
+        "swap": "rectangle.2.swap",
+        "broadcast": "dot.radiowaves.left.and.right",
+        "mic": "mic",
+        "mic-off": "mic.slash",
+        "speaker": "speaker.wave.2",
+        "speaker-off": "speaker.slash",
+        "headphones": "headphones",
+        "eye": "eye",
+        "eye-off": "eye.slash",
+        "folder": "folder",
+        "document": "doc",
+        "image": "photo",
+        "camera": "camera",
+        "video": "video",
+        "clock": "clock",
+        "display": "display",
+        "window": "macwindow",
+        "globe": "globe",
+        "text": "textformat",
+        "palette": "paintpalette",
+        "grid": "square.grid.2x2",
+        "layers": "square.3.layers.3d",
+        "bring-front": "square.3.layers.3d.top.filled",
+        "send-back": "square.3.layers.3d.bottom.filled",
+        "crop": "crop",
+        "move": "arrow.up.and.down.and.arrow.left.and.right",
+        "rotate": "rotate.right"
+    ]
+}
+
+/// An `Icon` node.
+///
+/// A vocabulary name is its SF Symbol, coloured like the text around it. A
+/// name outside the vocabulary is either an SF Symbol written directly -- the
+/// streaming protocol's icons, which take the theme accent as they always did
+/// -- or nothing this platform has, and then its label is drawn instead.
+struct SuiIcon: View {
+    let node: ViewNode
+
+    var body: some View {
+        let name = node.property("name")
+        let label = node.property("label")
+        let spoken = label.isEmpty ? name.replacingOccurrences(of: "-", with: " ") : label
+        if let symbol = SuiIcons.symbols[name] {
+            Image(systemName: symbol).accessibilityLabel(spoken)
+        } else if SuiImageLoader.symbolExists(name) {
+            Image(systemName: name)
+                .foregroundStyle(Color(suiHex: String(cString: viewnode_theme_accent())) ?? .primary)
+                .accessibilityLabel(spoken)
+        } else {
+            Text(spoken)
+        }
+    }
+}
+
+#if os(macOS)
+typealias SuiPlatformImage = NSImage
+#else
+typealias SuiPlatformImage = UIImage
+#endif
+
+/// Where a canonical image's picture comes from, and the decoded pictures kept.
+///
+/// The rules about what a *received* tree may name are applied before the
+/// source reaches here (`sui.nui.Received`, through `nui.ImageSource`): a
+/// refused one arrives empty and is drawn as its alt.
+enum SuiImageLoader {
+    /// Decoded pictures by source, bounded. A body is evaluated on every
+    /// rebuild, and decoding a PNG each time would be the cost of a frame.
+    static let cache: NSCache<NSString, SuiPlatformImage> = {
+        let c = NSCache<NSString, SuiPlatformImage>()
+        c.countLimit = 256
+        return c
+    }()
+
+    static func symbolExists(_ name: String) -> Bool {
+        if name.isEmpty { return false }
+        #if os(macOS)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+        #else
+        return UIImage(systemName: name) != nil
+        #endif
+    }
+
+    /// PNG or JPEG by its own first bytes, whatever the name or header said.
+    static func isPngOrJpeg(_ data: Data) -> Bool {
+        let b = [UInt8](data.prefix(4))
+        if b.count >= 4 && b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47 { return true }
+        if b.count >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF { return true }
+        return false
+    }
+
+    static func decode(_ data: Data) -> SuiPlatformImage? {
+        guard isPngOrJpeg(data) else { return nil }
+        return SuiPlatformImage(data: data)
+    }
+
+    /// A picture this process can produce now: an asset, a data source, a file.
+    /// Nil for what is fetched (https), not yet served (blob) or unusable.
+    static func local(_ src: String) -> SuiPlatformImage? {
+        if let hit = cache.object(forKey: src as NSString) { return hit }
+        var made: SuiPlatformImage? = nil
+        if src.hasPrefix("asset:") {
+            var path = String(src.dropFirst("asset:".count))
+            if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
+            if let base = Bundle.main.resourceURL {
+                let url = base.appendingPathComponent("assets").appendingPathComponent(path)
+                if let data = try? Data(contentsOf: url) { made = decode(data) }
+            }
+        } else if src.hasPrefix("data:"), let comma = src.firstIndex(of: ",") {
+            let payload = String(src[src.index(after: comma)...])
+            if let data = Data(base64Encoded: payload) { made = decode(data) }
+        } else if src.hasPrefix("file://"), let url = URL(string: src),
+                  let data = try? Data(contentsOf: url) {
+            made = decode(data)
+        }
+        if let image = made { cache.setObject(image, forKey: src as NSString) }
+        return made
+    }
+}
+
+/// An `Image` node in the canonical shape: `src`, `alt`, `width`, `height`, `fit`.
+///
+/// Whatever is not there -- still loading, refused, undecodable, a blob not
+/// yet served -- is its alt, in the space the picture would take: never a
+/// broken-image glyph, and never an empty rectangle unless the alt is empty,
+/// which says the picture was decorative.
+struct SuiImage: View {
+    let node: ViewNode
+
+    var body: some View {
+        let src = node.property("src")
+        let alt = node.property("alt")
+        let width = node.number("width").map { CGFloat($0) }
+        let height = node.number("height").map { CGFloat($0) }
+        let fit = node.property("fit")
+        Group {
+            if let picture = SuiImageLoader.local(src) {
+                fitted(image(picture), fit: fit, width: width, height: height, intrinsic: picture.size)
+            } else if src.hasPrefix("https://"), let url = URL(string: src) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let loaded):
+                        fitted(loaded, fit: fit, width: width, height: height, intrinsic: nil)
+                    case .failure:
+                        absent(alt, width: width, height: height)
+                    default:
+                        absent("", width: width, height: height)
+                    }
+                }
+            } else {
+                absent(alt, width: width, height: height)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(alt)
+        .accessibilityHidden(alt.isEmpty)
+    }
+
+    private func image(_ picture: SuiPlatformImage) -> Image {
+        #if os(macOS)
+        return Image(nsImage: picture)
+        #else
+        return Image(uiImage: picture)
+        #endif
+    }
+
+    @ViewBuilder
+    private func fitted(_ image: Image, fit: String, width: CGFloat?, height: CGFloat?, intrinsic: CGSize?) -> some View {
+        switch fit {
+        case "cover":
+            image.resizable().aspectRatio(contentMode: .fill)
+                .frame(width: width, height: height).clipped()
+        case "fill":
+            image.resizable().frame(width: width, height: height)
+        default:
+            // Neither size: its own size, never wider than offered.
+            image.resizable().aspectRatio(contentMode: .fit)
+                .frame(maxWidth: width ?? intrinsic?.width, maxHeight: height)
+                .frame(width: width, height: height)
+        }
+    }
+
+    private func absent(_ alt: String, width: CGFloat?, height: CGFloat?) -> some View {
+        Text(alt)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .frame(width: width, height: height)
+    }
+}
+
 // MARK: - Dynamic SwiftUI Renderer
 
 /// Renders a ViewNode as a SwiftUI view, recursively processing children.
@@ -548,16 +779,15 @@ struct DynamicView: View {
             DynamicModal(node: node)
 
         case "Icon":
-            // A2UI icon name, interpreted as an SF Symbol (best effort). Icons
-            // carry no colour prop, so they take the theme accent (a brand
-            // element) — `.tint` only reaches interactive controls, not Images.
-            Image(systemName: node.property("name"))
-                .foregroundStyle(Color(suiHex: String(cString: viewnode_theme_accent())) ?? .primary)
+            SuiIcon(node: node)
 
         case "Video":
             DynamicVideo(node: node)
 
         case "Image":
+            if !node.property("src").isEmpty {
+                SuiImage(node: node)
+            } else {
             let url = node.property("url")
             if !url.isEmpty, let u = URL(string: url) {
                 AsyncImage(url: u) { img in
@@ -572,6 +802,7 @@ struct DynamicView: View {
                 } else {
                     Image(node.property("name"))
                 }
+            }
             }
 
         case "ProgressView":

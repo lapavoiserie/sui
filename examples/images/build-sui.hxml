@@ -1,0 +1,15 @@
+# Every icon of the shared vocabulary, and a picture from each source sui loads.
+#   haxelib run sui build macos
+#   build/macos/DerivedData/Build/Products/Debug/SuiImages.app/Contents/MacOS/SuiImages
+-cp .
+-cp ../../src
+-lib mui
+-lib kui
+-lib nui
+-lib rui
+-D mui_backend=sui
+--macro sui.macros.SwiftGenerator.register()
+--macro mui.macros.Bind.all()
+--macro sui.kui.Platform.registerWithKui()
+--main ImagesApp
+-cpp build/cpp

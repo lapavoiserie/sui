@@ -5,6 +5,8 @@ import mui.ui.VStack;
 import mui.ui.Button;
 import mui.ui.Toggle;
 import mui.ui.Picker;
+import mui.ui.Image;
+import mui.ui.Icon;
 import mui.ui.ToggleBinding;
 import nui.PropValue;
 import nui.PropValue.PropValueTools;
@@ -40,6 +42,8 @@ class DescribeCheck extends App {
 			new Button("Go", () -> taps.push("go")),
 			new Toggle("Lamp", (lit_ : ToggleBinding)),
 			new Picker("Transition", ["Cut", "Fade", "Wipe"], transition_),
+			new Image("asset:logo.png", "Farceur", {width: 64, fit: Cover}),
+			new Icon(MicOff, "Muted"),
 		], 8);
 	}
 
@@ -85,6 +89,17 @@ class DescribeCheck extends App {
 			case _:
 		}
 		check("a choice from far away writes the index into the cell", app.transition == 2);
+
+		var img = described.children[4];
+		check("an Image describes canonically: src, alt, size, fit", img.type == "Image"
+			&& PropValueTools.asString(img.props.get("src")) == "asset:logo.png"
+			&& PropValueTools.asString(img.props.get("alt")) == "Farceur"
+			&& PropValueTools.asFloat(img.props.get("width")) == 64
+			&& PropValueTools.asString(img.props.get("fit")) == "cover");
+		var icon = described.children[5];
+		check("an Icon describes as its vocabulary name and label", icon.type == "Icon"
+			&& PropValueTools.asString(icon.props.get("name")) == "mic-off"
+			&& PropValueTools.asString(icon.props.get("label")) == "Muted");
 
 		// Re-describe: the sample must follow the cell.
 		var again = mui.surface.Describe.describe(app.body());

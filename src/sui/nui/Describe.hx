@@ -173,6 +173,34 @@ class Describe {
 				.prop("label", PString(b.label != null ? b.label : ""))
 				.prop("onClick", PCallback(action != null ? action : function() {}));
 
+		} else if (Std.isOfType(v, sui.ui.Image)) {
+			// The canonical picture carries `src`; the older sui image named an
+			// asset-catalog entry or an SF Symbol, and says what it can of that.
+			var img:sui.ui.Image = cast v;
+			var src:Dynamic = img.properties.get("src");
+			if (src != null) {
+				out = new Node("Image").prop("src", PString(Std.string(src)));
+				var alt:Dynamic = img.properties.get("alt");
+				out.prop("alt", PString(alt == null ? "" : Std.string(alt)));
+				for (key in ["width", "height"]) {
+					var size:Dynamic = img.properties.get(key);
+					if (size != null) out.prop(key, PFloat(size));
+				}
+				var fit:Dynamic = img.properties.get("fit");
+				if (fit != null) out.prop("fit", PString(Std.string(fit)));
+			} else if (img.systemName != null && img.systemName != "") {
+				out = new Node("Icon").prop("name", PString(img.systemName));
+			} else {
+				out = new Node("Image").prop("src", PString("asset:" + img.name)).prop("alt", PString(""));
+			}
+
+		} else if (v.viewType == "Icon") {
+			out = new Node("Icon");
+			for (key in ["name", "label"]) {
+				var value:Dynamic = v.properties.get(key);
+				if (value != null) out.prop(key, PString(Std.string(value)));
+			}
+
 		} else if (Std.isOfType(v, sui.ui.Picker)) {
 			// The canon speaks positions. A picker in index mode holds one; a
 			// sui picker bound to the chosen row's text is translated both ways,
