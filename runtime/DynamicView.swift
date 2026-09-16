@@ -516,7 +516,10 @@ struct DynamicView: View {
             }
 
         case "Text":
-            Text(node.textContent)
+            // How the text is set arrives as props of the node (nui's
+            // TextStyle). The scale also arrives as a Font modifier on the
+            // transpiled path; applying both is harmless, they say the same.
+            styledText(node)
 
         case "Button":
             // An icon from the shared vocabulary beside the label, or alone --
@@ -854,6 +857,69 @@ struct DynamicView: View {
             } else {
                 EmptyView()
             }
+        }
+    }
+
+    /// A Text set the way the canonical props say.
+    ///
+    /// A family is asked for by name: it is one the application ships,
+    /// registered by the build, so SwiftUI resolves it like any installed face
+    /// and falls back to the system font when it cannot -- which is what a tree
+    /// naming a family this application does not have must do.
+    ///
+    /// `relativeTo:` keeps Dynamic Type working: a custom face still grows with
+    /// the reader's setting, which a fixed point size would take away.
+    @ViewBuilder
+    private func styledText(_ node: ViewNode) -> some View {
+        let scale = node.property("scale")
+        let family = node.property("family")
+        let weight = node.property("weight")
+        let text = Text(node.textContent)
+        let sized: Text = family.isEmpty
+            ? text
+            : text.font(.custom(family, size: Self.pointSize(scale), relativeTo: Self.textStyle(scale)))
+        let weighted: Text = weight.isEmpty ? sized : sized.fontWeight(Self.fontWeight(Int(weight) ?? 400))
+        let slanted: Text = node.property("italic") == "true" ? weighted.italic() : weighted
+        if node.property("numbers") == "tabular" {
+            slanted.monospacedDigit()
+        } else {
+            slanted
+        }
+    }
+
+    /// The four steps of the canon, as Apple's own text styles.
+    static func textStyle(_ scale: String) -> Font.TextStyle {
+        switch scale {
+        case "title":    return .title
+        // Apple has no "subtitle": headline is its semibold heading step.
+        case "subtitle": return .headline
+        case "caption":  return .caption
+        default:         return .body
+        }
+    }
+
+    /// The size those steps are, for a face that has to be given one.
+    static func pointSize(_ scale: String) -> CGFloat {
+        switch scale {
+        case "title":    return 28
+        case "subtitle": return 17
+        case "caption":  return 12
+        default:         return 17
+        }
+    }
+
+    /// A weight of the canon -- 100 to 900 -- as SwiftUI spells it.
+    static func fontWeight(_ weight: Int) -> Font.Weight {
+        switch weight {
+        case ..<150:  return .ultraLight
+        case ..<250:  return .thin
+        case ..<350:  return .light
+        case ..<450:  return .regular
+        case ..<550:  return .medium
+        case ..<650:  return .semibold
+        case ..<750:  return .bold
+        case ..<850:  return .heavy
+        default:      return .black
         }
     }
 

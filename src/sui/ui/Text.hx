@@ -12,6 +12,22 @@ import sui.View;
 class Text extends View {
     public var content:String;
 
+    /**
+        How the canon says this text is set (`nui.TextStyle`): a scale, a
+        family the application ships, a weight, italic, and digits of one
+        width. Fields rather than modifiers, because a prop is what crosses a
+        wire intact -- see nui's node model.
+    **/
+    public var scale:Null<String>;
+
+    public var family:Null<String>;
+
+    public var weight:Null<Int>;
+
+    public var italicFace:Null<Bool>;
+
+    public var numbers:Null<String>;
+
     /** If set, this is a Swift expression used instead of a literal string. **/
     public var swiftExpression:Null<String>;
 
@@ -19,6 +35,16 @@ class Text extends View {
         super();
         this.content = text;
         this.viewType = "Text";
+    }
+
+    /** Say how it is set. What SwiftUI applies is decided where it draws. **/
+    public function styled(?scale:String, ?family:String, ?weight:Int, ?italic:Bool, tabular:Bool = false):Text {
+        if (scale != null) this.scale = nui.TextStyle.scaleOf(scale);
+        if (family != null && family != "") this.family = family;
+        if (weight != null) this.weight = nui.TextStyle.weightOf(weight);
+        if (italic != null) this.italicFace = italic;
+        if (tabular) this.numbers = nui.TextStyle.TABULAR;
+        return this;
     }
 
     /**

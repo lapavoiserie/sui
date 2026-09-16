@@ -165,6 +165,11 @@ class Describe {
 		} else if (Std.isOfType(v, sui.ui.Text)) {
 			var t:sui.ui.Text = cast v;
 			out = new Node("Text").prop("text", PString(t.content != null ? t.content : ""));
+			if (t.scale != null) out.prop("scale", PString(t.scale));
+			if (t.family != null) out.prop("family", PString(t.family));
+			if (t.weight != null) out.prop("weight", PInt(t.weight));
+			if (t.italicFace == true) out.prop("italic", PBool(true));
+			if (t.numbers != null) out.prop("numbers", PString(t.numbers));
 
 		} else if (Std.isOfType(v, sui.ui.Button)) {
 			var b:sui.ui.Button = cast v;

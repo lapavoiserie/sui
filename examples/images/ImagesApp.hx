@@ -27,7 +27,17 @@ class ImagesApp extends App {
 
 	override function body():View {
 		var data = "data:image/png;base64," + TestPicture.BASE64;
-		var rows:Array<View> = [new Text("Icons")];
+		var rows:Array<View> = [
+			new Text("Text"),
+			new HStack([
+				new Text("plain"),
+				new Text("Georgia", Body, {family: mui.ui.FontFamily.fromString("Georgia")}),
+				new Text("bold", Body, {weight: 700}),
+				new Text("italic", Body, {italic: true}),
+				new Text("00:11:22", Body, {numbers: Tabular}),
+			], 14),
+			new Text("Icons")
+		];
 		var names = nui.Icons.NAMES;
 		var perRow = 6;
 		var i = 0;
