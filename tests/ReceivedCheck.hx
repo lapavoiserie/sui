@@ -24,6 +24,7 @@ class ReceivedCheck {
 		var toggled:Array<Bool> = [];
 		var slid:Array<Float> = [];
 		var clicks = 0;
+		var picked:Array<String> = [];
 
 		function tree(title:String):Node {
 			var root = new Node("VStack").prop("spacing", PInt(8));
@@ -39,6 +40,10 @@ class ReceivedCheck {
 			root.child(new Node("Slider").prop("value", PFloat(2.5)).prop("min", PFloat(0)).prop("max", PFloat(10))
 				.prop("onValue", PCallbackFloat(f -> slid.push(f))));
 			root.child(new Node("ProgressView").prop("value", PFloat(0.25)));
+			root.child(new Node("Picker").prop("label", PString("Transition")).prop("selectedIndex", PInt(1))
+				.prop("onSelect", PCallbackString(s -> picked.push(s)))
+				.child(new Node("Text").prop("text", PString("Cut")))
+				.child(new Node("Text").prop("text", PString("Fade"))));
 			root.child(new Node("LevelMeter").prop("stream", PString("vu.master")).prop("floorDb", PFloat(-60.0)).prop("channels", PInt(2)));
 			return root;
 		}
@@ -51,7 +56,7 @@ class ReceivedCheck {
 		var root = ViewNodeBridge.getRoot();
 		check("the root is the received tree", ViewNodeBridge.getViewType(root) == "VStack", ViewNodeBridge.getViewType(root));
 		check("the Primary by id is it too", ViewNodeBridge.getRootFor("body") == root);
-		check("its children are counted", ViewNodeBridge.getChildCount(root) == 7, ViewNodeBridge.getChildCount(root));
+		check("its children are counted", ViewNodeBridge.getChildCount(root) == 8, ViewNodeBridge.getChildCount(root));
 		check("a number crosses as the text the renderer parses", ViewNodeBridge.getStringProperty(root, "spacing") == "8",
 			ViewNodeBridge.getStringProperty(root, "spacing"));
 
@@ -96,7 +101,17 @@ class ReceivedCheck {
 		check("ProgressView carries its fraction", ViewNodeBridge.getStringProperty(progress, "value") == "0.25");
 		check("a control without an action has no path", ViewNodeBridge.getStringProperty(progress, "path") == "");
 
-		var meter = ViewNodeBridge.getChild(root, 6);
+		var picker = ViewNodeBridge.getChild(root, 6);
+		check("Picker: drawn as a picker, selecting by position", ViewNodeBridge.getViewType(picker) == "Picker"
+			&& ViewNodeBridge.getStringProperty(picker, "selectionMode") == "index");
+		check("its value is the selected index, its label the label", ViewNodeBridge.getStringProperty(picker, "value") == "1"
+			&& ViewNodeBridge.getStringProperty(picker, "label") == "Transition");
+		check("its options are Text children", ViewNodeBridge.getChildCount(picker) == 2
+			&& ViewNodeBridge.getTextContent(ViewNodeBridge.getChild(picker, 1)) == "Fade");
+		ViewNodeBridge.setData(ViewNodeBridge.getStringProperty(picker, "path"), "0");
+		check("choosing runs onSelect with the position, as the string an inflated action takes", picked.join(",") == "0", picked.join(","));
+
+		var meter = ViewNodeBridge.getChild(root, 7);
 		check("a component's type passes through, for its registry", ViewNodeBridge.getViewType(meter) == "LevelMeter");
 		check("and its props read as its own view reads them", ViewNodeBridge.getStringProperty(meter, "stream") == "vu.master"
 			&& Std.parseFloat(ViewNodeBridge.getStringProperty(meter, "floorDb")) == -60

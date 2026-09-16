@@ -1651,13 +1651,29 @@ struct SuiStepper: View {
 /// row *selects*; nothing carries that here, so a row's own text is both what
 /// it shows and what it stores. That is what the common case writes anyway --
 /// `new Text(name).tag(name)` -- and it is stated rather than silently assumed.
+///
+/// A picker in `index` mode -- `mui.ui.Picker`, and every received one -- tags
+/// each row with its position instead: the value is the chosen option's index,
+/// `-1` for none, and an edit writes that index back.
 struct SuiPicker: View {
     let node: ViewNode
 
     var body: some View {
-        Picker(node.property("label"), selection: node.boundValue) {
-            ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
-                Text(child.textContent).tag(child.textContent)
+        if node.property("selectionMode") == "index" {
+            let bound = node.boundValue
+            Picker(node.property("label"), selection: Binding<Int>(
+                get: { Int(bound.wrappedValue) ?? -1 },
+                set: { bound.wrappedValue = String($0) }
+            )) {
+                ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                    Text(child.textContent).tag(index)
+                }
+            }
+        } else {
+            Picker(node.property("label"), selection: node.boundValue) {
+                ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
+                    Text(child.textContent).tag(child.textContent)
+                }
             }
         }
     }

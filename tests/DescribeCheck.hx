@@ -4,6 +4,7 @@ import mui.ui.Text;
 import mui.ui.VStack;
 import mui.ui.Button;
 import mui.ui.Toggle;
+import mui.ui.Picker;
 import mui.ui.ToggleBinding;
 import nui.PropValue;
 import nui.PropValue.PropValueTools;
@@ -29,6 +30,7 @@ class DescribeCheck extends App {
 
 	@:state var lit:Bool = false;
 	@:state var count:Int = 3;
+	@:state var transition:Int = 1;
 
 	override function body():View {
 		return new VStack([
@@ -37,6 +39,7 @@ class DescribeCheck extends App {
 			new Text('count: $count'),
 			new Button("Go", () -> taps.push("go")),
 			new Toggle("Lamp", (lit_ : ToggleBinding)),
+			new Picker("Transition", ["Cut", "Fade", "Wipe"], transition_),
 		], 8);
 	}
 
@@ -71,6 +74,17 @@ class DescribeCheck extends App {
 			case _:
 		}
 		check("a described binding writes back to the state", app.lit == true);
+
+		var pick = described.children[3];
+		check("a Picker describes canonically: its options as Text children", pick.type == "Picker"
+			&& pick.children.length == 3 && PropValueTools.asString(pick.children[2].props.get("text")) == "Wipe"
+			&& PropValueTools.asString(pick.props.get("label")) == "Transition");
+		check("its selection is the cell's index", PropValueTools.asInt(pick.props.get("selectedIndex")) == 1);
+		switch (PropValueTools.resolve(pick.props.get("onSelect"))) {
+			case PCallbackInt(fn): fn(2);
+			case _:
+		}
+		check("a choice from far away writes the index into the cell", app.transition == 2);
 
 		// Re-describe: the sample must follow the cell.
 		var again = mui.surface.Describe.describe(app.body());

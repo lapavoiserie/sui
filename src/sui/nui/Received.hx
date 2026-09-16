@@ -50,6 +50,9 @@ class Received {
 		if (n == null) return "";
 		return switch [n.type, key] {
 			case ["Toggle", "value"]: source.boolProp(n, "isOn") ? "true" : "false";
+			// A received picker selects by position.
+			case ["Picker", "selectionMode"]: "index";
+			case ["Picker", "value"]: Std.string(n.props.exists("selectedIndex") ? source.intProp(n, "selectedIndex") : -1);
 			case ["TextInput", "value"]: source.stringProp(n, "text");
 			case ["TextInput", "label"]: source.stringProp(n, "placeholder");
 			case [_, "path"]:
@@ -108,7 +111,7 @@ class Received {
 		if (id == null || id < 0 || id >= actions.length) return true;
 		var n = actions[id];
 		rui.Signal.Scheduler.batch(() -> {
-			for (key in ["onText", "onToggle", "onValue"]) {
+			for (key in ["onText", "onToggle", "onValue", "onSelect"]) {
 				var v = PropValueTools.resolve(n.props.get(key));
 				if (v == null) continue;
 				switch (v) {

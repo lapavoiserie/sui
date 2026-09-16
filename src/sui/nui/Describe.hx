@@ -173,6 +173,32 @@ class Describe {
 				.prop("label", PString(b.label != null ? b.label : ""))
 				.prop("onClick", PCallback(action != null ? action : function() {}));
 
+		} else if (Std.isOfType(v, sui.ui.Picker)) {
+			// The canon speaks positions. A picker in index mode holds one; a
+			// sui picker bound to the chosen row's text is translated both ways,
+			// by the row whose text the cell holds.
+			var p:sui.ui.Picker = cast v;
+			var name = p.selectionBinding;
+			var current = cellValue(name);
+			var byIndex = p.properties.get("selectionMode") == "index";
+			var options:Array<String> = [];
+			for (child in p.children) {
+				var row = resolved(child);
+				var text:Dynamic = row == null ? null : Reflect.field(row, "content");
+				options.push(text == null ? "" : Std.string(text));
+			}
+			var index = byIndex
+				? (Std.isOfType(current, Int) ? (current : Int) : -1)
+				: options.indexOf(current == null ? "" : Std.string(current));
+			out = new Node("Picker")
+				.prop("selectedIndex", PInt(index))
+				.prop("onSelect", PCallbackInt(i -> {
+					if (byIndex) cellWrite(name, Std.string(i));
+					else if (i >= 0 && i < options.length) cellWrite(name, options[i]);
+				}));
+			if (p.label != null && p.label != "") out.prop("label", PString(p.label));
+			for (option in options) out.child(new Node("Text").prop("text", PString(option)));
+
 		} else if (Std.isOfType(v, sui.ui.Toggle)) {
 			var t:sui.ui.Toggle = cast v;
 			var name = t.isOnBinding;
