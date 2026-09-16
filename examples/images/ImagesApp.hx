@@ -43,6 +43,7 @@ class ImagesApp extends App {
 			new Image(data, "contained", {width: 96}),
 			new Image(data, "covered", {width: 64, height: 64, fit: Cover}),
 			new Image("file://" + filePath, "from a file", {width: 96}),
+			new Image(mui.Assets.src("test.png"), "from an asset", {width: 96}),
 		], 12));
 		rows.push(new HStack([
 			new Image("asset:not-shipped.png", "missing asset", {width: 96, height: 48}),

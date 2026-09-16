@@ -440,8 +440,13 @@ class Build {
         // looked like an iOS problem and was an ordering one.
         mergeKuiPayload(cwd, platform, config);
 
+        // What the application ships: `assets/` beside the build file, copied
+        // into the project so xcodegen puts it in the bundle's Resources --
+        // which is where `SuiImage` looks for an `asset:` source.
+        var hasAssets = copyAssets(cwd, buildDir);
+
         // Generate project.yml
-        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge, hasWidget));
+        File.saveContent('$buildDir/project.yml', generateProjectYaml(config, platform, forDevice, nativeBridge, hasWidget, hasAssets));
 
         if (xcodeOnly) {
             runXcodegen(buildDir);
@@ -1000,6 +1005,31 @@ class Build {
         } catch (_:Dynamic) false;
     }
 
+    /**
+        Copy the application's `assets` directory into the project.
+
+        Rewritten rather than merged: a file deleted from the source would
+        otherwise stay in the bundle for ever, and be found by an `asset:`
+        source the application no longer ships.
+    **/
+    static function copyAssets(cwd:String, buildDir:String):Bool {
+        var from = '$cwd/assets';
+        var to = '$buildDir/assets';
+        if (FileSystem.exists(to)) removeDirectoryTree(to);
+        if (!FileSystem.exists(from) || !FileSystem.isDirectory(from)) return false;
+        copyDirectoryTree(from, to);
+        return true;
+    }
+
+    static function copyDirectoryTree(from:String, to:String) {
+        ensureDirectory(to);
+        for (entry in FileSystem.readDirectory(from)) {
+            var source = '$from/$entry';
+            if (FileSystem.isDirectory(source)) copyDirectoryTree(source, '$to/$entry');
+            else File.copy(source, '$to/$entry');
+        }
+    }
+
     static function ensureDirectory(path:String) {
         if (!FileSystem.exists(path)) {
             FileSystem.createDirectory(path);
@@ -1303,7 +1333,7 @@ class Build {
 ';
     }
 
-    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false, hasWidget:Bool = false):String {
+    static function generateProjectYaml(config:ProjectConfig, platform:String, forDevice:Bool, nativeBridge:Bool = false, hasWidget:Bool = false, hasAssets:Bool = false):String {
         var pk = platformKey(platform);
         var dt = deploymentTarget(platform);
 
@@ -1349,6 +1379,11 @@ class Build {
             networking = '      INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Connect to a local development server on your network."
 ';
         }
+
+        // A folder reference, not a group: the directory arrives in the bundle
+        // as `assets`, names and subdirectories intact, which is what an
+        // `asset:path` names.
+        var assetsSource = hasAssets ? "      - path: assets\n        type: folder\n" : "";
 
         var packagesBlock = "";
         var depsBlock = "    dependencies: []\n";
@@ -1430,7 +1465,7 @@ targets:
     sources:
       - path: Sources
         type: group
-    settings:
+$assetsSource    settings:
       PRODUCT_BUNDLE_IDENTIFIER: ${config.bundleIdentifier}
       GENERATE_INFOPLIST_FILE: true
       INFOPLIST_KEY_UILaunchScreen_Generation: true
