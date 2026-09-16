@@ -519,8 +519,24 @@ struct DynamicView: View {
             Text(node.textContent)
 
         case "Button":
-            Button(node.buttonLabel) {
-                node.invokeAction()
+            // An icon from the shared vocabulary beside the label, or alone --
+            // named by the icon for VoiceOver when the button has no text.
+            if let symbol = SuiIcons.symbols[node.property("icon")] {
+                let label = node.buttonLabel
+                Button {
+                    node.invokeAction()
+                } label: {
+                    if label.isEmpty {
+                        Image(systemName: symbol)
+                            .accessibilityLabel(node.property("icon").replacingOccurrences(of: "-", with: " "))
+                    } else {
+                        Label(label, systemImage: symbol)
+                    }
+                }
+            } else {
+                Button(node.buttonLabel) {
+                    node.invokeAction()
+                }
             }
 
         case "Spacer":
