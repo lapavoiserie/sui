@@ -16,10 +16,12 @@ import sui.View;
     new Button("Login", MyApp.startLogin)
     ```
 **/
+@:node("Button")
 class Button extends View {
-    public var label:String;
+    @:prop public var label:String;
     public var labelView:Null<View>;
-    public var action:Null<() -> Void>;
+    /** The act itself: it crosses as a key, never as this closure. **/
+    @:action("onClick") public var action:Null<() -> Void>;
 
     public function new(label:String, ?action:() -> Void) {
         super();

@@ -204,13 +204,6 @@ class Describe {
 			if (t.italicFace == true) out.prop("italic", PBool(true));
 			if (t.numbers != null) out.prop("numbers", PString(t.numbers));
 
-		} else if (Std.isOfType(v, sui.ui.Button)) {
-			var b:sui.ui.Button = cast v;
-			var action = b.action;
-			out = new Node("Button")
-				.prop("label", PString(b.label != null ? b.label : ""))
-				.prop("onClick", PCallback(action != null ? action : function() {}));
-
 		} else if (Std.isOfType(v, sui.ui.Image)) {
 			// The canonical picture carries `src`; the older sui image named an
 			// asset-catalog entry or an SF Symbol, and says what it can of that.
