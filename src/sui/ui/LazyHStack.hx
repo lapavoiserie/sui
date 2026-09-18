@@ -1,6 +1,10 @@
 package sui.ui;
 
 import sui.View;
+// The alignment enum lives in HStack's module, and this never imported it:
+// LazyHStack has not compiled since it was written, and nothing forced it to
+// until the declarations scanned the package.
+import sui.ui.HStack.VerticalAlignment;
 
 /**
     A lazy horizontal stack that only renders visible children.

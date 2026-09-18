@@ -6,8 +6,10 @@ import sui.View;
     A view that arranges its children vertically.
     Maps to SwiftUI's `VStack`.
 **/
+@:node("VStack")
+@:content("content")
 class VStack extends View {
-    public var spacing:Null<Float>;
+    @:prop public var spacing:Null<Float>;
     public var alignment:HorizontalAlignment;
 
     public function new(?alignment:HorizontalAlignment, ?spacing:Float, content:Array<View>) {

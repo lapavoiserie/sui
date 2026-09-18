@@ -9,8 +9,9 @@ import sui.View;
     For state interpolation, use `Text.withState()` which generates
     Swift string interpolation referencing @State vars.
 **/
+@:node("Text")
 class Text extends View {
-    public var content:String;
+    @:prop("text") public var content:String;
 
     /**
         How the canon says this text is set (`nui.TextStyle`): a scale, a
@@ -18,15 +19,15 @@ class Text extends View {
         width. Fields rather than modifiers, because a prop is what crosses a
         wire intact -- see nui's node model.
     **/
-    public var scale:Null<nui.Scale>;
+    @:prop public var scale:Null<nui.Scale>;
 
-    public var family:Null<String>;
+    @:prop public var family:Null<String>;
 
-    public var weight:Null<Int>;
+    @:prop public var weight:Null<Int>;
 
-    public var italicFace:Null<Bool>;
+    @:prop("italic") public var italicFace:Null<Bool>;
 
-    public var numbers:Null<nui.Numbers>;
+    @:prop public var numbers:Null<nui.Numbers>;
 
     /** If set, this is a Swift expression used instead of a literal string. **/
     public var swiftExpression:Null<String>;

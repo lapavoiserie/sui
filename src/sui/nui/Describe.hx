@@ -119,6 +119,20 @@ class Describe {
 	/** A named cell's current value, read so the projecting effect
 		subscribes — `get()`, not `peek()`: a remote panel showing a toggle
 		must re-project when the toggle changes locally. **/
+	/**
+		A named cell's value, for the generated describers.
+
+		`sui`'s state lives on the Swift side and is reached through a registry,
+		so a control holds a NAME. Public because the generated describers read
+		through it and know nothing else about where a value lives.
+	**/
+	public static function read(name:Null<String>):Null<Dynamic>
+		return cellValue(name);
+
+	/** A named cell written from a remote edit. See `cellWrite`. **/
+	public static function write(name:Null<String>, raw:String):Void
+		cellWrite(name, raw);
+
 	static function cellValue(name:Null<String>):Null<Dynamic> {
 		if (name == null || name == "") return null;
 		var cell:Dynamic = sui.state.State._registry.get(name);
@@ -146,6 +160,25 @@ class Describe {
 			else if (Std.isOfType(current, String)) raw
 			else return;
 		s.set(parsed);
+	}
+
+	/**
+		The describer for a view's class, or its nearest declared ancestor's.
+
+		A walk up the chain rather than a chain of `Std.isOfType`, which answers
+		by the ORDER the branches were written. `sui`'s types are mostly flat,
+		so the order never cost anything here -- but nothing about a flat
+		hierarchy today stops a subclass tomorrow, and the walk has no order to
+		get wrong.
+	**/
+	static function declaredFor(view:View):Null<View->Node> {
+		var cls = Type.getClass(view);
+		while (cls != null) {
+			var found = Derived.DESCRIBERS.get(Type.getClassName(cls));
+			if (found != null) return found;
+			cls = cast Type.getSuperClass(cls);
+		}
+		return null;
 	}
 
 	static function node(view:View):Node {
@@ -275,40 +308,33 @@ class Describe {
 				out.prop("value", PFloat((current : Float) / total));
 			}
 
-		} else if (Std.isOfType(v, sui.ui.Spacer)) {
-			out = new Node("Spacer");
-
-		} else if (v.viewType == "Divider") {
-			out = new Node("Divider");
-
-		} else if (Std.isOfType(v, sui.ui.HStack)) {
-			var h:sui.ui.HStack = cast v;
-			out = new Node("HStack");
-			if (h.spacing != null) out.prop("spacing", PFloat(h.spacing));
-			withChildren(out, v);
-
-		} else if (Std.isOfType(v, sui.ui.VStack)) {
-			var st:sui.ui.VStack = cast v;
-			out = new Node("VStack");
-			if (st.spacing != null) out.prop("spacing", PFloat(st.spacing));
-			withChildren(out, v);
-
-		} else if (Std.isOfType(v, sui.ui.ScrollView)) {
-			out = new Node("ScrollView");
-			withChildren(out, v);
-
 		} else {
-			// Loud rather than invisible: the receiving side draws "?Name"
-			// and the name says whose. viewType is the honest short name on
-			// a property-bag view; the class name backs it up.
-			var name = v.viewType != null && v.viewType != "" ? v.viewType : {
-				var full = Type.getClassName(Type.getClass(v));
-				full.substr(full.lastIndexOf(".") + 1);
-			};
-			out = new Node(name);
-			withChildren(out, v);
+			var declared = declaredFor(v);
+			if (declared != null) {
+				out = declared(v);
+			} else {
+				// Loud rather than invisible: the receiving side draws "?Name"
+				// and the name says whose. viewType is the honest short name on
+				// a property-bag view; the class name backs it up.
+				var name = v.viewType != null && v.viewType != "" ? v.viewType : {
+					var full = Type.getClassName(Type.getClass(v));
+					full.substr(full.lastIndexOf(".") + 1);
+				};
+				out = new Node(name);
+				withChildren(out, v);
+			}
 		}
 
+		return out;
+	}
+
+	/**
+		Splice a view's children into its node. Called by the generated
+		describers, which know a container's children go here and nothing else
+		about them.
+	**/
+	public static function appendChildren(view:View, out:Node):Node {
+		withChildren(out, view);
 		return out;
 	}
 

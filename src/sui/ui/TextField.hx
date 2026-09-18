@@ -9,9 +9,10 @@ import sui.View;
     The `textBinding` parameter is the name of a `@State` String variable to bind to.
 **/
 @:swiftView("TextField")
+@:node("TextInput")
 class TextField extends View {
-    public var placeholder:String;
-    public var textBinding:String;
+    @:prop public var placeholder:String;
+    @:cell("text", "onText", "String") public var textBinding:String;
 
     public function new(@:swiftLabel("_") placeholder:String, @:swiftLabel("text") @:swiftBinding textBinding:String) {
         super();

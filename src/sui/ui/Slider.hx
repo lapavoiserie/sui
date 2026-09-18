@@ -8,10 +8,11 @@ import sui.View;
 
     The `valueBinding` is the name of a `@State` Float/Double variable to bind to.
 **/
+@:node("Slider")
 class Slider extends View {
-    public var valueBinding:String;
-    public var rangeMin:Float;
-    public var rangeMax:Float;
+    @:cell("value", "onValue", "Float") public var valueBinding:String;
+    @:prop("min") public var rangeMin:Float;
+    @:prop("max") public var rangeMax:Float;
 
     public function new(valueBinding:String, rangeMin:Float, rangeMax:Float) {
         super();
