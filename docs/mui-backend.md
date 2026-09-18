@@ -195,6 +195,80 @@ Checked end to end by `tests/run_describe.sh`: canon, LiveProps sampling,
 snapshot round-trip, and remote-shaped invocations landing in closures and
 `@:state` cells.
 
+## The vocabulary, and the markup it makes possible
+
+`sui` declares what its controls are, on the controls:
+
+```haxe
+@:node("Toggle")
+class Toggle extends View {
+	@:prop public var label:String;
+	@:cell("isOn", "onToggle", "Bool") public var isOnBinding:String;
+}
+```
+
+`nui.macros.Declarations` reads that at compile time — shared by every backend,
+so `sui` says only what is its own (`sui.nui.Vocabulary.DIALECT`).
+`sui.nui.Describe` is **generated** from those declarations, and `mui`'s markup
+is checked against them:
+
+```
+--macro sui.nui.Vocabulary.registerWithMui()
+```
+
+A misspelt attribute names itself and lists what is accepted; a tag nothing
+declares is refused. `tests/run_markup.sh` checks both.
+
+### Why `@:cell` and not `@:prop`
+
+Because the field holds a **name**, not a value. `sui`'s state lives on the
+Swift side and is reached through a registry, so `isOnBinding` is a `String`
+whatever the cell carries — and a `String` cannot say `Bool`. The third word
+does.
+
+That is the same line every other form draws, and it is worth stating because it
+looks like an exception and is not: **the type answers when the field holds the
+value, and the declaration answers only when nothing typed does.** A name is not
+a value.
+
+### `sui` describes and does not build
+
+SwiftUI draws, so nothing in Haxe ever makes a control out of a node. There are
+no builders to generate, no cell to make from a received value, and the two
+checks that are about *building* do not apply: a read-only property is fine, and
+a constructor argument no property covers is nobody's problem until something
+has to call the constructor — `sui.ui.Text`'s argument is `text` and its field
+is `content`.
+
+### What stays hand-written, and why
+
+Describing dispatches by class now, walking up to the nearest declared ancestor.
+`sui`'s types are mostly flat, so the branch order never cost anything here —
+but nothing about a flat hierarchy today stops a subclass tomorrow, and the walk
+has no order to get wrong.
+
+Four branches are asked before the declarations, and each says why where it is:
+
+- **`NativeComponent`** — the node is already a node, in the canon of the
+  library that defined it. It is sent as it was given.
+- **`Image`** — one class, two node types: a canonical `src` crosses as an
+  `Image`, an SF Symbol as an `Icon`. `@:node` says one name for one class, on
+  purpose, so this cannot be expressed and should not be.
+- **`Picker`** — it *translates*. The cell may hold an index or the chosen row's
+  text, and moving between the two means reading the content of child views.
+- **`ProgressView`** — what crosses is `cell / total`. A division is not a read.
+
+The line is the same in all four: a declaration says **where the value is**, not
+what to do with it. A translation, a calculation, a choice of type — that is
+code, and it stays readable where it applies.
+
+### One thing reading the declarations found
+
+Scanning `sui.ui` compiles every module in it, and `LazyHStack` and `LazyVStack`
+both failed: each was missing the import for the alignment enum in its sibling's
+module. They had been broken since they were written. Nothing forced them, so
+nobody saw it.
+
 ## See also
 
 - [Adding a backend](https://lapavoiserie.github.io/mui/#/adding-a-backend) — the
