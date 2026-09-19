@@ -318,7 +318,37 @@ class Describe {
 			}
 		}
 
+		describeDecorations(v, out);
 		return out;
+	}
+
+	/**
+		The colours a view carries, in the canon's words.
+
+		`sui` described **no colour modifier at all**: it resolves colours in
+		SwiftUI, which is right for drawing here and meant that a panel
+		projected from this machine arrived with nothing on it. A role crosses
+		as a role, so the far side resolves it with its own semantics rather
+		than a number chosen here. See `sui.nui.Colors`.
+	**/
+	static function describeDecorations(v:View, out:Node):Void {
+		if (v == null || v.modifierChain == null) return;
+		for (m in v.modifierChain) {
+			switch (m) {
+				case ForegroundColor(c):
+					var said = Colors.say(c);
+					if (said != null)
+						out.modifier({type: nui.Modifiers.FOREGROUND_COLOR, strings: [said]});
+				case Background(c):
+					var said = Colors.say(c);
+					if (said != null)
+						out.modifier({type: nui.Modifiers.BACKGROUND_COLOR, strings: [said]});
+				case Opacity(v):
+					out.modifier({type: nui.Modifiers.OPACITY, floats: [v]});
+				case _:
+					// Everything else is SwiftUI's own and has no canon name.
+			}
+		}
 	}
 
 	/**

@@ -2,6 +2,9 @@
 set -e
 
 cd "$(dirname "$0")"
+# Frozen here: this script walks between directories, so `$0` is relative to
+# nowhere by the time the later steps run.
+ROOT="$(cd .. && pwd)"
 PASS=0
 FAIL=0
 
@@ -162,6 +165,17 @@ fi
 
 # Summary
 echo ""
+echo ""
+echo "--- Colour: what crosses, and what Swift draws ---"
+# From the repository root: this script walks between directories, and the
+# last one it was in is not it.
+if (cd "$ROOT" && haxe -cp src -cp tests -lib rui -lib nui -lib mui \
+		-main ColourCheck --interp); then
+	PASS=$((PASS + 1))
+else
+	FAIL=$((FAIL + 1))
+fi
+
 echo "=== Results: $PASS passed, $FAIL failed ==="
 if [ $FAIL -gt 0 ]; then
     exit 1

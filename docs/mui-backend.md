@@ -269,6 +269,40 @@ both failed: each was missing the import for the alignment enum in its sibling's
 module. They had been broken since they were written. Nothing forced them, so
 nobody saw it.
 
+## Colour
+
+`sui` resolves colours in SwiftUI, which is right: `Color.accentColor` is the
+one the person set, and the semantic colours follow light, dark and increased
+contrast without anybody asking.
+
+What was missing is that **none of it reached the wire**. `sui.nui.Describe`
+emitted no colour modifier at all, so a panel projected from this machine
+arrived with nothing on it.
+
+A colour now crosses as a `nui.Color`, and a role stays a role — the far side
+resolves it with its own semantics rather than a number chosen here. Coming the
+other way, `sui.nui.Colors.swift` turns one into a SwiftUI expression, and a
+role becomes a **semantic** colour rather than a number:
+
+| role | Swift |
+|---|---|
+| `accent` | `Color.accentColor` |
+| `danger` | `Color.red` |
+| `warning` | `Color.orange` |
+| `success` | `Color.green` |
+| `text` | `Color.primary` |
+| `muted` | `Color.secondary` |
+
+`.red` on Apple's platforms is not a fixed `#FF0000`: it shifts with the
+display and with the person's accessibility settings. That is precisely what a
+role crossing as a role buys.
+
+A named `ColorValue` leaves as components — `Gray` becomes `#808080`. A name
+resolves to nothing per-platform, so it cannot cross as one; `Primary`,
+`Secondary` and `Accent` are the three that *are* about a purpose, and they
+cross as roles. `Clear` adds no modifier: one asking for nothing is not a
+modifier.
+
 ## See also
 
 - [Adding a backend](https://lapavoiserie.github.io/mui/#/adding-a-backend) — the
