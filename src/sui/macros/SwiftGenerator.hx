@@ -2961,6 +2961,12 @@ class SwiftGenerator {
         //     per-iteration element via `currentItemBinding`. Modifiers
         //     and Text codegen check the binding before falling back to
         //     constant-string extraction.
+        // What the loop walks. A `sui` application iterates a cell holding an
+        // array; markup iterates whatever the author wrote -- `0...12` among
+        // them, which is `new IntIterator(0, 12)` once typed and `0..<12` in
+        // Swift. Reading only the first gave `let __arr = null` and a
+        // `ForEach` over `null.count`: confident, generated, and nonsense.
+        var sequence = if (args.length > 0) swiftSequenceOf(args[0]) else null;
         var arrayName = if (args.length > 0) qualifyStateName(resolveStateName(args[0])) else "items";
 
         var lambda = (args.length >= 2) ? unwrapLambda(args[1]) : null;
@@ -2984,6 +2990,19 @@ class SwiftGenerator {
             var arrVar = '__arr$depth';
             forEachIdxVars.push(idxVar);
             var buf = new StringBuf();
+            if (sequence != null && sequence.direct) {
+                // A sequence that stands on its own -- a range, a literal
+                // list. There is no array to index into and no index to keep:
+                // the loop variable IS the element.
+                forEachIdxVars.pop();
+                forEachIdxVars.push(itemName);
+                buf.add('${pad}ForEach(${sequence.swift}, id: \\.self) { ${itemName} in\n');
+                buf.add(viewToSwift(lambda.body, indent + 1));
+                buf.add('${pad}}\n');
+                forEachIdxVars.pop();
+                currentItemBinding = prev;
+                return buf.toString();
+            }
             buf.add('${pad}let ${arrVar} = ${arrayName}\n');
             buf.add('${pad}ForEach(0..<${arrVar}.count, id: \\.self) { ${idxVar} in\n');
             buf.add('${pad}    let ${itemName} = ${arrVar}[${idxVar}]\n');
@@ -4310,11 +4329,53 @@ class SwiftGenerator {
         return value == null ? null : "\\(" + value + ")";
     }
 
+    /**
+        The sequence a `ForEach` walks, in Swift.
+
+        `direct` says the sequence stands on its own -- a range or a literal
+        list, where the loop variable is the element -- as opposed to a cell
+        holding an array, which this backend iterates by index so a row's
+        action can re-materialise its element at tap time.
+
+        Null for anything neither shape covers, and the caller keeps the
+        array-by-name path it had.
+    **/
+    static function swiftSequenceOf(expr:haxe.macro.Type.TypedExpr):Null<{swift:String, direct:Bool}> {
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TNew(cls, _, ctorArgs):
+                // `0...12` is an `IntIterator` once typed. Swift spells the
+                // same thing `0..<12`.
+                if (cls.get().name != "IntIterator" || ctorArgs.length != 2) return null;
+                var from = swiftValueOf(ctorArgs[0]);
+                var to = swiftValueOf(ctorArgs[1]);
+                if (from == null || to == null) return null;
+                return {swift: from + "..<" + to, direct: true};
+            case TArrayDecl(items):
+                var parts = [];
+                for (item in items) {
+                    var one = swiftValueOf(item);
+                    if (one == null) return null;
+                    parts.push(one);
+                }
+                return {swift: "[" + parts.join(", ") + "]", direct: true};
+            case _: return null;
+        }
+    }
+
     /** One value inside an interpolation, or null when it cannot be said. **/
     static function swiftValueOf(expr:haxe.macro.Type.TypedExpr):String {
         var e = unwrap(expr);
         var state = stateReadOf(e);
         if (state != null) return state;
+        // The row's own value, inside a `ForEach` body. Without this every
+        // label in a generated row came out empty, which is the same silence
+        // a missing string was.
+        if (currentItemBinding != null) switch (e.expr) {
+            case TLocal(v) if (v.id == currentItemBinding.paramId):
+                return currentItemBinding.swiftExpr;
+            case _:
+        }
         switch (e.expr) {
             case TConst(TInt(v)): return Std.string(v);
             case TConst(TFloat(v)): return Std.string(v);
