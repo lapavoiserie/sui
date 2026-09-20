@@ -2329,6 +2329,12 @@ class SwiftGenerator {
                     // Check for property reference: this.fieldName → emit as expression
                     var propName = extractThisField(args[0]);
                     if (propName != null) return '${pad}Text(${propName})\n';
+                    // A string built from state: `"hello " + name` and the
+                    // arithmetic around it. Until this, anything that was not
+                    // one literal came out `Text("")` -- a label that reads as
+                    // deliberate and says nothing.
+                    var woven = interpolationOf(args[0]);
+                    if (woven != null) return '${pad}Text("${woven}")\n';
                 }
                 return '${pad}Text("")\n';
 
@@ -4255,6 +4261,96 @@ class SwiftGenerator {
     }
 
     /** Extract a `this.fieldName` reference → returns the field name. **/
+    /**
+        A `@:state` read, as the state Swift declares.
+
+        `rui.macros.StateProperty` turns `@:state var name` into a property, so
+        reading it is `this.get_name()` in the typed tree -- a call, which
+        every extractor here was written to look past rather than into. A
+        screen that showed a cell's value came out blank because of it.
+    **/
+    static function stateReadOf(expr:haxe.macro.Type.TypedExpr):String {
+        var e = unwrap(expr);
+        return switch (e.expr) {
+            case TCall(callee, []):
+                switch (unwrap(callee).expr) {
+                    case TField(obj, fa):
+                        var name = faName(fa);
+                        if (name == null || !StringTools.startsWith(name, "get_")) null
+                        else switch (unwrap(obj).expr) {
+                            case TConst(TThis): qualifyStateName(name.substr(4));
+                            case _: null;
+                        }
+                    case _: null;
+                }
+            case _: null;
+        }
+    }
+
+    /**
+        A string expression, as one Swift interpolation.
+
+        `"hello " + name + " · " + Math.round(level * 100) + "%"` becomes
+        `hello \(name) · \(Int((level * 100).rounded()))%`. Literals go in as
+        they are; anything else goes in as `\(…)`, and a piece this cannot
+        translate answers null so the caller keeps its old behaviour rather
+        than emitting something half true.
+    **/
+    static function interpolationOf(expr:haxe.macro.Type.TypedExpr):String {
+        var e = unwrap(expr);
+        switch (e.expr) {
+            case TConst(TString(v)): return esc(v);
+            case TBinop(OpAdd, a, b):
+                var left = interpolationOf(a);
+                var right = interpolationOf(b);
+                return left == null || right == null ? null : left + right;
+            case _:
+        }
+        var value = swiftValueOf(e);
+        return value == null ? null : "\\(" + value + ")";
+    }
+
+    /** One value inside an interpolation, or null when it cannot be said. **/
+    static function swiftValueOf(expr:haxe.macro.Type.TypedExpr):String {
+        var e = unwrap(expr);
+        var state = stateReadOf(e);
+        if (state != null) return state;
+        switch (e.expr) {
+            case TConst(TInt(v)): return Std.string(v);
+            case TConst(TFloat(v)): return Std.string(v);
+            case TConst(TString(v)): return '"' + esc(v) + '"';
+            case TBinop(op, a, b):
+                var left = swiftValueOf(a);
+                var right = swiftValueOf(b);
+                if (left == null || right == null) return null;
+                var sign = switch (op) {
+                    case OpAdd: "+"; case OpSub: "-";
+                    case OpMult: "*"; case OpDiv: "/";
+                    case _: null;
+                };
+                return sign == null ? null : '(' + left + ' ' + sign + ' ' + right + ')';
+            case TCall(callee, callArgs):
+                // The handful of `Math` calls a label actually uses. Not a
+                // translator for Haxe's standard library: anything else
+                // answers null, and the label keeps whatever it had.
+                var name = switch (unwrap(callee).expr) {
+                    case TField(_, fa): faName(fa);
+                    case _: null;
+                };
+                if (name == null || callArgs.length != 1) return null;
+                var inner = swiftValueOf(callArgs[0]);
+                if (inner == null) return null;
+                return switch (name) {
+                    case "round": 'Int((' + inner + ').rounded())';
+                    case "floor": 'Int((' + inner + ').rounded(.down))';
+                    case "ceil": 'Int((' + inner + ').rounded(.up))';
+                    case "abs": 'abs(' + inner + ')';
+                    case _: null;
+                };
+            case _: return null;
+        }
+    }
+
     static function extractThisField(expr:haxe.macro.Type.TypedExpr):String {
         var e = unwrap(expr);
         return switch (e.expr) {
