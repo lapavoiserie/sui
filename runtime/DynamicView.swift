@@ -1199,20 +1199,39 @@ private func parseStringArray(_ json: String) -> [String] {
     return arr.compactMap { $0 as? String }
 }
 
-/// Tabs — the tab contents are this node's children; the titles are a parallel
-/// JSON array on the "titles" property.
+/// Tabs — the canon's shape: the children are `Tab` nodes, each carrying its
+/// title in `label`, and **only the selected one carries a page**, as its own
+/// single child.
+///
+/// It used to read the titles from a parallel JSON array on a "titles"
+/// property, which nothing in this repository ever emitted -- so every tab of
+/// a received tree was drawn as "Tab 1", "Tab 2". And the selection was a
+/// local `@State`, which no tree could reach: the canon says the selection is
+/// the application's, so that a tap somewhere else entirely can bring a tab
+/// back.
 struct DynamicTabs: View {
     let node: ViewNode
-    @State private var selection = 0
 
     var body: some View {
-        let titles = parseStringArray(node.property("titles"))
-        let children = node.children
-        return TabView(selection: $selection) {
-            ForEach(Array(children.enumerated()), id: \.offset) { idx, child in
-                DynamicView(node: child)
-                    .tabItem { Text(idx < titles.count ? titles[idx] : "Tab \(idx + 1)") }
-                    .tag(idx)
+        let tabs = node.children
+        let bound = node.boundValue
+        return TabView(selection: Binding<Int>(
+            get: { Int(bound.wrappedValue) ?? 0 },
+            set: { bound.wrappedValue = String($0) }
+        )) {
+            ForEach(Array(tabs.enumerated()), id: \.offset) { idx, tab in
+                Group {
+                    // An unselected tab has no page. Empty is the right
+                    // answer, not a placeholder: there is nothing to draw
+                    // because nothing was sent.
+                    if let page = tab.children.first {
+                        DynamicView(node: page)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .tabItem { Text(tab.property("label")) }
+                .tag(idx)
             }
         }
     }

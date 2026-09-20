@@ -158,6 +158,23 @@ class ReceivedCheck {
 		check("a sui view is not taken for a received node", ViewNodeBridge.getViewType(own) == "Text"
 			&& ViewNodeBridge.getTextContent(own) == "mine");
 
+		// --- the canon's tabs ---
+		//
+		// `DynamicTabs` read its titles from a parallel JSON array on a
+		// "titles" property that nothing here ever emitted, so every tab of a
+		// received tree was drawn "Tab 1", "Tab 2". And its selection was a
+		// local @State, which no tree could reach -- the canon says the
+		// selection is the application's so that a tap somewhere else can
+		// bring a tab back.
+		var bar = new nui.Node("Tabs").prop("selectedIndex", nui.PropValue.PInt(2))
+			.child(new nui.Node("Tab").prop("label", nui.PropValue.PString("Source")));
+		var barSource = new nui.SelfSource(() -> bar);
+		check("a received Tabs offers its selection as its bound value",
+			sui.nui.Received.stringProp(barSource, bar, "value") == "2",
+			sui.nui.Received.stringProp(barSource, bar, "value"));
+		check("and a title is the Tab's own label, not a parallel array",
+			sui.nui.Received.stringProp(barSource, bar.children[0], "label") == "Source");
+
 		// --- the canon's `clip`, both ways ---
 		//
 		// `DynamicView.swift` switches on sui's OWN spelling of a modifier, so

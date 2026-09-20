@@ -54,6 +54,12 @@ class Received {
 			// A received picker selects by position.
 			case ["Picker", "selectionMode"]: "index";
 			case ["Picker", "value"]: Std.string(n.props.exists("selectedIndex") ? source.intProp(n, "selectedIndex") : -1);
+			// Tabs select by position too, and the selection is the
+			// APPLICATION's: it arrives in the tree and goes back through
+			// `onSelect`, so a tap somewhere else entirely can change the tab.
+			// `DynamicTabs` kept its own `@State` before, which no tree could
+			// reach.
+			case ["Tabs", "value"]: Std.string(n.props.exists("selectedIndex") ? source.intProp(n, "selectedIndex") : 0);
 			case ["TextInput", "value"]: source.stringProp(n, "text");
 			case ["TextInput", "label"]: source.stringProp(n, "placeholder");
 			case [_, "path"]:
