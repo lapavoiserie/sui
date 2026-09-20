@@ -2648,7 +2648,13 @@ class SwiftGenerator {
                 return '${pad}DatePicker("${esc(label != null ? label : "")}", selection: Binding(get: { suiIsoTimeParse(${binding}) ?? Date() }, set: { ${binding} = suiIsoTimeFormat($$0) }), displayedComponents: .hourAndMinute).environment(\\.timeZone, TimeZone(identifier: "UTC")!)\n';
 
             case "Slider":
-                var binding = if (args.length > 0) qualifyStateName(extractString(args[0])) else "value";
+                // A binding arrives two ways: as the NAME of a cell (a sui app
+                // writes one) or as the cell itself (markup binds one, and
+                // `Construct` hands it through `Describe.nameOf`). Reading only
+                // the first gave `$null` for every slider written in markup.
+                var binding = if (args.length > 0)
+                        qualifyStateName(bindingNameOf(args[0]))
+                    else "value";
                 var rangeMin = if (args.length > 1) extractConstant(args[1]) else "0";
                 var rangeMax = if (args.length > 2) extractConstant(args[2]) else "1";
                 return '${pad}Slider(value: $$${binding}, in: ${rangeMin}...${rangeMax})\n';
@@ -4556,8 +4562,30 @@ class SwiftGenerator {
         current pass is in bridge mode (and the name is known to be
         a `State<T>` field). For standalone `@State`/component-local
         fields, return the bare name. **/
+    /**
+        The cell a binding argument names, however it was written.
+
+        A `sui` application passes the name as a string; markup passes the cell
+        and `nui.macros.Construct` wraps it in the backend's own `nameOf`. Both
+        mean the same thing, and a case that reads only one of them silently
+        binds to nothing.
+    **/
+    static function bindingNameOf(expr:haxe.macro.Type.TypedExpr):String {
+        var said = extractString(expr);
+        return said != null ? said : extractBindingFieldName(expr);
+    }
+
     static function qualifyStateName(name:String):String {
         if (name == null) return null;
+        // The CELL, written as `count_`, names the state `count`. That is
+        // `rui.macros.StateProperty`'s convention -- `count` reads, `count = v`
+        // writes, `count_` is the cell -- and markup binds the cell, because a
+        // two-way binding IS one. Without this a transpiled screen binds to
+        // `$count_`, which no `@State` declares, and swiftc says so.
+        if (StringTools.endsWith(name, "_")) {
+            var bare = name.substr(0, name.length - 1);
+            if (currentStateNames.exists(bare)) name = bare;
+        }
         if (needsRuntimeBridge && currentStateNames.exists(name))
             return 'appState.${name}';
         return name;
