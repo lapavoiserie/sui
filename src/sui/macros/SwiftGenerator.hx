@@ -3578,7 +3578,7 @@ class SwiftGenerator {
             case "padding" | "font" | "foregroundColor" | "background" | "backgroundMaterial" |
                  "foregroundHex" | "backgroundHex" | "bold" | "italic" |
                  "frame" | "fillWidth" | "fillHeight" | "fillBoth" | "fixedSize" |
-                 "cornerRadius" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
+                 "cornerRadius" | "clip" | "opacity" | "navigationTitle" | "multilineTextAlignment" |
                  "disabled" | "overlay" | "shadow" | "lineLimit" | "textFieldStyle" |
                  "buttonStyle" | "toggleStyle" | "pickerStyle" | "scrollIndicators" |
                  "sheet" | "inspector" | "inspectorColumnWidth" | "alert" | "confirmationDialog" | "searchable" | "toolbar" | "animation" |
@@ -3640,6 +3640,11 @@ class SwiftGenerator {
             case "cornerRadius":
                 var v = if (args.length > 0) extractConstant(args[0]) else "0";
                 'clipShape(RoundedRectangle(cornerRadius: ${v}))';
+            // The canon's `clip`: cut at the edge, no shape and no radius. A
+            // radius belongs to the thing it rounds, and `cornerRadius` above
+            // already carries one and clips with it.
+            case "clip":
+                'clipped()';
             case "frame":
                 var parts:Array<String> = [];
                 if (args.length > 0) { var w = extractConstant(args[0]); if (w != null) parts.push('width: $w'); }

@@ -158,6 +158,24 @@ class ReceivedCheck {
 		check("a sui view is not taken for a received node", ViewNodeBridge.getViewType(own) == "Text"
 			&& ViewNodeBridge.getTextContent(own) == "mine");
 
+		// --- the canon's `clip`, both ways ---
+		//
+		// `DynamicView.swift` switches on sui's OWN spelling of a modifier, so
+		// a name the Haxe side forgets to rename falls through its
+		// `default: break` and nothing happens. `clip` did exactly that.
+		var cutNode = new nui.Node("VStack").modifier({type: nui.Modifiers.CLIP});
+		check("a received clip is renamed into the one Swift switches on",
+			sui.nui.Received.modifierType(new nui.SelfSource(() -> cutNode), cutNode, 0) == "Clip");
+
+		// And out. A rectangle IS the canon's clip; the other shapes are
+		// SwiftUI's own and stay unnamed, because a receiver told "clip" cuts
+		// at the edge, which a capsule does not.
+		var cut:sui.View = new sui.ui.Text("x");
+		cut.clip();
+		var said = sui.nui.Describe.describe(cut);
+		check("and a clipped view describes itself by the canonical name",
+			[for (m in said.modifiers) m.type].indexOf(nui.Modifiers.CLIP) >= 0);
+
 		ViewNodeBridge.readThrough(null);
 		check("null hands the screen back", !ViewNodeBridge.reading() && ViewNodeBridge.getRoot() != again);
 

@@ -96,6 +96,10 @@ class Received {
 			case "backgroundColor": "Background";
 			case "opacity": "Opacity";
 			case "cornerRadius": "CornerRadius";
+			// Without this the canon's name passed through verbatim as
+			// "clip", which `DynamicView.swift` switches on in sui's own
+			// spelling -- so it fell to `default: break` and nothing was cut.
+			case nui.Modifiers.CLIP: "Clip";
 			case "disabled": "Disabled";
 			case _: type;
 		}

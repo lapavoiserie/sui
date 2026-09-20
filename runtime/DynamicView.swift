@@ -985,6 +985,12 @@ struct DynamicView: View {
             case "Disabled":
                 result = AnyView(result.disabled(true))
 
+            // The canon's `clip`: children cut at this view's edge. It used to
+            // arrive as the lowercase "clip" -- the Haxe side did not rename
+            // it -- so it fell to `default: break` and nothing was cut.
+            case "Clip":
+                result = AnyView(result.clipped())
+
             case "NavigationTitle":
                 // Would need string param from bridge
                 break

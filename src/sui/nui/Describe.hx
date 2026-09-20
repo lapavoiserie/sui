@@ -345,6 +345,12 @@ class Describe {
 						out.modifier({type: nui.Modifiers.BACKGROUND_COLOR, strings: [said]});
 				case Opacity(v):
 					out.modifier({type: nui.Modifiers.OPACITY, floats: [v]});
+				// A rectangle IS the canon's `clip`. The other shapes are
+				// SwiftUI's own and have no canon name, so they stay here --
+				// a receiver told "clip" cuts at the edge, which is what a
+				// rectangle means and what a capsule does not.
+				case ClipShape(Rectangle):
+					out.modifier({type: nui.Modifiers.CLIP});
 				case _:
 					// Everything else is SwiftUI's own and has no canon name.
 			}

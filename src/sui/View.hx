@@ -1,6 +1,7 @@
 package sui;
 
 import sui.modifiers.ViewModifier;
+import sui.modifiers.ViewModifier.ShapeType;
 
 /**
     Base type representing a SwiftUI view.
@@ -139,6 +140,20 @@ class View {
 
     public function cornerRadius(radius:Float):View {
         modifierChain.push(ViewModifier.CornerRadius(radius));
+        return this;
+    }
+
+    /**
+        Cut this view's content at its own edge. `nui.Modifiers.CLIP`.
+
+        `ViewModifier.ClipShape` had been declared since the modifier enum was
+        written and **nothing ever pushed it**: no method here, no case in the
+        generator, no case in the Swift runtime. A rectangle is the shape the
+        canon means -- a radius belongs to the thing it rounds, and
+        `cornerRadius` already carries one and clips with it.
+    **/
+    public function clip():View {
+        modifierChain.push(ViewModifier.ClipShape(ShapeType.Rectangle));
         return this;
     }
 
