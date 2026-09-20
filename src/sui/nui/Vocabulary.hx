@@ -53,6 +53,24 @@ class Vocabulary {
 			requiredOf: requiredOf,
 			kindOf: attributeKind,
 			types: () -> [for (type in types().keys()) type],
+			// Markup becomes `new sui.ui.VStack(...)` rather than a node --
+			// which this backend could not have read back anyway: it reads a
+			// received tree natively and never copies one into views.
+			//
+			// Its two-way controls hold a NAME, not a cell, so markup carries
+			// the cell itself -- `<Toggle isOn={lit_}/>` -- and
+			// `Describe.nameOf` turns it into the name. There is no callback
+			// to give: writes go back through the Swift binding.
+			//
+			// No `decorate` yet: modifiers here are a chain the SwiftGenerator
+			// translates, not a table something reads. Markup says so by name
+			// rather than dropping a decoration silently.
+			//
+			// Behind `-D mui_views` while the two shapes coexist.
+			#if mui_views
+			viewOf: (tag, given, children, pos) ->
+				nui.macros.Construct.expr(DIALECT, tag, given, children, pos),
+			#end
 		});
 	}
 	#else

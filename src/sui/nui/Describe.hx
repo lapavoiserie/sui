@@ -362,6 +362,22 @@ class Describe {
 		describers, which know a container's children go here and nothing else
 		about them.
 	**/
+	/**
+		The name a two-way control is bound by.
+
+		This backend's controls hold a **name**, not a cell: their state lives
+		on the Swift side behind a registry, which is what `@:cell` says and
+		what makes `sui` different from every sibling. So markup carries the
+		cell itself -- `<Toggle isOn={lit_}/>` -- and this turns it into the
+		name the control takes.
+
+		`nui.macros.Construct` calls it through the dialect's `named` module,
+		because knowing that a cell has a name, and which field it is, is
+		`sui`'s business and nothing the shared reader should carry.
+	**/
+	public static function nameOf<T>(cell:sui.state.State<T>):String
+		return cell == null ? "" : cell.name;
+
 	public static function appendChildren(view:View, out:Node):Node {
 		withChildren(out, view);
 		return out;
