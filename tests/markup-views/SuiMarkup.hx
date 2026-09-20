@@ -4,7 +4,7 @@ import mui.macros.Markup.ui;
 class SuiMarkup {
 	static function main() {
 		var lit = new sui.state.State(true, "lit");
-		var screen:sui.View = ui(<VStack spacing={8}>
+		var screen:sui.View = ui(<VStack spacing={8} padding={{top: 8.0, right: 8.0, bottom: 8.0, left: 8.0}} opacity={0.9} clip={true}>
 			<Text text="built by sui itself"/>
 			<Toggle label="lit" isOn={lit}/>
 		</VStack>);

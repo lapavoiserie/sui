@@ -62,14 +62,15 @@ class Vocabulary {
 			// `Describe.nameOf` turns it into the name. There is no callback
 			// to give: writes go back through the Swift binding.
 			//
-			// No `decorate` yet: modifiers here are a chain the SwiftGenerator
-			// translates, not a table something reads. Markup says so by name
-			// rather than dropping a decoration silently.
-			//
 			// Behind `-D mui_views` while the two shapes coexist.
 			#if mui_views
 			viewOf: (tag, given, children, pos) ->
 				nui.macros.Construct.expr(DIALECT, tag, given, children, pos),
+			// The canon's nine onto this backend's chain. What SwiftUI has no
+			// equivalent for -- the colours among them, and the reason is not
+			// obvious -- is said out loud. See `sui.nui.Decorate`.
+			decorate: (view, modifiers, pos) -> macro sui.nui.Decorate.apply($view,
+				[for (__m in ($modifiers : Array<Null<nui.Modifier>>)) if (__m != null) __m]),
 			#end
 		});
 	}
