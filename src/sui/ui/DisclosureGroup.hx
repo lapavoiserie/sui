@@ -12,8 +12,10 @@ import sui.View;
     ])
     ```
 **/
+@:node("Disclosure")
+@:content("content")
 class DisclosureGroup extends View {
-    public var label:String;
+    @:prop("title") public var label:String;
     public var content:Array<View>;
 
     public function new(label:String, content:Array<View>) {

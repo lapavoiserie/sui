@@ -576,7 +576,10 @@ struct DynamicView: View {
                 VStack(alignment: .leading) { childViews() }
             }
 
-        case "DisclosureGroup":
+        // The canonical name too: `sui.ui.DisclosureGroup` declares
+        // `@:node("Disclosure")`, and a tree arriving over the wire says
+        // `Disclosure`. One concept, and both doors answer to it.
+        case "DisclosureGroup", "Disclosure":
             DisclosureGroup(node.property("label")) {
                 VStack(alignment: .leading) { childViews() }
             }
@@ -677,7 +680,7 @@ struct DynamicView: View {
         // sui shape when a binding name is present, the protocol shape
         // otherwise, so neither renderer's apps regress.
 
-        case "SecureField":
+        case "SecureField", "SecretInput":
             SuiTextField(node: node, secure: true)
 
         case "TextEditor":
@@ -768,7 +771,7 @@ struct DynamicView: View {
                 DynamicCheckBox(node: node)
             }
 
-        case "TextField":
+        case "TextField", "TextInput":
             if node.bindingName != nil {
                 SuiTextField(node: node, secure: false)
             } else {
