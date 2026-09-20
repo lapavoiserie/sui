@@ -71,6 +71,15 @@ class Vocabulary {
 			// obvious -- is said out loud. See `sui.nui.Decorate`.
 			decorate: (view, modifiers, pos) -> macro sui.nui.Decorate.apply($view,
 				[for (__m in ($modifiers : Array<Null<nui.Modifier>>)) if (__m != null) __m]),
+			// What this backend can actually draw on a view. Markup refuses
+			// anything else BY NAME while compiling: a decoration it cannot
+			// honour is knowable here, and this project's rule is that
+			// something knowable is a compile error rather than a marker or a
+			// line in a log. See `mui.macros.Backend.Vocabulary.honoured`.
+			honoured: () -> [
+				nui.Modifiers.PADDING, nui.Modifiers.OPACITY, nui.Modifiers.CLIP,
+				nui.Modifiers.WIDTH, nui.Modifiers.HEIGHT,
+			],
 			#end
 		});
 	}

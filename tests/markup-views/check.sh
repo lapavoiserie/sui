@@ -44,6 +44,18 @@ else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# A decoration this backend cannot draw is refused BY NAME while compiling.
+# Skipping quietly is the canon's rule for a tree that arrived, not for markup
+# somebody is writing against a backend they chose.
+out=$(haxe $common -D mui_views --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-cp tests/markup-views/refused -main BadDecoration --interp 2>&1)
+if echo "$out" | grep -q 'ne sait pas dessiner "backgroundColor"' \
+		&& echo "$out" | grep -q "honore"; then
+	echo "ok   a decoration it cannot draw is refused, and the message lists what it can"
+else
+	echo "FAIL backgroundColor was not refused clearly:"; echo "$out"; fails=$((fails + 1))
+fi
+
 echo ""
 [ "$fails" -eq 0 ] && echo "all good" || echo "$fails failed"
 exit "$fails"
