@@ -29,6 +29,13 @@ class HandleCheck {
 		var app = new HandleApp();
 		ViewNodeBridge.setApp(app);
 
+		// `level` is bound by the slider and displayed by nothing else. It used
+		// to be "unknown", hence structural: every write rebuilt the tree.
+		ok(!ViewNodeBridge.isStructural("level"),
+			"a cell only a control binds is a VALUE write, not a rebuild");
+		ok(ViewNodeBridge.isStructural("never-read"),
+			"a cell nothing reads or binds is still structural: unknown answers yes");
+
 		var root = ViewNodeBridge.handleOfRoot("body", ViewNodeBridge.getRoot());
 		function child(index:Int):Int
 			return ViewNodeBridge.handleOfChild(root, index,

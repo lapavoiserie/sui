@@ -214,10 +214,33 @@ class ViewSource implements NodeSource<View> {
 		visit(_root, 0);
 	}
 
+	/**
+		The properties a two-way control names its cell by. The same list
+		`DynamicView.swift`'s `bindingName` tries -- sui spells it per control
+		because the transpiler read the field, and a field can be called
+		anything.
+	**/
+	static final BINDINGS = ["textBinding", "isOnBinding", "valueBinding", "selectionBinding", "isoStateName"];
+
 	function visit(n:View, depth:Int):Void {
 		// A tree deep enough to hit this is a cycle, not a view.
 		if (n == null || depth > 512) return;
 		for (name in valueDependencies(n)) _valueNames.set(name, true);
+		// A control DISPLAYS the cell it edits -- through its binding, not
+		// through a thunk, so the line above never saw it. `lit` behind the
+		// kitchen sink's toggle was displayed nowhere else, so it was
+		// "unknown", unknown answered "structural", and every click on the
+		// toggle rebuilt the tree under the pointer. The renderer already
+		// invalidates the control on a bump (`boundValue` tracks its cell),
+		// so the narrow path is complete for it.
+		var bound = resolveWalked(n);
+		if (bound != null) for (key in BINDINGS) {
+			var name = rawValue(bound, key);
+			if (name != null && Std.isOfType(name, String) && name != "") {
+				_valueNames.set(name, true);
+				break;
+			}
+		}
 		var count = childCount(n);
 		for (i in 0...count) visit(childAt(n, i), depth + 1);
 	}
