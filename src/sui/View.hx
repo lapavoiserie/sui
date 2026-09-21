@@ -15,6 +15,27 @@ class View {
     public var properties:Map<String, Dynamic>;
 
     /**
+        Which sibling this is, when its position does not say.
+
+        Identity here is positional -- the renderer's diffing, the handles a
+        node crosses the bridge under -- and a position is only an identity
+        while rows stay put. A list that sorts, filters or gains a row at the
+        top moves every row below it, and everything keyed by place (a field's
+        text being typed, a handle SwiftUI kept in a closure) then belongs to
+        a different row. A key is how a row says it is still itself.
+
+        Set with `keyed`, which also publishes it as `nodeId` -- the property
+        `ViewNode.identity(at:)` has always preferred over the index.
+    **/
+    public var key(default, null):Null<String> = null;
+
+    public function keyed(key:String):View {
+        this.key = key;
+        properties.set("nodeId", key);
+        return this;
+    }
+
+    /**
         Rebuilds this node with its values evaluated *now*.
 
         Set by `sui.macros.LiveProps` on the dynamic path: the node itself is

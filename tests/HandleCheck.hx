@@ -68,6 +68,20 @@ class HandleCheck {
 		ok(ViewNodeBridge.nodeOfChecked(level, levelSignature) == null,
 			"same type, different cell: still null -- for a control, identity is the cell");
 
+		// Rows that move: a key is what makes a row still itself.
+		app.twoSliders = false;
+		app.swapped = false;
+		app.keyedRows = ["a", "b", "c"];
+		ViewNodeBridge.rebuild();
+		var list = ViewNodeBridge.handleOfRoot("body", ViewNodeBridge.getRoot());
+		var rowB = ViewNodeBridge.handleOfChild(list, 1, ViewNodeBridge.getChild(ViewNodeBridge.nodeOf(list), 1));
+		var rowBSignature = ViewNodeBridge.signatureOfPlace(rowB);
+		app.keyedRows = ["new", "c", "a", "b"];
+		ViewNodeBridge.rebuild();
+		var moved = ViewNodeBridge.nodeOfChecked(rowB, rowBSignature);
+		ok(moved != null && ViewNodeBridge.getStringProperty(moved, "valueBinding") == "b",
+			"a KEYED row is still reached after the list reordered and grew");
+
 		Sys.println("");
 		Sys.println(failures == 0 ? "all good" : failures + " failed");
 		if (failures > 0) Sys.exit(1);
@@ -79,8 +93,11 @@ private class HandleApp extends sui.App {
 	public var inserted = false;
 	public var twoSliders = false;
 	public var swapped = false;
+	public var keyedRows:Array<String> = null;
 
 	override function body():sui.View {
+		if (keyedRows != null)
+			return new sui.ui.VStack([for (name in keyedRows) new sui.ui.Slider(name, 0, 1).keyed(name)]);
 		var rows:Array<sui.View> = [new sui.ui.Text("title")];
 		if (twoSliders) {
 			rows.push(new sui.ui.Slider(swapped ? "volume" : "level", 0, 1));

@@ -62,15 +62,14 @@ class ViewSource implements NodeSource<View> {
 	}
 
 	/**
-		sui has no notion of a sibling key yet, so identity is positional.
+		The key a view was given with `keyed`, or null: positional.
 
-		Returning `null` is the contract's own answer for that, not a gap papered
-		over: a host that rebuilds identity from scratch will recreate a control
-		that merely moved. The day sui's lists carry keys, this is the one place
-		to say so.
+		Null is still the common answer and still the contract's own: a host
+		that rebuilds identity from scratch recreates a control that merely
+		moved. A list whose rows move says otherwise, row by row.
 	**/
 	public function keyOf(n:View):Null<String>
-		return null;
+		return n == null ? null : n.key;
 
 	public function childCount(n:View):Int {
 		n = resolveWalked(n);

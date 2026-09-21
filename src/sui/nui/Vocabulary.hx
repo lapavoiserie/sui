@@ -66,6 +66,8 @@ class Vocabulary {
 			#if mui_views
 			// Deferred as `LiveProps` would have deferred it, had it been able
 			// to see it: see `LiveProps.deferMarkup`.
+			// A key written in markup reaches the view. See `mui.macros.Backend.Vocabulary.keyed`.
+			keyed: (view, key, pos) -> macro $view.keyed($key),
 			viewOf: (tag, given, children, pos) -> {
 				var built = nui.macros.Construct.expr(DIALECT, tag, given, children, pos);
 				built == null ? null : sui.macros.LiveProps.deferMarkup(built);

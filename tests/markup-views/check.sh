@@ -27,6 +27,12 @@ if echo "$out" | grep -q "built: sui.ui.VStack"; then
 else
 	echo "FAIL markup did not build sui's own controls:"; echo "$out"; fails=$((fails + 1))
 fi
+if echo "$out" | grep -q "keys: a,b"; then
+	echo "ok   a key written in markup reaches the view"
+else
+	echo "FAIL a written key did not reach the view:"; echo "$out"; fails=$((fails + 1))
+fi
+
 if echo "$out" | grep -q "toggle bound to: lit"; then
 	echo "ok   and the control holds the cell's name, which is what it binds by"
 else

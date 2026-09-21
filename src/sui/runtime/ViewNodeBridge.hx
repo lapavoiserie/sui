@@ -170,7 +170,11 @@ class ViewNodeBridge {
     /** A handle for a node's child at an index. **/
     public static function handleOfChild(parent:Int, index:Int, node:Dynamic):Int {
         if (node == null) return 0;
-        var key = parent + ":" + index;
+        // A keyed child's place is its KEY under that parent, not its index:
+        // the row that moved is still reached, where an index would now name
+        // its neighbour.
+        var childKey = keyOfNode(node);
+        var key = childKey != null ? parent + ":k" + childKey : parent + ":" + index;
         var known = _childHandles.get(key);
         if (known != null) {
             var place = _places.get(known);
@@ -181,7 +185,9 @@ class ViewNodeBridge {
                 return known;
             }
         }
-        var handle = issue(new Place(parent, index, null, node, _generation));
+        var place = new Place(parent, index, null, node, _generation);
+        place.key = childKey;
+        var handle = issue(place);
         _childHandles.set(key, handle);
         return handle;
     }
@@ -207,9 +213,9 @@ class ViewNodeBridge {
             getRootFor(place.rootId);
         } else {
             var parent = nodeOf(place.parent);
-            parent == null || place.index >= getChildCount(parent)
-                ? null
-                : getChild(parent, place.index);
+            if (parent == null) null
+            else if (place.key != null) childKeyed(parent, place.key)
+            else place.index >= getChildCount(parent) ? null : getChild(parent, place.index);
         };
         // A place that no longer exists answers what was there. Stale, not
         // empty: an empty answer is what made the knob snap back.
@@ -250,9 +256,9 @@ class ViewNodeBridge {
     // SAME cell are interchangeable for this purpose, which is the point:
     // for a control, identity is the cell.
     //
-    // What this does not give is identity for rows that MOVE. That is what a
-    // key is for (`nodeId`, nui's sibling keys), and sui's own trees carry
-    // none yet.
+    // Rows that MOVE are what a key is for: a view given one with `keyed` is
+    // placed by it rather than by its index (`handleOfChild`), so its handle
+    // follows it through a sort or an insertion.
 
     static final BINDINGS = ["textBinding", "isOnBinding", "valueBinding", "selectionBinding", "isoStateName"];
 
@@ -281,6 +287,21 @@ class ViewNodeBridge {
         var node = nodeOf(handle);
         if (node == null) return null;
         return _places.get(handle).signature == signature ? node : null;
+    }
+
+    static function keyOfNode(node:Dynamic):Null<String> {
+        if (node == null) return null;
+        if (received(node) != null) return (node : nui.Node).key;
+        return Std.isOfType(node, View) ? (node : View).key : null;
+    }
+
+    /** The child carrying this key, wherever it sits now. **/
+    static function childKeyed(parent:Dynamic, key:String):Dynamic {
+        for (i in 0...getChildCount(parent)) {
+            var child = getChild(parent, i);
+            if (keyOfNode(child) == key) return child;
+        }
+        return null;
     }
 
     /** A new generation: every place resolves afresh on its next read. **/
@@ -972,6 +993,8 @@ private class Place {
     public var index:Int;
     public var rootId:Null<String>;
     public var node:Dynamic;
+    /** The child's key under its parent, when it has one; else `index` places it. **/
+    public var key:Null<String> = null;
     public var signature:Int = 0;
     public var generation:Int;
 
