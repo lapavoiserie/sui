@@ -156,6 +156,7 @@ class ViewNodeBridge {
         if (known != null) {
             var place = _places.get(known);
             place.node = node;
+            place.signature = signatureOf(node);
             place.generation = _generation;
             return known;
         }
@@ -175,6 +176,7 @@ class ViewNodeBridge {
             var place = _places.get(known);
             if (place != null) {
                 place.node = node;
+                place.signature = signatureOf(node);
                 place.generation = _generation;
                 return known;
             }
@@ -188,6 +190,7 @@ class ViewNodeBridge {
     static var _childHandles = new Map<String, Int>();
 
     static function issue(place:Place):Int {
+        place.signature = signatureOf(place.node);
         var handle = _nextHandle++;
         _places.set(handle, place);
         return handle;
@@ -218,9 +221,66 @@ class ViewNodeBridge {
                 Sys.stderr().writeString("[sui] place " + handle + " now " + getViewType(current)
                     + ", was " + getViewType(place.node) + "\n");
         }
-        if (current != null) place.node = current;
+        if (current != null) {
+            place.node = current;
+            place.signature = signatureOf(current);
+        }
         place.generation = _generation;
         return place.node;
+    }
+
+    // ...and a place is not enough on its own, which is Benjamin's question
+    // the day this shipped: what if a component is INSERTED?
+    //
+    // Then the place names something else. A label appears above a slider,
+    // the slider moves from index 3 to index 4, and a closure SwiftUI kept
+    // from before the insertion resolves index 3 to whatever sits there now.
+    // Reading a stale label is harmless. WRITING is not: an old slider's
+    // `set` would resolve to, say, a toggle, find `isOnBinding` on it, and
+    // put "0.37" into a Bool cell. A wrong write into the wrong cell, in the
+    // window between the rebuild and SwiftUI re-running the bodies that
+    // replace those closures -- narrow, and exactly where a drag that makes
+    // a warning appear lives.
+    //
+    // So a handle also carries a SIGNATURE of the node it was issued for:
+    // its type and the cell it edits. `nodeOfChecked` answers null when the
+    // place now holds something with a different one, and a null node is
+    // inert everywhere -- no name, so no write. A dropped write in a stale
+    // closure, never a wrong one. Two controls of the same type editing the
+    // SAME cell are interchangeable for this purpose, which is the point:
+    // for a control, identity is the cell.
+    //
+    // What this does not give is identity for rows that MOVE. That is what a
+    // key is for (`nodeId`, nui's sibling keys), and sui's own trees carry
+    // none yet.
+
+    static final BINDINGS = ["textBinding", "isOnBinding", "valueBinding", "selectionBinding", "isoStateName"];
+
+    /** Sixteen bits of what a node IS: its type and the cell it edits. **/
+    static function signatureOf(node:Dynamic):Int {
+        if (node == null) return 0;
+        var text = getViewType(node);
+        for (key in BINDINGS) {
+            var name = getStringProperty(node, key);
+            if (name != null && name != "") { text += "|" + name; break; }
+        }
+        var hash = 5381;
+        for (i in 0...text.length) hash = ((hash * 33) ^ text.charCodeAt(i)) & 0xffff;
+        return hash;
+    }
+
+    /** The signature a handle for this place must carry. **/
+    public static function signatureOfPlace(handle:Int):Int {
+        nodeOf(handle);
+        var place = _places.get(handle);
+        return place == null ? 0 : place.signature;
+    }
+
+    /** The node at a place, if it is still what the handle was issued for. **/
+    public static function nodeOfChecked(handle:Int, signature:Int):Dynamic {
+        var node = nodeOf(handle);
+        if (node == null) return null;
+        return _places.get(handle).signature == signature ? node : null;
     }
 
     /** A new generation: every place resolves afresh on its next read. **/
@@ -912,6 +972,7 @@ private class Place {
     public var index:Int;
     public var rootId:Null<String>;
     public var node:Dynamic;
+    public var signature:Int = 0;
     public var generation:Int;
 
     public function new(parent:Int, index:Int, rootId:Null<String>, node:Dynamic, generation:Int) {

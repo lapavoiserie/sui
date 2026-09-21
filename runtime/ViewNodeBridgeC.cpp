@@ -64,21 +64,35 @@ extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 // than an int32 so the renderer's own code does not change: it passes the
 // thing along opaquely, which is what it always did. Handles start at 1, so a
 // null pointer still reads as "no node" on the Swift side.
-// The place a handle names: its low 32 bits. The bits above are the generation
-// it was handed out in, there only so a rebuilt view is a different value to
-// SwiftUI -- see `ViewNodeBridge.generation`.
+// A handle is three things in one word:
+//
+//   low 32 bits   the PLACE, which is all the Haxe side resolves;
+//   next 16       a SIGNATURE of the node it was issued for -- its type and the
+//                 cell it edits -- so a place that now holds something else
+//                 (a component was inserted before it) answers null instead
+//                 of the wrong control. See `ViewNodeBridge.nodeOfChecked`;
+//   top 16        the generation, there only so a rebuilt view is a different
+//                 value to SwiftUI -- see `ViewNodeBridge.generation`. It
+//                 wraps, which is fine: it has to differ, not to order.
+//
+// Sixty-four-bit pointers are assumed. Every target sui builds for has them;
+// watchOS's arm64_32 would not.
+static_assert(sizeof(void*) >= 8, "a sui node handle needs a 64-bit pointer");
+
 static inline int _placeOf(void* handle) {
     return (int)((uintptr_t)handle & 0xffffffffu);
 }
 
 static inline void* _handle(int place) {
     if (place == 0) return nullptr;
-    uintptr_t generation = (uintptr_t)(uint32_t)::sui::runtime::ViewNodeBridge_obj::generation();
-    return (void*)((generation << 32) | (uintptr_t)(uint32_t)place);
+    uintptr_t generation = (uintptr_t)(::sui::runtime::ViewNodeBridge_obj::generation() & 0xffff);
+    uintptr_t signature = (uintptr_t)(::sui::runtime::ViewNodeBridge_obj::signatureOfPlace(place) & 0xffff);
+    return (void*)((generation << 48) | (signature << 32) | (uintptr_t)(uint32_t)place);
 }
 
 static inline ::Dynamic _asView(void* node) {
-    return ::sui::runtime::ViewNodeBridge_obj::nodeOf(_placeOf(node));
+    int signature = (int)(((uintptr_t)node >> 32) & 0xffff);
+    return ::sui::runtime::ViewNodeBridge_obj::nodeOfChecked(_placeOf(node), signature);
 }
 
 // And the other way: a node leaving for the renderer becomes a handle, which
