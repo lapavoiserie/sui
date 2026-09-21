@@ -11,12 +11,20 @@
  * direct-symbol path is both correct and more robust.)
  *
  * Nodes cross the boundary as opaque void* — the raw hx::Object* behind a
- * sui View, or behind a nui Node when a received tree is drawing. GC note: each entry registers the stack top so allocations made
- * while building strings stay reachable; returned strings and pointers must be
- * copied by the caller before the next GC.
+ * sui View, or behind a nui Node when a received tree is drawing.
+ *
+ * GC note: each entry registers the stack top through `HaxeCall`, which counts
+ * nesting so a re-entrant call does not detach the thread under the call that
+ * is still running — see the comment on that struct. A returned string is
+ * copied out of GC memory by `keep` and stays valid for the next few calls on
+ * the same thread; a returned NODE pointer is still the caller's to copy
+ * before the next GC.
  */
 
 #include <hxcpp.h>
+#include <cstdio>
+#include <cstdlib>
+#include <string>
 #include <sui/View.h>
 #include <sui/runtime/ViewNodeBridge.h>
 #include <sui/state/Callbacks.h>
@@ -48,6 +56,82 @@ static inline ::Dynamic _asView(void* node) {
     return ::Dynamic((hx::Object*)node);
 }
 
+
+// ---------------------------------------------------------------------------
+// Entering Haxe from native code, RE-ENTRANTLY.
+//
+// Every entry used to do this, on its own:
+//
+//     int dummy = 0;
+//     hx::SetTopOfStack(&dummy, true);
+//     ... call Haxe ...
+////
+// which is right for one call and wrong for a nested one, and nested ones are
+// the normal case here. Dragging a slider does this:
+//
+//     viewnode_set_state          <- native enters Haxe
+//       State.set                 <- Haxe writes the cell
+//         _hxsui_notify_swift     <- and tells Swift
+//           SwiftUI re-evaluates SuiSlider.body, synchronously
+//             viewnode_get_property   <- native enters Haxe AGAIN
+//             ... and on the way out: SetTopOfStack(0, false)
+//
+// The inner exit DETACHED the thread while the outer call's Haxe frame was
+// still live. Whatever that frame touched next went through a null stack
+// context: EXC_BAD_ACCESS at 0x0, reported inside `getStringProperty` because
+// that is simply where the thread happened to be. Reproduced by moving a
+// slider; the app died and macOS relaunched it.
+//
+// So the attach is counted. Only the outermost entry registers a stack top,
+// only the outermost exit gives it back, and the anchor is the outermost
+// frame's -- the highest address, which is what hxcpp wants.
+//
+// Set `SUI_BRIDGE_TRACE` to have the deepest nesting reached printed when it
+// grows, which is how the nesting above was measured rather than assumed.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct HaxeCall {
+    int anchor;
+
+    HaxeCall() {
+        if (depth++ == 0) hx::SetTopOfStack(&anchor, true);
+        if (depth > deepest) {
+            deepest = depth;
+            if (::getenv("SUI_BRIDGE_TRACE")) fprintf(stderr, "[sui] bridge nesting %d\n", depth);
+        }
+    }
+
+    ~HaxeCall() {
+        if (--depth == 0) hx::SetTopOfStack((int*)0, false);
+    }
+
+    static thread_local int depth;
+    static thread_local int deepest;
+};
+
+thread_local int HaxeCall::depth = 0;
+thread_local int HaxeCall::deepest = 0;
+
+// A string handed back to native code, kept alive past the Haxe call.
+//
+// `::String::__CStr()` points INTO GC memory. The caller was told to copy it
+// "before the next GC", which it cannot honour: by the time it holds the
+// pointer the bridge has already returned and a collection may have moved or
+// freed the string. So the bytes are copied here, into a small ring, so that a
+// caller reading several properties in a row -- `bindingName` tries five --
+// still holds valid memory for each.
+const char* keep(::String value) {
+    static thread_local std::string ring[8];
+    static thread_local unsigned next = 0;
+
+    std::string& slot = ring[next++ % 8];
+    slot = value == null() ? std::string() : std::string(value.__CStr());
+    return slot.c_str();
+}
+
+} // namespace
+
 extern "C" {
 
 // --- Action dispatch ---
@@ -57,35 +141,29 @@ extern "C" {
 // built at runtime via body() fires the same closure it registered with
 // Callbacks.reg().
 void haxe_bridge_invoke_action(int32_t actionId) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::state::Callbacks_obj::run(actionId);
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // --- View tree lifecycle ---
 
 // Rebuild the view tree (call App.body())
 void viewnode_rebuild(void) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::rebuild();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // Pump the poll delegate on the calling thread; returns 1 if the tree changed.
 int32_t viewnode_poll(void) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::poll() ? 1 : 0;
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
@@ -96,312 +174,258 @@ void sui_bridge_set_pump_requester(void (*requester)(void));
 // Call on the main thread, after boot.
 void viewnode_set_pump_requester(void (*requester)(void)) {
     sui_bridge_set_pump_requester(requester);
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::watchMainEvents();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // A native input changed: write value at data-model path back into the app.
 void viewnode_set_data(const char* path, const char* value) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::setData(::String(path), ::String(value));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // The theme accent (primaryColor hex) to tint native controls with.
 const char* viewnode_theme_accent(void) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getAccent().__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getAccent());
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // Fire a named action with a JSON extra-context.
 void viewnode_fire_action(const char* name, const char* extraJson) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::fireAction(::String(name), ::String(extraJson));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // Get root view node (returns opaque pointer)
 void* viewnode_get_root(void) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRoot();
         result = root.GetPtr();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // A declared surface root's view node by its stable id.
 void* viewnode_root_for(const char* id) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
         result = root.GetPtr();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // --- Command sets (the menu bar's data) ---
 
 int32_t viewnode_command_set_count(void) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::commandSetCount();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_command_set_id(int32_t set) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::commandSetId(set).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::commandSetId(set));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 int32_t viewnode_command_count(int32_t set) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::commandCount(set);
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_command_label(int32_t set, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::commandLabel(set, index).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::commandLabel(set, index));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_command_shortcut(int32_t set, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::commandShortcut(set, index).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::commandShortcut(set, index));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 void viewnode_command_invoke(int32_t set, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::invokeCommand(set, index);
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // --- Node accessors ---
 
 const char* viewnode_get_type(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getViewType(_asView(node)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getViewType(_asView(node)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 int32_t viewnode_child_count(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::getChildCount(_asView(node));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 void* viewnode_get_child(void* node, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     void* result = nullptr;
     try {
         ::Dynamic child = ::sui::runtime::ViewNodeBridge_obj::getChild(_asView(node), index);
         result = child.GetPtr();
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // --- Properties ---
 
 const char* viewnode_get_property(void* node, const char* key) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getStringProperty(_asView(node), ::String(key)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getStringProperty(_asView(node), ::String(key)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // --- Text ---
 
 const char* viewnode_get_text(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getTextContent(_asView(node)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getTextContent(_asView(node)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // --- Button ---
 
 const char* viewnode_get_button_label(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getButtonLabel(_asView(node)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getButtonLabel(_asView(node)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 int32_t viewnode_get_button_action_id(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = -1;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::getButtonActionId(_asView(node));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 // Invoke a Button node's action closure directly — the dynamic renderer holds
 // the live tree, so the closure on the node is GC-reachable and safe to call.
 void viewnode_invoke_action(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::invokeButtonAction(_asView(node));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 // --- Modifiers ---
 
 int32_t viewnode_modifier_count(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::getModifierCount(_asView(node));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_modifier_type(void* node, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getModifierType(_asView(node), index).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getModifierType(_asView(node), index));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 double viewnode_modifier_float(void* node, int32_t index, int32_t paramIndex) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     double result = 0.0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::getModifierFloat(_asView(node), index, paramIndex);
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_modifier_string(void* node, int32_t index, int32_t paramIndex) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getModifierString(_asView(node), index, paramIndex).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getModifierString(_asView(node), index, paramIndex));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 /* --- Tabs ------------------------------------------------------------------ */
 int32_t viewnode_tab_count(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::getTabCount(_asView(node));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_tab_title(void* node, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getTabTitle(_asView(node), index).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getTabTitle(_asView(node), index));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 const char* viewnode_tab_icon(void* node, int32_t index) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getTabIcon(_asView(node), index).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getTabIcon(_asView(node), index));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
@@ -413,26 +437,22 @@ const char* viewnode_tab_icon(void* node, int32_t index) {
  * shape or only a value.
  */
 const char* viewnode_value_deps(void* node) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getValueDependencies(_asView(node)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getValueDependencies(_asView(node)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 int32_t viewnode_is_structural(const char* name) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     /* Rebuilding is the answer that cannot be wrong, so it is also the answer
      * when the call itself fails. */
     int32_t result = 1;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::isStructural(::String(name)) ? 1 : 0;
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
@@ -443,34 +463,28 @@ int32_t viewnode_is_structural(const char* name) {
  * registry every State joins on construction.
  */
 const char* viewnode_state_value(const char* name) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     const char* result = "";
     try {
-        result = ::sui::runtime::ViewNodeBridge_obj::getStateValue(::String(name)).__CStr();
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getStateValue(::String(name)));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 int32_t viewnode_state_exists(const char* name) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     int32_t result = 0;
     try {
         result = ::sui::runtime::ViewNodeBridge_obj::hasStateValue(::String(name)) ? 1 : 0;
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
     return result;
 }
 
 void viewnode_set_state(const char* name, const char* value) {
-    int dummy = 0;
-    hx::SetTopOfStack(&dummy, true);
+    HaxeCall _call;
     try {
         ::sui::runtime::ViewNodeBridge_obj::setStateValue(::String(name), ::String(value));
     } catch (...) {}
-    hx::SetTopOfStack((int*)0, false);
 }
 
 /* --- State writes -----------------------------------------------------------

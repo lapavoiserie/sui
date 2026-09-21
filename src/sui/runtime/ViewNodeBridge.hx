@@ -68,6 +68,37 @@ class ViewNodeBridge {
     static var _commandSets:Array<CommandSetRecord> = [];
 
     /**
+        The last few generations of view trees, kept alive on purpose.
+
+        A node crosses to the renderer as a raw `hx::Object*`, and Swift's
+        `ViewNode` is a **struct holding that pointer**, captured into the
+        closures SwiftUI keeps — a `Slider`'s `Binding` get and set among them.
+        A rebuild allocates a fresh tree and dropped the old one on the spot, so
+        those captured pointers referred to memory the collector was free to
+        take back. Reading a property off one was a use-after-free.
+
+        It was not theoretical. Dragging the slider in
+        `mui/examples/kitchen-sink` killed the app repeatedly — EXC_BAD_ACCESS
+        at 0x0, reported inside `getStringProperty`, which is simply the first
+        thing that touches the node. A drag rebuilds per frame, so it reaches
+        the window between a pointer being handed out and being used faster
+        than anything else does.
+
+        Holding the previous generations turns that into a **stale read**: the
+        renderer gets the value the node had when it was built, and SwiftUI
+        replaces the view with the current generation's on the next pass. For a
+        control that binds by NAME -- every two-way control here -- even the
+        stale read is right, because the name does not change and the write
+        goes through `setStateValue`, which never looks at a node.
+
+        Four, not one, because SwiftUI may hold a closure across more than one
+        pass; and not unbounded, because that is a leak with a nicer name.
+    **/
+    static var _generations:Array<Array<View>> = [];
+
+    static inline var GENERATIONS = 4;
+
+    /**
         The mui layer's hook for declaring command sets — same layering as
         `extraRootsOf`: the bridge is sui core and may not import `mui`, so
         `sui.mui.App` installs a provider that maps the app's CommandSet
@@ -113,12 +144,30 @@ class ViewNodeBridge {
         those roots still hold. (qui's cover escapes this by owning its own
         Lifetime inside its host; sui's roots are all driven from the app.)
     **/
+    /** How many times the tree has been rebuilt, for `SUI_BRIDGE_TRACE`. **/
+    static var _rebuilds = 0;
+
     public static function rebuild():Void {
         if (_foreign != null) _foreign.rebuild();
         if (_app == null) return;
+        // A drag that rebuilds per frame is the difference between a slider
+        // that follows the mouse and one that lags behind it. Counted rather
+        // than guessed: a value write is supposed to reach the views that
+        // display the cell and rebuild nothing (see `isStructural`).
+        _rebuilds++;
+        if (Sys.getEnv("SUI_BRIDGE_TRACE") != null)
+            Sys.stderr().writeString("[sui] rebuild #" + _rebuilds + "\n");
         // Reset first: a body can throw, and a scope left open would
         // attribute the next generation's reads to the failed one.
         sui.runtime.ReadScope.reset();
+        // The generation about to be replaced, held so the pointers already
+        // handed to the renderer stay readable. See `_generations`.
+        var previous:Array<View> = [];
+        for (root in _roots) if (root.view != null) previous.push(root.view);
+        if (previous.length > 0) {
+            _generations.push(previous);
+            while (_generations.length > GENERATIONS) _generations.shift();
+        }
         _app.lifetime.beginPass();
         for (root in _roots) {
             // Each root's shape-deciding reads are recorded separately. After
