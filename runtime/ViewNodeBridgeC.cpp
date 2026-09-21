@@ -141,28 +141,37 @@ static inline void* _asChildHandle(void* parent, int32_t index, ::Dynamic node) 
 // grows, which is how the nesting above was measured rather than assumed.
 // ---------------------------------------------------------------------------
 namespace {
+thread_local int haxeDepth = 0;
+thread_local int haxeDeepest = 0;
+}
+
+// The count is exported, because this file is not the only way in. The boot
+// file `sui.macros.SwiftGenerator` writes per application (`SuiBootC.cpp`:
+// `viewnode_boot`, `sui_app_resumed`, `sui_glance_invoke`, ...) enters Haxe
+// too, and used to attach on its own and never detach. A widget tap that writes
+// a cell runs `sui_glance_invoke` -> Haxe -> Swift -> `viewnode_get_property`:
+// with two mechanisms and one of them counting, the inner exit still detached
+// the thread under the outer call. One count, shared by symbol rather than by
+// header so the generated file needs no include path into this directory.
+extern "C" void sui_haxe_enter(int* anchor) {
+    if (haxeDepth++ == 0) hx::SetTopOfStack(anchor, true);
+    if (haxeDepth > haxeDeepest) {
+        haxeDeepest = haxeDepth;
+        if (::getenv("SUI_BRIDGE_TRACE")) fprintf(stderr, "[sui] bridge nesting %d\n", haxeDepth);
+    }
+}
+
+extern "C" void sui_haxe_leave(void) {
+    if (--haxeDepth == 0) hx::SetTopOfStack((int*)0, false);
+}
+
+namespace {
 
 struct HaxeCall {
     int anchor;
-
-    HaxeCall() {
-        if (depth++ == 0) hx::SetTopOfStack(&anchor, true);
-        if (depth > deepest) {
-            deepest = depth;
-            if (::getenv("SUI_BRIDGE_TRACE")) fprintf(stderr, "[sui] bridge nesting %d\n", depth);
-        }
-    }
-
-    ~HaxeCall() {
-        if (--depth == 0) hx::SetTopOfStack((int*)0, false);
-    }
-
-    static thread_local int depth;
-    static thread_local int deepest;
+    HaxeCall() { sui_haxe_enter(&anchor); }
+    ~HaxeCall() { sui_haxe_leave(); }
 };
-
-thread_local int HaxeCall::depth = 0;
-thread_local int HaxeCall::deepest = 0;
 
 // A string handed back to native code, kept alive past the Haxe call.
 //

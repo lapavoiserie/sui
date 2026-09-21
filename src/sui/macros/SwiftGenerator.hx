@@ -1091,10 +1091,20 @@ class SwiftGenerator {
         // beside the entries that were the only callers.
         if (declaresGlanceSurface(cls)) buf.add("#include <sui/mui/GlancePublish.h>\n");
         buf.add("\n");
+        // Entering Haxe goes through the ONE counted attach, exported by
+        // `runtime/ViewNodeBridgeC.cpp`. These entries used to attach on their
+        // own and never detach; see `sui_haxe_enter` for what that cost once
+        // a second way in started counting.
+        buf.add("extern \"C\" void sui_haxe_enter(int* anchor);\n");
+        buf.add("extern \"C\" void sui_haxe_leave(void);\n");
+        buf.add("namespace { struct SuiHaxeCall {\n");
+        buf.add("    int anchor;\n");
+        buf.add("    SuiHaxeCall() { sui_haxe_enter(&anchor); }\n");
+        buf.add("    ~SuiHaxeCall() { sui_haxe_leave(); }\n");
+        buf.add("}; }\n\n");
         buf.add("extern \"C\" void viewnode_boot(void) {\n");
         buf.add("    static bool _hxcppBooted = false;\n");
-        buf.add("    int dummy = 0;\n");
-        buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+        buf.add("    SuiHaxeCall _call;\n");
         buf.add("    try {\n");
         buf.add("        if (!_hxcppBooted) { hx::Boot(); __boot_all(); _hxcppBooted = true; }\n");
         buf.add('        auto app = $cppSym::__new();\n');
@@ -1140,8 +1150,7 @@ class SwiftGenerator {
             buf.add("extern \"C\" void sui_glance_boot_headless(void) {\n");
             buf.add("    static bool _headlessBooted = false;\n");
             buf.add("    if (_headlessBooted) return;\n");
-            buf.add("    int dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    SuiHaxeCall _call;\n");
             buf.add("    try {\n");
             buf.add("        hx::Boot(); __boot_all();\n");
             buf.add('        $cppSym::__new();\n');
@@ -1154,8 +1163,7 @@ class SwiftGenerator {
             buf.add("}\n");
 
             buf.add("extern \"C\" void sui_glance_resample(void) {\n");
-            buf.add("    int dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    SuiHaxeCall _call;\n");
             buf.add("    try {\n");
             buf.add("        ::sui::mui::GlancePublish_obj::resampleAndPublish();\n");
             buf.add("    } catch (...) {\n");
@@ -1170,8 +1178,7 @@ class SwiftGenerator {
             // gave it. See sui.mui.GlancePublish.invokeAndPublish for why the
             // four steps inside are in that order.
             buf.add("extern \"C\" void sui_glance_invoke(int id) {\n");
-            buf.add("    int dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    SuiHaxeCall _call;\n");
             buf.add("    try {\n");
             buf.add("        ::sui::mui::GlancePublish_obj::invokeAndPublish(id);\n");
             buf.add("    } catch (...) {\n");
@@ -1183,8 +1190,7 @@ class SwiftGenerator {
             // when nothing changed; what it catches is a durable cell the
             // widget's process wrote while this one was away.
             buf.add("extern \"C\" void sui_app_resumed(void) {\n");
-            buf.add("    int dummy = 0;\n");
-            buf.add("    hx::SetTopOfStack(&dummy, true);\n");
+            buf.add("    SuiHaxeCall _call;\n");
             buf.add("    try {\n");
             buf.add("        ::sui::mui::GlancePublish_obj::resumed();\n");
             buf.add("    } catch (...) {\n");
