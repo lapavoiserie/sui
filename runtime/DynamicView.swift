@@ -107,25 +107,12 @@ struct ViewNode {
         return String(cString: viewnode_tab_icon(ptr, Int32(index)))
     }
 
-    /// The cells this node displays, as Haxe worked them out -- and the one it
-    /// edits, if it is a two-way control.
+    /// The cells this node displays, as Haxe worked them out.
     var valueDependencies: [String] {
         guard let ptr = pointer else { return [] }
         let raw = String(cString: viewnode_value_deps(ptr))
-        var deps = raw.isEmpty ? [] : raw.split(separator: ",").map(String.init)
-        // What Haxe lists is what the node's deferred values read, and a
-        // two-way control reads its cell through its binding instead -- so it
-        // was never listed, and a write to it invalidated every view that
-        // displays the cell except the control itself. That went unseen while
-        // every write rebuilt the whole tree: the slider was redrawn with
-        // everything else. Once a value write stopped rebuilding, dragging the
-        // kitchen sink's slider moved the text under it in real time and left
-        // the knob where it was until the mouse was released.
-        if let key = bindingName {
-            let name = property(key)
-            if !name.isEmpty { deps.append(name) }
-        }
-        return deps
+        if raw.isEmpty { return [] }
+        return raw.split(separator: ",").map(String.init)
     }
 
     /// A value read as a number, for the many properties that are one.
@@ -164,6 +151,18 @@ struct ViewNode {
     var boundValue: Binding<String> {
         let node = self
         if let key = bindingName {
+            // Follow the cell this control edits. A control must take its
+            // binding IN ITS OWN `body` -- `let bound = node.boundValue` --
+            // for this read to count: Observation records what a body reads,
+            // and it is that body SwiftUI re-runs when the cell is bumped.
+            //
+            // Subscribing the enclosing `DynamicView` instead did nothing: it
+            // re-ran, made the same `SuiSlider(node:)` over again, SwiftUI
+            // compared it equal and skipped its body. So dragging the kitchen
+            // sink's slider moved the text under it in real time and left the
+            // knob where it was until the mouse was released. It had gone
+            // unseen while every write rebuilt the whole tree.
+            SuiCells.shared.track([property(key)])
             return Binding(get: { node.stateValue(key) },
                            set: { node.setStateValue(key, $0) })
         }
@@ -1966,9 +1965,10 @@ struct SuiToggle: View {
     let node: ViewNode
 
     var body: some View {
+        let bound = node.boundValue
         Toggle(node.property("label"), isOn: Binding(
-            get: { node.boundValue.wrappedValue == "true" },
-            set: { node.boundValue.wrappedValue = $0 ? "true" : "false" }
+            get: { bound.wrappedValue == "true" },
+            set: { bound.wrappedValue = $0 ? "true" : "false" }
         ))
     }
 }
@@ -1977,11 +1977,12 @@ struct SuiSlider: View {
     let node: ViewNode
 
     var body: some View {
+        let bound = node.boundValue
         let lo = node.number("rangeMin") ?? 0
         let hi = node.number("rangeMax") ?? 1
         Slider(value: Binding(
-            get: { Double(node.boundValue.wrappedValue) ?? lo },
-            set: { node.boundValue.wrappedValue = String($0) }
+            get: { Double(bound.wrappedValue) ?? lo },
+            set: { bound.wrappedValue = String($0) }
         ), in: lo...max(hi, lo + 0.0001))
     }
 }
@@ -1990,11 +1991,12 @@ struct SuiStepper: View {
     let node: ViewNode
 
     var body: some View {
+        let bound = node.boundValue
         let lo = Int(node.number("minValue") ?? 0)
         let hi = Int(node.number("maxValue") ?? 100)
         Stepper(node.property("label"), value: Binding(
-            get: { Int(node.boundValue.wrappedValue) ?? lo },
-            set: { node.boundValue.wrappedValue = String($0) }
+            get: { Int(bound.wrappedValue) ?? lo },
+            set: { bound.wrappedValue = String($0) }
         ), in: lo...max(hi, lo))
     }
 }
@@ -2037,9 +2039,10 @@ struct SuiColorPicker: View {
     let node: ViewNode
 
     var body: some View {
+        let bound = node.boundValue
         ColorPicker(node.property("label"), selection: Binding(
-            get: { Color(suiHex: node.boundValue.wrappedValue) ?? .accentColor },
-            set: { node.boundValue.wrappedValue = $0.suiHexString } 
+            get: { Color(suiHex: bound.wrappedValue) ?? .accentColor },
+            set: { bound.wrappedValue = $0.suiHexString } 
         ))
     }
 }
@@ -2055,9 +2058,10 @@ struct SuiDatePicker: View {
     let timeOnly: Bool
 
     var body: some View {
+        let bound = node.boundValue
         DatePicker(node.property("label"), selection: Binding(
-            get: { ViewNode.isoFormatter.date(from: node.boundValue.wrappedValue) ?? Date() },
-            set: { node.boundValue.wrappedValue = ViewNode.isoFormatter.string(from: $0) }
+            get: { ViewNode.isoFormatter.date(from: bound.wrappedValue) ?? Date() },
+            set: { bound.wrappedValue = ViewNode.isoFormatter.string(from: $0) }
         ), displayedComponents: timeOnly ? [.hourAndMinute] : [.date])
     }
 }

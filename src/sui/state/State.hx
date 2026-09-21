@@ -73,8 +73,28 @@ class State<T> extends rui.state.State<T> {
     /** Registry of State instances by name, for shared-memory bridge queries. **/
     private static var _registry:Map<String, Dynamic> = new Map();
 
+    /**
+        Whether this cell has ever held a number with a fractional part.
+
+        A cell does not know its declared type at runtime, and on hxcpp a
+        whole-valued `Float` IS an `Int` to `Std.isOfType`. `_applyFromSwift`
+        infers the type to parse into from the value the cell holds, so a
+        `Float` cell passing through `0.0` or `1.0` was taken for an `Int`
+        cell from then on, and every later `"0.3585"` was parsed with
+        `Std.parseInt` -- which answers `0`. Dragging the kitchen sink's
+        slider to its left edge froze `level` at zero for the rest of the run.
+
+        So the fractional past is remembered: once a Float, always a Float.
+    **/
+    var _fractional:Bool = false;
+
+    static inline function hasFraction(value:Dynamic):Bool {
+        return Std.isOfType(value, Float) && !Std.isOfType(value, Int);
+    }
+
     public function new(initialValue:T, ?name:String) {
         super(initialValue, name);
+        if (hasFraction(initialValue)) _fractional = true;
         if (this.name != "")
             _registry.set(this.name, this);
         // Push the initial value across the bridge so AppState's
@@ -121,6 +141,7 @@ class State<T> extends rui.state.State<T> {
         from updating for `todos.set(sameArrayMutatedInPlace)`.
     **/
     override public function set(newValue:T):Void {
+        if (hasFraction(newValue)) _fractional = true;
         super.set(newValue);
         #if cpp
         notifySwift(newValue);
@@ -136,6 +157,7 @@ class State<T> extends rui.state.State<T> {
         **not** pushed back to Swift, which already holds this value.
     **/
     override public function applyExternal(newValue:T):Void {
+        if (hasFraction(newValue)) _fractional = true;
         super.applyExternal(newValue);
         if (onChange != null) {
             onChange(newValue);
@@ -309,8 +331,18 @@ class State<T> extends rui.state.State<T> {
         var parsed:Dynamic =
             if (Std.isOfType(current, Bool)) raw == "true"
             else if (Std.isOfType(current, Int)) {
-                var i = Std.parseInt(raw);
-                if (i != null) i else Std.int(Std.parseFloat(raw));
+                // "Int" here also means a Float that happens to be whole --
+                // see `_fractional`. A cell with a fractional past is a Float
+                // cell whatever it holds now; and a fractional value ARRIVING
+                // settles it too, which covers a Float cell that started at
+                // `0.0` and has never been anything else. The one case left
+                // wrong is a genuine Int cell fed fractions by a control
+                // without a step: it used to truncate and now takes the
+                // fraction. Closing that needs the declared type, which only
+                // the `@:state` macro knows.
+                var f = Std.parseFloat(raw);
+                if (Math.isNaN(f)) return;
+                if (s._fractional || f != Math.ffloor(f)) f else Std.int(f);
             }
             else if (Std.isOfType(current, Float)) Std.parseFloat(raw)
             else if (Std.isOfType(current, String)) raw

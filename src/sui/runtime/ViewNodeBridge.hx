@@ -825,8 +825,12 @@ class ViewNodeBridge {
         on screen follows.
     **/
     public static function setStateValue(name:String, raw:String):Void {
-        if (tracing()) Sys.stderr().writeString("[sui] write " + name + " = " + raw + "\n");
         sui.state.State._applyFromSwift(name, raw);
+        // What arrived AND what the cell holds afterwards: the two differ when
+        // the value was parsed into the wrong type, which is how a slider
+        // dragged through zero froze its cell there.
+        if (tracing()) Sys.stderr().writeString("[sui] write " + name + " = " + raw
+            + " -> " + Std.string(sui.state.State.peekByName(name)) + "\n");
     }
 
     static var _tracing:Null<Bool> = null;
