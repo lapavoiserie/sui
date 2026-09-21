@@ -107,12 +107,25 @@ struct ViewNode {
         return String(cString: viewnode_tab_icon(ptr, Int32(index)))
     }
 
-    /// The cells this node displays, as Haxe worked them out.
+    /// The cells this node displays, as Haxe worked them out -- and the one it
+    /// edits, if it is a two-way control.
     var valueDependencies: [String] {
         guard let ptr = pointer else { return [] }
         let raw = String(cString: viewnode_value_deps(ptr))
-        if raw.isEmpty { return [] }
-        return raw.split(separator: ",").map(String.init)
+        var deps = raw.isEmpty ? [] : raw.split(separator: ",").map(String.init)
+        // What Haxe lists is what the node's deferred values read, and a
+        // two-way control reads its cell through its binding instead -- so it
+        // was never listed, and a write to it invalidated every view that
+        // displays the cell except the control itself. That went unseen while
+        // every write rebuilt the whole tree: the slider was redrawn with
+        // everything else. Once a value write stopped rebuilding, dragging the
+        // kitchen sink's slider moved the text under it in real time and left
+        // the knob where it was until the mouse was released.
+        if let key = bindingName {
+            let name = property(key)
+            if !name.isEmpty { deps.append(name) }
+        }
+        return deps
     }
 
     /// A value read as a number, for the many properties that are one.
