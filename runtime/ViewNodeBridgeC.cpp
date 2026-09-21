@@ -64,8 +64,21 @@ extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 // than an int32 so the renderer's own code does not change: it passes the
 // thing along opaquely, which is what it always did. Handles start at 1, so a
 // null pointer still reads as "no node" on the Swift side.
+// The place a handle names: its low 32 bits. The bits above are the generation
+// it was handed out in, there only so a rebuilt view is a different value to
+// SwiftUI -- see `ViewNodeBridge.generation`.
+static inline int _placeOf(void* handle) {
+    return (int)((uintptr_t)handle & 0xffffffffu);
+}
+
+static inline void* _handle(int place) {
+    if (place == 0) return nullptr;
+    uintptr_t generation = (uintptr_t)(uint32_t)::sui::runtime::ViewNodeBridge_obj::generation();
+    return (void*)((generation << 32) | (uintptr_t)(uint32_t)place);
+}
+
 static inline ::Dynamic _asView(void* node) {
-    return ::sui::runtime::ViewNodeBridge_obj::nodeOf((int)(intptr_t)node);
+    return ::sui::runtime::ViewNodeBridge_obj::nodeOf(_placeOf(node));
 }
 
 // And the other way: a node leaving for the renderer becomes a handle, which
@@ -73,12 +86,11 @@ static inline ::Dynamic _asView(void* node) {
 // a child index -- so that it resolves against whatever tree is current when
 // it is read. See `ViewNodeBridge.nodeOf`.
 static inline void* _asRootHandle(const char* id, ::Dynamic node) {
-    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOfRoot(::String(id), node);
+    return _handle(::sui::runtime::ViewNodeBridge_obj::handleOfRoot(::String(id), node));
 }
 
 static inline void* _asChildHandle(void* parent, int32_t index, ::Dynamic node) {
-    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOfChild(
-        (int)(intptr_t)parent, index, node);
+    return _handle(::sui::runtime::ViewNodeBridge_obj::handleOfChild(_placeOf(parent), index, node));
 }
 
 

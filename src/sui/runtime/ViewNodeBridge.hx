@@ -221,6 +221,26 @@ class ViewNodeBridge {
     }
 
     /**
+        The current generation, which the C bridge folds into every handle it
+        hands out.
+
+        A handle naming only its place was too stable. `DynamicView` holds
+        nothing but its `ViewNode`, SwiftUI compares a view by its stored
+        values, and a `ViewNode` whose handle had not changed compared EQUAL
+        after a rebuild -- so SwiftUI skipped `body` and never read the new
+        values. The text under the slider stopped following it. The renderer
+        had been relying on every rebuild changing every address.
+
+        So a handle carries both: the place in its low 32 bits, which is what
+        `nodeOf` resolves, and the generation above them, which is what makes a
+        rebuilt view a different value. Identity for diffing is not affected --
+        `ViewNode.identity(at:)` is positional and never looked at the pointer.
+    **/
+    public static function generation():Int {
+        return _generation;
+    }
+
+    /**
         The mui layer's hook for declaring command sets — same layering as
         `extraRootsOf`: the bridge is sui core and may not import `mui`, so
         `sui.mui.App` installs a provider that maps the app's CommandSet
