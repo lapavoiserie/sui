@@ -98,6 +98,68 @@ class ViewNodeBridge {
 
     static inline var GENERATIONS = 4;
 
+    // ------------------------------------------------------------------
+    // Handles
+    //
+    // A node used to cross as a raw `hx::Object*`, and Swift's `ViewNode` is a
+    // struct holding it, captured into the closures SwiftUI keeps. That was a
+    // crash, reproducibly: dragging the slider in `mui/examples/kitchen-sink`
+    // killed the app every few seconds.
+    //
+    // The first reading was that the tree had been COLLECTED, and keeping the
+    // last generations alive did not help. The faulting instruction said why:
+    //
+    //     ldr  x21, [x21]      ; the node
+    //     cbz  x21, ...        ; not null
+    //     ldr  x8,  [x21]      ; its class pointer
+    //     ldr  x8,  [x8]       ; <-- SIGSEGV, x8 was 0
+    //
+    // A non-null object with a ZEROED header is one hxcpp's Immix collector
+    // has **moved**. Liveness was never the problem; the address was. A
+    // pointer handed across the boundary is a promise the GC does not make.
+    //
+    // So nothing hands out addresses. A node crosses as a small integer, the
+    // Haxe side holds the node in a map the collector updates like any other
+    // reference, and a handle from a generation that has aged out resolves to
+    // null -- which every accessor already answers "" / 0 / false for.
+    // ------------------------------------------------------------------
+
+    static var _nextHandle = 1;
+    static var _handles = new Map<Int, Dynamic>();
+
+    /** Handles issued per generation, oldest first, so they can be dropped. **/
+    static var _issued:Array<Array<Int>> = [[]];
+
+    /** The handle already issued for a node this generation, if any. **/
+    static var _byNode = new haxe.ds.ObjectMap<Dynamic, Int>();
+
+    /** A handle for a node, stable within a generation. **/
+    public static function handleOf(node:Dynamic):Int {
+        if (node == null) return 0;
+        var existing = _byNode.get(node);
+        if (existing != null) return existing;
+
+        var handle = _nextHandle++;
+        _handles.set(handle, node);
+        _byNode.set(node, handle);
+        _issued[_issued.length - 1].push(handle);
+        return handle;
+    }
+
+    /** The node a handle names, or null once its generation has aged out. **/
+    public static function nodeOf(handle:Int):Dynamic {
+        return handle == 0 ? null : _handles.get(handle);
+    }
+
+    /** Close the current generation of handles and drop what has aged out. **/
+    static function turnHandles():Void {
+        _issued.push([]);
+        _byNode = new haxe.ds.ObjectMap<Dynamic, Int>();
+        while (_issued.length > GENERATIONS) {
+            for (handle in _issued.shift()) _handles.remove(handle);
+        }
+    }
+
     /**
         The mui layer's hook for declaring command sets — same layering as
         `extraRootsOf`: the bridge is sui core and may not import `mui`, so
@@ -168,6 +230,7 @@ class ViewNodeBridge {
             _generations.push(previous);
             while (_generations.length > GENERATIONS) _generations.shift();
         }
+        turnHandles();
         _app.lifetime.beginPass();
         for (root in _roots) {
             // Each root's shape-deciding reads are recorded separately. After

@@ -23,6 +23,7 @@
 
 #include <hxcpp.h>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <sui/View.h>
@@ -46,14 +47,29 @@
 // at link time in a place that names neither the cause nor the fix.
 extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 
-// Wrap an opaque node pointer back into a Haxe object. Untyped on purpose: a
-// node is a sui View of the application's own tree or a nui Node of a received
-// one (ViewNodeBridge.readThrough), and the Haxe side tells them apart by their
-// runtime class; a typed wrapper would read a received node as a View.
-// Null-safe: a null pointer yields a null Dynamic, which every ViewNodeBridge
-// method tolerates.
+// Resolve an opaque node handle back into a Haxe object.
+//
+// The `void*` is NOT an address. It carries a small integer, and the node it
+// names lives in a map on the Haxe side. That indirection is the whole point:
+// hxcpp's Immix collector MOVES objects, so an address handed across this
+// boundary is a promise nobody made -- and Swift's `ViewNode` is a struct that
+// holds one for as long as SwiftUI keeps the closure it was captured into.
+// Dragging a slider killed the app every few seconds, on a node that was alive
+// and had simply been relocated: non-null, header zeroed, SIGSEGV on the first
+// virtual call.
+//
+// A handle from a generation that has aged out resolves to null, which every
+// ViewNodeBridge accessor already answers "" / 0 / false for. `void*` rather
+// than an int32 so the renderer's own code does not change: it passes the
+// thing along opaquely, which is what it always did. Handles start at 1, so a
+// null pointer still reads as "no node" on the Swift side.
 static inline ::Dynamic _asView(void* node) {
-    return ::Dynamic((hx::Object*)node);
+    return ::sui::runtime::ViewNodeBridge_obj::nodeOf((int)(intptr_t)node);
+}
+
+// And the other way: a node leaving for the renderer becomes a handle.
+static inline void* _asHandle(::Dynamic node) {
+    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOf(node);
 }
 
 
@@ -212,7 +228,7 @@ void* viewnode_get_root(void) {
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRoot();
-        result = root.GetPtr();
+        result = _asHandle(root);
     } catch (...) {}
     return result;
 }
@@ -223,7 +239,7 @@ void* viewnode_root_for(const char* id) {
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
-        result = root.GetPtr();
+        result = _asHandle(root);
     } catch (...) {}
     return result;
 }
@@ -307,7 +323,7 @@ void* viewnode_get_child(void* node, int32_t index) {
     void* result = nullptr;
     try {
         ::Dynamic child = ::sui::runtime::ViewNodeBridge_obj::getChild(_asView(node), index);
-        result = child.GetPtr();
+        result = _asHandle(child);
     } catch (...) {}
     return result;
 }
