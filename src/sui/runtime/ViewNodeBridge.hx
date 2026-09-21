@@ -118,46 +118,106 @@ class ViewNodeBridge {
     // has **moved**. Liveness was never the problem; the address was. A
     // pointer handed across the boundary is a promise the GC does not make.
     //
-    // So nothing hands out addresses. A node crosses as a small integer, the
-    // Haxe side holds the node in a map the collector updates like any other
-    // reference, and a handle from a generation that has aged out resolves to
-    // null -- which every accessor already answers "" / 0 / false for.
+    // So nothing hands out addresses. A node crosses as a small integer, and
+    // the Haxe side holds what it names in a map the collector updates like
+    // any other reference.
     // ------------------------------------------------------------------
 
+    // ...and the handle names a PLACE, not a node.
+    //
+    // The first version mapped a handle to the node it was issued for. That
+    // stopped the crash and broke the drag: a slider moved on a click and not
+    // on a drag. A drag writes `level` on every frame, and this screen's text
+    // reads `level` inside `body()`, so every frame rebuilds -- genuinely,
+    // that read is structural. SwiftUI kept the closure it captured a few
+    // generations back, its handle aged out, `bindingName` found nothing on a
+    // null node, and the binding fell back to one that reads an empty value:
+    // the knob went back where it started. A click is one write, so its
+    // handle was still in reach.
+    //
+    // Which is the rule this repository already states for identity
+    // (`nui`'s pull contract, `ViewNode.identity`): **the place, never the
+    // pointer**. A handle records where its node was reached from -- a root,
+    // or a parent handle and a child index -- and resolves against the
+    // CURRENT tree. The node it was issued for is kept only as the answer
+    // when that place no longer exists, so a vanished view reads stale
+    // rather than empty.
+
     static var _nextHandle = 1;
-    static var _handles = new Map<Int, Dynamic>();
+    static var _places = new Map<Int, Place>();
 
-    /** Handles issued per generation, oldest first, so they can be dropped. **/
-    static var _issued:Array<Array<Int>> = [[]];
+    /** Bumped on every rebuild; a place resolved in this one is not walked again. **/
+    static var _generation = 0;
 
-    /** The handle already issued for a node this generation, if any. **/
-    static var _byNode = new haxe.ds.ObjectMap<Dynamic, Int>();
-
-    /** A handle for a node, stable within a generation. **/
-    public static function handleOf(node:Dynamic):Int {
+    /** A handle for a root, by its id ("body" is the Primary). **/
+    public static function handleOfRoot(id:String, node:Dynamic):Int {
         if (node == null) return 0;
-        var existing = _byNode.get(node);
-        if (existing != null) return existing;
-
-        var handle = _nextHandle++;
-        _handles.set(handle, node);
-        _byNode.set(node, handle);
-        _issued[_issued.length - 1].push(handle);
+        var known = _rootHandles.get(id);
+        if (known != null) {
+            var place = _places.get(known);
+            place.node = node;
+            place.generation = _generation;
+            return known;
+        }
+        var handle = issue(new Place(0, 0, id, node, _generation));
+        _rootHandles.set(id, handle);
         return handle;
     }
 
-    /** The node a handle names, or null once its generation has aged out. **/
-    public static function nodeOf(handle:Int):Dynamic {
-        return handle == 0 ? null : _handles.get(handle);
+    static var _rootHandles = new Map<String, Int>();
+
+    /** A handle for a node's child at an index. **/
+    public static function handleOfChild(parent:Int, index:Int, node:Dynamic):Int {
+        if (node == null) return 0;
+        var key = parent + ":" + index;
+        var known = _childHandles.get(key);
+        if (known != null) {
+            var place = _places.get(known);
+            if (place != null) {
+                place.node = node;
+                place.generation = _generation;
+                return known;
+            }
+        }
+        var handle = issue(new Place(parent, index, null, node, _generation));
+        _childHandles.set(key, handle);
+        return handle;
     }
 
-    /** Close the current generation of handles and drop what has aged out. **/
+    /** One handle per place, so a place asked twice is the same handle. **/
+    static var _childHandles = new Map<String, Int>();
+
+    static function issue(place:Place):Int {
+        var handle = _nextHandle++;
+        _places.set(handle, place);
+        return handle;
+    }
+
+    /** The node at a handle's place in the current tree. **/
+    public static function nodeOf(handle:Int):Dynamic {
+        if (handle == 0) return null;
+        var place = _places.get(handle);
+        if (place == null) return null;
+        if (place.generation == _generation) return place.node;
+
+        var current:Dynamic = if (place.parent == 0) {
+            getRootFor(place.rootId);
+        } else {
+            var parent = nodeOf(place.parent);
+            parent == null || place.index >= getChildCount(parent)
+                ? null
+                : getChild(parent, place.index);
+        };
+        // A place that no longer exists answers what was there. Stale, not
+        // empty: an empty answer is what made the knob snap back.
+        if (current != null) place.node = current;
+        place.generation = _generation;
+        return place.node;
+    }
+
+    /** A new generation: every place resolves afresh on its next read. **/
     static function turnHandles():Void {
-        _issued.push([]);
-        _byNode = new haxe.ds.ObjectMap<Dynamic, Int>();
-        while (_issued.length > GENERATIONS) {
-            for (handle in _issued.shift()) _handles.remove(handle);
-        }
+        _generation++;
     }
 
     /**
@@ -797,5 +857,22 @@ private class CommandSetRecord {
     public function new(id:String, commands:() -> Array<CommandEntry>) {
         this.id = id;
         this.commands = commands;
+    }
+}
+
+/** Where a handle's node was reached from. See `ViewNodeBridge.nodeOf`. **/
+private class Place {
+    public var parent:Int;
+    public var index:Int;
+    public var rootId:Null<String>;
+    public var node:Dynamic;
+    public var generation:Int;
+
+    public function new(parent:Int, index:Int, rootId:Null<String>, node:Dynamic, generation:Int) {
+        this.parent = parent;
+        this.index = index;
+        this.rootId = rootId;
+        this.node = node;
+        this.generation = generation;
     }
 }

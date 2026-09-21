@@ -58,8 +58,9 @@ extern "C" __attribute__((weak)) int __hxcpp_lib_main() { return 0; }
 // and had simply been relocated: non-null, header zeroed, SIGSEGV on the first
 // virtual call.
 //
-// A handle from a generation that has aged out resolves to null, which every
-// ViewNodeBridge accessor already answers "" / 0 / false for. `void*` rather
+// A handle names a PLACE -- a root, or a parent handle and a child index -- and
+// resolves against the current tree, so a closure SwiftUI kept from several
+// rebuilds ago still reaches the control it was built for. `void*` rather
 // than an int32 so the renderer's own code does not change: it passes the
 // thing along opaquely, which is what it always did. Handles start at 1, so a
 // null pointer still reads as "no node" on the Swift side.
@@ -67,9 +68,17 @@ static inline ::Dynamic _asView(void* node) {
     return ::sui::runtime::ViewNodeBridge_obj::nodeOf((int)(intptr_t)node);
 }
 
-// And the other way: a node leaving for the renderer becomes a handle.
-static inline void* _asHandle(::Dynamic node) {
-    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOf(node);
+// And the other way: a node leaving for the renderer becomes a handle, which
+// names the PLACE it was reached from -- a root by id, or a parent handle and
+// a child index -- so that it resolves against whatever tree is current when
+// it is read. See `ViewNodeBridge.nodeOf`.
+static inline void* _asRootHandle(const char* id, ::Dynamic node) {
+    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOfRoot(::String(id), node);
+}
+
+static inline void* _asChildHandle(void* parent, int32_t index, ::Dynamic node) {
+    return (void*)(intptr_t)::sui::runtime::ViewNodeBridge_obj::handleOfChild(
+        (int)(intptr_t)parent, index, node);
 }
 
 
@@ -228,7 +237,7 @@ void* viewnode_get_root(void) {
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRoot();
-        result = _asHandle(root);
+        result = _asRootHandle("body", root);
     } catch (...) {}
     return result;
 }
@@ -239,7 +248,7 @@ void* viewnode_root_for(const char* id) {
     void* result = nullptr;
     try {
         ::Dynamic root = ::sui::runtime::ViewNodeBridge_obj::getRootFor(::String(id));
-        result = _asHandle(root);
+        result = _asRootHandle(id, root);
     } catch (...) {}
     return result;
 }
@@ -323,7 +332,7 @@ void* viewnode_get_child(void* node, int32_t index) {
     void* result = nullptr;
     try {
         ::Dynamic child = ::sui::runtime::ViewNodeBridge_obj::getChild(_asView(node), index);
-        result = _asHandle(child);
+        result = _asChildHandle(node, index, child);
     } catch (...) {}
     return result;
 }
