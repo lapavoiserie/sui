@@ -64,8 +64,12 @@ class Vocabulary {
 			//
 			// Behind `-D mui_views` while the two shapes coexist.
 			#if mui_views
-			viewOf: (tag, given, children, pos) ->
-				nui.macros.Construct.expr(DIALECT, tag, given, children, pos),
+			// Deferred as `LiveProps` would have deferred it, had it been able
+			// to see it: see `LiveProps.deferMarkup`.
+			viewOf: (tag, given, children, pos) -> {
+				var built = nui.macros.Construct.expr(DIALECT, tag, given, children, pos);
+				built == null ? null : sui.macros.LiveProps.deferMarkup(built);
+			},
 			// The canon's nine onto this backend's chain. What SwiftUI has no
 			// equivalent for -- the colours among them, and the reason is not
 			// obvious -- is said out loud. See `sui.nui.Decorate`.

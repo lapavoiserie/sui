@@ -210,6 +210,14 @@ class ViewNodeBridge {
         };
         // A place that no longer exists answers what was there. Stale, not
         // empty: an empty answer is what made the knob snap back.
+        if (tracing()) {
+            if (current == null)
+                Sys.stderr().writeString("[sui] place " + handle + " vanished (was "
+                    + getViewType(place.node) + ")\n");
+            else if (getViewType(current) != getViewType(place.node))
+                Sys.stderr().writeString("[sui] place " + handle + " now " + getViewType(current)
+                    + ", was " + getViewType(place.node) + "\n");
+        }
         if (current != null) place.node = current;
         place.generation = _generation;
         return place.node;
@@ -297,7 +305,7 @@ class ViewNodeBridge {
         // than guessed: a value write is supposed to reach the views that
         // display the cell and rebuild nothing (see `isStructural`).
         _rebuilds++;
-        if (Sys.getEnv("SUI_BRIDGE_TRACE") != null)
+        if (tracing())
             Sys.stderr().writeString("[sui] rebuild #" + _rebuilds + "\n");
         // Reset first: a body can throw, and a scope left open would
         // attribute the next generation's reads to the failed one.
@@ -319,6 +327,11 @@ class ViewNodeBridge {
             sui.runtime.ReadScope.begin();
             root.view = root.content();
             root.structural = sui.runtime.ReadScope.end();
+            // What this root's SHAPE depends on. A cell listed here rebuilds
+            // the tree when written; one that is only displayed should not be.
+            if (tracing() && _rebuilds == 1)
+                Sys.stderr().writeString("[sui] " + root.id + " shape reads: ["
+                    + root.structural.join(", ") + "]\n");
             root.source = new sui.nui.ViewSource(root.view);
             // Force the lazy parts, so a write arriving before the first frame
             // is classified against a complete picture rather than an empty one.
@@ -812,7 +825,16 @@ class ViewNodeBridge {
         on screen follows.
     **/
     public static function setStateValue(name:String, raw:String):Void {
+        if (tracing()) Sys.stderr().writeString("[sui] write " + name + " = " + raw + "\n");
         sui.state.State._applyFromSwift(name, raw);
+    }
+
+    static var _tracing:Null<Bool> = null;
+
+    /** `SUI_BRIDGE_TRACE`, read once. **/
+    static function tracing():Bool {
+        if (_tracing == null) _tracing = Sys.getEnv("SUI_BRIDGE_TRACE") != null;
+        return _tracing;
     }
 
     /** Invoke a Button's action closure directly.

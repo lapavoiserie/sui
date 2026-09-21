@@ -165,40 +165,84 @@ class LiveProps {
 	static function rewrite(e:Expr):Expr {
 		return switch (e.expr) {
 			case ENew(tp, args) if (args.length > 0):
-				var types = ctorArgTypes(tp, e.pos);
-				if (types == null || types.length < args.length) {
-					e.map(rewrite);
-				} else {
-					// A container keeps its identity: never re-run its constructor.
-					var container = false;
-					for (t in types) if (isViewish(t)) container = true;
-					if (container) {
-						e.map(rewrite);
-					} else {
-						var neutral = [];
-						var deferred = false;
-						for (i in 0...args.length) {
-							if (isDeferrableValue(types[i]) && !isConstant(args[i])) {
-								neutral.push(neutralFor(types[i]));
-								deferred = true;
-							} else {
-								neutral.push(args[i]);
-							}
-						}
-						if (!deferred) {
-							e.map(rewrite);
-						} else {
-							var placeholder = {expr: ENew(tp, neutral), pos: e.pos};
-							macro @:pos(e.pos) {
-								var __live = $placeholder;
-								__live.liveBuild = function() return $e;
-								__live;
-							};
-						}
-					}
-				}
+				var deferred = deferNew(tp, args, e, a -> false);
+				deferred != null ? deferred : e.map(rewrite);
 			case _:
 				e.map(rewrite);
+		};
+	}
+
+	/**
+		The deferred form of one constructor call, or null when there is
+		nothing to defer (a container, a constant, a type that is not a view).
+
+		`keep` names arguments that must stay on the initial node whatever their
+		type: a binding NAME is a `String` and not a constant, and deferring it
+		would leave the control with an empty name on the node the renderer
+		reads it from.
+	**/
+	static function deferNew(tp:TypePath, args:Array<Expr>, e:Expr, keep:Expr -> Bool):Null<Expr> {
+		var types = ctorArgTypes(tp, e.pos);
+		if (types == null || types.length < args.length) return null;
+		// A container keeps its identity: never re-run its constructor.
+		for (t in types) if (isViewish(t)) return null;
+
+		var neutral = [];
+		var deferred = false;
+		for (i in 0...args.length) {
+			if (!keep(args[i]) && isDeferrableValue(types[i]) && !isConstant(args[i])) {
+				neutral.push(neutralFor(types[i]));
+				deferred = true;
+			} else {
+				neutral.push(args[i]);
+			}
+		}
+		if (!deferred) return null;
+
+		var placeholder = {expr: ENew(tp, neutral), pos: e.pos};
+		return macro @:pos(e.pos) {
+			var __live = $placeholder;
+			__live.liveBuild = function() return $e;
+			__live;
+		};
+	}
+
+	/**
+		The same deferral, for one control built by `mui`'s markup.
+
+		`apply` rewrites `new Text(...)` inside `body()` -- and runs as a build
+		macro, on the AST as written. A markup screen's `body()` holds a call to
+		`ui(...)` there, not a `new`: the constructors only exist once `ui`
+		expands, while the body is being TYPED, long after this pass looked.
+		So nothing in a markup screen was ever deferred, every displayed value
+		was read during `body()`, and every cell it read became structural.
+
+		The kitchen sink showed what that costs. Its text reads `level`, so
+		each step of a slider drag rebuilt the whole tree -- the slider with it
+		-- five hundred times in one drag. It lagged, and then SwiftUI stopped
+		delivering the drag at all.
+
+		`sui.nui.Vocabulary.viewOf` calls this on each constructor markup
+		emits. Only the call itself: its children are separate `viewOf` calls,
+		each deferred on its own. A binding name -- `sui.nui.Describe.nameOf`,
+		which is how `nui.macros.Construct` hands a cell to a control that holds
+		a name -- is never deferred.
+	**/
+	public static function deferMarkup(e:Expr):Expr {
+		if (RenderPath.isStatic()) return e;
+		return switch (e.expr) {
+			case ENew(tp, args) if (args.length > 0):
+				var deferred = deferNew(tp, args, e, isBindingName);
+				deferred != null ? deferred : e;
+			case _: e;
+		};
+	}
+
+	static function isBindingName(e:Expr):Bool {
+		return switch (e.expr) {
+			case ECall({expr: EField(_, "nameOf")}, _): true;
+			case EParenthesis(inner): isBindingName(inner);
+			case _: false;
 		};
 	}
 
