@@ -68,6 +68,12 @@ class Vocabulary {
 			// to see it: see `LiveProps.deferMarkup`.
 			// A key written in markup reaches the view. See `mui.macros.Backend.Vocabulary.keyed`.
 			keyed: (view, key, pos) -> macro $view.keyed($key),
+			// A tag whose children are DATA -- a Picker's options. See
+			// `mui.macros.Backend.Vocabulary.dataChildren`.
+			dataChildren: (tag) -> {
+				var said = nui.macros.Declarations.childrenFor(DIALECT, tag);
+				said == null ? null : {type: said.type, prop: said.prop, field: said.field};
+			},
 			viewOf: (tag, given, children, pos) -> {
 				var built = nui.macros.Construct.expr(DIALECT, tag, given, children, pos);
 				built == null ? null : sui.macros.LiveProps.deferMarkup(built);

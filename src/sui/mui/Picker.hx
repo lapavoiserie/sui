@@ -14,7 +14,9 @@ package sui.mui;
 class Picker extends sui.ui.Picker {
 	public function new(@:swiftLabel("_") label:String, options:Array<String>,
 			@:swiftLabel("selection") @:swiftBinding selection:PickerBinding) {
-		super(label, selection.unwrap(), [for (option in options) new sui.ui.Text(option)]);
-		properties.set("selectionMode", "index");
+		// The rows and the index are `sui.ui.Picker`'s own shape now -- it took
+		// `Array<View>` and built nothing, so this class built the rows and set
+		// the mode. Both moved down when that class was declared.
+		super(label, selection.unwrap(), options);
 	}
 }

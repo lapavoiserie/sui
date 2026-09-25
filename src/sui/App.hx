@@ -70,7 +70,7 @@ class App {
         override function settings():View {
             return new Form([
                 new Toggle("Dark Mode", "darkMode"),
-                new Picker("Default View", "defaultView", [...]),
+                Picker.rows("Default View", "defaultView", [...]),
             ]);
         }
         ```
