@@ -12,5 +12,13 @@
 --macro sui.macros.SwiftGenerator.register()
 --macro mui.macros.Bind.all()
 --macro sui.kui.Platform.registerWithKui()
+# The markup needs two things, and a project made by `mui init` had neither:
+# the backend's vocabulary, so `ui()` can check a tag against what this backend
+# actually declares, and `mui_views`, so it builds this backend's own controls
+# rather than a `nui.Node` somebody then has to read back. Without the first
+# line a markup screen did not compile at all, naming neither -- which is a
+# poor welcome for the way a UI is meant to be written here.
+--macro sui.nui.Vocabulary.registerWithMui()
+-D mui_views
 --main $MAIN
 -cpp build/cpp
