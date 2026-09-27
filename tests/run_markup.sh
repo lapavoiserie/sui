@@ -4,7 +4,11 @@
 #   ./tests/run_markup.sh
 cd "$(dirname "$0")/.."
 fails=0
-common="-cp src -lib rui -lib nui -lib mui -D mui_backend=sui --macro sui.nui.Vocabulary.registerWithMui()"
+# `-D mui_nodes`: these fixtures read the tree back as `nui.Node` props, and
+# building this backend's own views is the default since 2026-09-27 -- on that
+# route there are no props to read and a two-way control takes the cell, not a
+# value. The views route has its own check beside this one.
+common="-cp src -lib rui -lib nui -lib mui -D mui_backend=sui -D mui_nodes --macro sui.nui.Vocabulary.registerWithMui()"
 
 haxe $common -cp tests/markup -main MarkupCheck --interp || fails=$((fails + 1))
 

@@ -62,8 +62,18 @@ class Vocabulary {
 			// `Describe.nameOf` turns it into the name. There is no callback
 			// to give: writes go back through the Swift binding.
 			//
-			// Behind `-D mui_views` while the two shapes coexist.
-			#if mui_views
+			// **The default since 2026-09-27**, and `-D mui_nodes` is the way
+			// back. It was behind `-D mui_views` while the two shapes
+			// coexisted, on the ground that turning it on by default is a
+			// decision about what markup MEANS rather than a flag to flip
+			// while nobody is looking. That decision is taken: markup is how a
+			// UI is written here, it is checked against this backend's own
+			// declarations, and answering a node the renderer then reads back
+			// was the shape that could not reach half the family.
+			//
+			// `mui_nodes` is for a tree that is going to be SENT -- a Companion
+			// frame, a relayed surface -- where the node IS the point.
+			#if !mui_nodes
 			// Deferred as `LiveProps` would have deferred it, had it been able
 			// to see it: see `LiveProps.deferMarkup`.
 			// A key written in markup reaches the view. See `mui.macros.Backend.Vocabulary.keyed`.

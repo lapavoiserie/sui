@@ -20,7 +20,7 @@ cd "$(dirname "$0")/../.."
 common="-cp src -cp tests/markup-views -lib rui -lib nui -lib mui -D mui_backend=sui"
 fails=0
 
-out=$(haxe $common -D mui_views --macro "sui.nui.Vocabulary.registerWithMui()" \
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-main SuiMarkup --interp 2>&1)
 if echo "$out" | grep -q "built: sui.ui.VStack"; then
 	echo "ok   markup builds sui's own controls"
@@ -39,13 +39,14 @@ else
 	echo "FAIL the toggle is not bound to the cell:"; echo "$out"; fails=$((fails + 1))
 fi
 
-# Without the flag the same source does not even mean the same thing: the node
-# path wants a Bool where the view path wants the cell. Asserted rather than
-# assumed -- a check that passed either way would say nothing.
-out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+# `-D mui_nodes` is the way back, and the same source does not even mean the
+# same thing there: the node path wants a Bool where the view path wants the
+# cell. Asserted rather than assumed -- a check that passed either way would
+# say nothing, and this one is what proves the default really changed.
+out=$(haxe $common -D mui_nodes --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-main SuiMarkup --interp 2>&1)
 if echo "$out" | grep -q "should be Bool"; then
-	echo "ok   and without -D mui_views the node path wants a value, not a cell"
+	echo "ok   and with -D mui_nodes the node path wants a value, not a cell"
 else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
@@ -53,7 +54,7 @@ fi
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.
-out=$(haxe $common -D mui_views --macro "sui.nui.Vocabulary.registerWithMui()" \
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-cp tests/markup-views/refused -main BadDecoration --interp 2>&1)
 if echo "$out" | grep -q 'ne sait pas dessiner "backgroundColor"' \
 		&& echo "$out" | grep -q "honore"; then
