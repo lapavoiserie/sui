@@ -81,23 +81,19 @@ class App extends sui.App {
     **/
     static function muiRoots(app:Dynamic):Array<{id:String, content:() -> sui.View}> {
         var mine:App = cast app;
+        var declared = mine.surfaces();
         var out:Array<{id:String, content:() -> sui.View}> = [];
-        var prefs:Null<mui.surface.SurfaceDecl> = null;
-        for (d in mine.surfaces()) switch (d) {
-            case Tree(mui.surface.SurfaceRole.Preferences, id, _):
-                if (id == "preferences") prefs = d;
-                if (prefs == null) prefs = d;
-            case Tree(mui.surface.SurfaceRole.Auxiliary, id, content):
-                out.push({id: id, content: content});
-            case _:
-        }
-        // Guard before the switch: matching a null enum segfaults under hxcpp
-        // (the lesson nui.PropValueTools already carries). Preferences goes
-        // first so the root order matches the scene order in App.swift.
-        if (prefs != null) switch (prefs) {
-            case Tree(_, id, content): out.unshift({id: id, content: content});
-            case _:
-        }
+        // Preferences first, so the root order matches the scene order in
+        // App.swift. `pickOne` is the shared cardinality-One rule — the
+        // role's default id if declared, else the first — and it also
+        // retires the hxcpp trap this used to carry: it never matches a null
+        // enum, which segfaults (the lesson nui.PropValueTools carries).
+        var prefs = mui.surface.SurfaceDecl.SurfaceDeclTools.pickOne(declared,
+            mui.surface.SurfaceRole.Preferences, "preferences");
+        if (prefs != null) out.push({id: prefs.id, content: prefs.content});
+        for (window in mui.surface.SurfaceDecl.SurfaceDeclTools.treesOf(declared,
+                mui.surface.SurfaceRole.Auxiliary))
+            out.push({id: window.id, content: window.content});
         return out;
     }
 
