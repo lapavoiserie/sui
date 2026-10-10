@@ -8,5 +8,7 @@ class Buttons {
 		var tick:sui.ui.Button = cast ui(<Button label="Marquer la vaisselle comme faite" style="check" checked={true}/>);
 		var plain:sui.ui.Button = cast ui(<Button label="Annuler"/>);
 		Sys.println('buttons: ${save.style} ${skip.style} ${tick.style}/${tick.checked} ${plain.style}/${plain.checked}');
+		var refresh:sui.ui.Button = cast ui(<Button label="Actualiser" icon="refresh"/>);
+		Sys.println('icon: ${refresh.icon} label=${refresh.label}');
 	}
 }
