@@ -81,6 +81,13 @@ if echo "$out" | grep -q "stacks: Leading Top Center"; then
 	echo "ok   a stack takes its canonical alignment from markup, centre by default"
 else
 	echo "FAIL stack alignment:"; echo "$out"; fails=$((fails + 1))
+# A value makes a bar; a ProgressView without one is a spinner.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Progress --interp 2>&1)
+if echo "$out" | grep -q "progress: 0.4 null"; then
+	echo "ok   a ProgressView given a value is a bar, without one a spinner"
+else
+	echo "FAIL progress value:"; echo "$out"; fails=$((fails + 1))
 fi
 
 # A decoration this backend cannot draw is refused BY NAME while compiling.
