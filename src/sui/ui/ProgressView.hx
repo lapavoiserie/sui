@@ -33,11 +33,15 @@ class ProgressView extends View {
     **/
     @:prop public var value:Null<Float>;
 
-    public function new(@:swiftLabel("_") ?label:String, @:swiftLabel("value") @:swiftBinding ?valueBinding:String, @:swiftLabel("total") ?total:Float) {
+    public function new(@:swiftLabel("_") ?label:String, @:swiftLabel("value") @:swiftBinding ?valueBinding:String, @:swiftLabel("total") ?total:Float, ?value:Float) {
         super();
         this.viewType = "ProgressView";
         this.label = label;
         this.valueBinding = valueBinding;
         this.total = total != null ? total : 1.0;
+        // Markup fills declared properties through the constructor, so a
+        // `value` this did not take was dropped: `<ProgressView value={0.4}/>`
+        // drew a spinner.
+        this.value = value;
     }
 }
