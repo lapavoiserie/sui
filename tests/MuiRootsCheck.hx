@@ -35,6 +35,19 @@ class MuiRootsCheck {
 		ok(ViewNodeBridge.getRootFor("glance") == null,
 			"a Glance declaration does NOT mount — the snapshot corner stays unmapped");
 
+		// Status: the panel and the label, each a root.
+		ok(ViewNodeBridge.getRootFor("tray") != null, "the Status panel mounts under its id");
+		var label:Dynamic = ViewNodeBridge.getRootFor("tray#label");
+		ok(label != null && label.viewType == "StatusLabel", "…and its label beside it, as a StatusLabel");
+		ok(label != null && label.title == "Chores" && label.icon == "check" && label.count == 2,
+			"the label carries title, icon and the badge read from @:state");
+		// The badge is a SHAPE read of the label root: writing it rebuilds,
+		// which is how a new count reaches the menu bar.
+		ok(ViewNodeBridge.isStructural("due"), "the badge's cell is structural, so writing it rebuilds the label");
+		app.bump();
+		var after:Dynamic = ViewNodeBridge.getRootFor("tray#label");
+		ok(after != null && after.count == 3, "after a write the label root carries the new count");
+
 		if (failures == 0) {
 			Sys.println("");
 			Sys.println("all good");
@@ -60,4 +73,15 @@ private class MuiRootsApp extends mui.App {
 
 	@:surface(Glance)
 	function glance():mui.View return new sui.View();
+
+	@:state var due:Int = 2;
+
+	public function bump():Void {
+		due = due + 1;
+		ViewNodeBridge.rebuild();
+	}
+
+	@:surface(Status)
+	function tray():mui.surface.Labelled
+		return new mui.surface.Labelled({title: "Chores", icon: Check, badge: due}, () -> new sui.View());
 }

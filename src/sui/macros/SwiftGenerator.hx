@@ -177,6 +177,39 @@ class SwiftGenerator {
         return first;
     }
 
+    /**
+        The Status declaration's stable id, read off the app class's
+        `@:surface` metadata like `preferencesSurfaceId`, and by the same
+        one-cardinality rule: the role's default id ("status") wins, else the
+        first declaration. Null when the app declares none -- no menu bar
+        extra is emitted.
+    **/
+    static function statusSurfaceId(cls:haxe.macro.Type.ClassType):Null<String> {
+        var first:Null<String> = null;
+        var at = cls;
+        while (at != null) {
+            for (field in at.fields.get()) {
+                if (!field.meta.has(":surface")) continue;
+                for (m in field.meta.extract(":surface")) {
+                    if (m.params == null || m.params.length == 0) continue;
+                    switch (m.params[0].expr) {
+                        case EConst(CIdent("Status")):
+                            var id = field.name;
+                            for (i in 1...m.params.length) switch (m.params[i].expr) {
+                                case EConst(CString(s, _)): id = s;
+                                case _:
+                            }
+                            if (id == "status") return id;
+                            if (first == null) first = id;
+                        case _:
+                    }
+                }
+            }
+            at = at.superClass == null ? null : at.superClass.t.get();
+        }
+        return first;
+    }
+
     static function isObservableSubclass(cls:haxe.macro.Type.ClassType):Bool {
         if (cls.name == "Observable" && cls.pack.join(".") == "sui.state") return false;
         var sc = cls.superClass;
@@ -390,6 +423,9 @@ class SwiftGenerator {
         // And for the extra windows: every @:surface(Auxiliary) declaration
         // gets its own macOS window scene, rendered live by id.
         var auxSurfaceIds = dynamicMode ? auxiliarySurfaceIds(cls) : [];
+        // And the menu bar extra: one @:surface(Status) declaration, its
+        // label and its panel each a root rendered live by id.
+        var statusId = dynamicMode ? statusSurfaceId(cls) : null;
 
         // The three ternaries above read "not on the static path", and for
         // years that meant a declaration this backend states it hosts was
@@ -402,6 +438,7 @@ class SwiftGenerator {
             if (preferencesSurfaceId(cls) != null) dropped.push("Preferences");
             if (declaresCommandsSurface(cls)) dropped.push("Commands");
             if (auxiliarySurfaceIds(cls).length > 0) dropped.push("Auxiliary");
+            if (statusSurfaceId(cls) != null) dropped.push("Status");
             if (dropped.length > 0) {
                 Context.error('[SUI] the static SwiftUI path hosts no surface, so this application\'s '
                     + '${dropped.join(", ")} declaration(s) would be silently dropped.\n'
@@ -506,6 +543,23 @@ class SwiftGenerator {
             appSwift.add('        Window("${esc(title)}", id: "${esc(auxId)}") {\n');
             appSwift.add('            DynamicSurfaceView(surfaceId: "${esc(auxId)}")\n');
             appSwift.add("        }\n");
+            appSwift.add("        #endif\n");
+        }
+        // `.window`, not the default `.menu`: a menu is a list of commands,
+        // and a Status panel is a view -- rows with checkboxes, a count, a
+        // button to open the main window. The label is a separate root so its
+        // badge follows its cell (see `sui.runtime.StatusLabelView`).
+        if (statusId != null) {
+            appSwift.add("        #if os(macOS)\n");
+            appSwift.add("        MenuBarExtra {\n");
+            appSwift.add('            DynamicSurfaceView(surfaceId: "${esc(statusId)}")\n');
+            appSwift.add("                .frame(minWidth: 280)\n");
+            appSwift.add("        } label: {\n");
+            // "#label" is `sui.runtime.StatusLabelView.ROOT_SUFFIX`, spelt out:
+            // that class is a runtime view, not something macro context loads.
+            appSwift.add('            SuiStatusLabel(surfaceId: "${esc(statusId)}#label")\n');
+            appSwift.add("        }\n");
+            appSwift.add("        .menuBarExtraStyle(.window)\n");
             appSwift.add("        #endif\n");
         }
         appSwift.add("    }\n");

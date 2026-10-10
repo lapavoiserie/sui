@@ -779,6 +779,11 @@ struct DynamicView: View {
         case "Divider":
             Divider()
 
+        // A Status label met inside a tree -- only `SuiStatusLabel` should see
+        // one. Its title, so it is not nothing.
+        case "StatusLabel":
+            Text(node.property("title"))
+
         case "Toggle", "CheckBox":
             if node.bindingName != nil {
                 SuiToggle(node: node)
@@ -1945,6 +1950,48 @@ struct DynamicSurfaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
             withAnimation { reloadCount += 1 }
+        }
+    }
+}
+
+/// The label of a menu bar extra (`@:surface(Status)`): its icon, and its
+/// count beside it when there is one, or its title when there is no icon.
+///
+/// AppKit draws a `MenuBarExtra` label into a status item, which takes a text
+/// and an image and not an arbitrary view -- so this builds exactly one
+/// `Label`, `Image` or `Text` from the label root's properties rather than
+/// rendering the root as a tree. It follows the root the way
+/// `DynamicSurfaceView` does: a structural rebuild (the badge's cell was
+/// written) re-reads it.
+struct SuiStatusLabel: View {
+    let surfaceId: String
+    @State private var reloadCount = 0
+
+    init(surfaceId: String) {
+        self.surfaceId = surfaceId
+        _ = _suiRuntimeBooted
+    }
+
+    var body: some View {
+        let _ = reloadCount
+        let node = viewnode_root_for(surfaceId).map { ViewNode(pointer: $0) }
+        let title = node?.property("title") ?? ""
+        let badge = Int(node?.property("badge") ?? "") ?? 0
+        let symbol = SuiIcons.symbols[node?.property("icon") ?? ""]
+        Group {
+            if let symbol = symbol {
+                if badge > 0 {
+                    Label(String(badge), systemImage: symbol).labelStyle(.titleAndIcon)
+                } else {
+                    Image(systemName: symbol)
+                }
+            } else {
+                Text(badge > 0 ? "\(title) \(badge)" : title)
+            }
+        }
+        .accessibilityLabel(badge > 0 ? "\(title), \(badge)" : title)
+        .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
+            reloadCount += 1
         }
     }
 }
