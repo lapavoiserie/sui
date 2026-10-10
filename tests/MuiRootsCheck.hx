@@ -60,6 +60,8 @@ class MuiRootsCheck {
 		ok(!sui.mui.Present.show(Auxiliary, "nowhere"), "an id nothing declares is refused");
 		ok(!sui.mui.Present.show(Glance), "a Glance is not a place to go");
 		ok(ViewNodeBridge.takePresentation() == "", "and a refusal queues nothing");
+		sui.mui.Present.quit();
+		ok(ViewNodeBridge.takePresentation() == "quit\t", "Present.quit() queues the end of the app");
 
 		if (failures == 0) {
 			Sys.println("");

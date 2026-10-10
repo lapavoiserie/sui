@@ -1888,6 +1888,12 @@ func suiPresentRequested() {
     if requests.isEmpty { return }
     DispatchQueue.main.async { MainActor.assumeIsolated {
         #if os(macOS)
+        // Quitting outranks bringing anything forward: nothing would be left
+        // to look at.
+        if requests.contains(where: { $0.kind == "quit" }) {
+            NSApp.terminate(nil)
+            return
+        }
         // Forward with it: asked from a status panel, this app is not the
         // active one, and a window raised behind another app's is a button
         // that did nothing.
