@@ -173,9 +173,13 @@ class State<T> extends rui.state.State<T> {
     /** Mirror a value into Swift's `AppState` through the C bridge. **/
     private function notifySwift(v:T):Void {
         var k = name;
-        var s = if (Std.isOfType(v, Array)) ""
-            else if (Std.isOfType(v, Float)) _formatFloatPosix(cast v)
-            else Std.string(v);
+        // Only a scalar is worth sending: Swift mirrors Int, Float, Bool and
+        // String cells, and reads anything else back through the bridge. A
+        // list of records stringified on every write would be work nobody
+        // reads -- the notification itself is what bumps the cell.
+        var s = if (Std.isOfType(v, Float)) _formatFloatPosix(cast v)
+            else if (v == null || Std.isOfType(v, Bool) || Std.isOfType(v, String)) Std.string(v)
+            else "";
         untyped __cpp__('_hxsui_notify_swift({0}.utf8_str(), {1}.utf8_str())', k, s);
     }
     #end
