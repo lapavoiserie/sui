@@ -493,7 +493,10 @@ class SwiftGenerator {
         }
 
         appSwift.add("\n    var body: some Scene {\n");
-        appSwift.add('        WindowGroup("${esc(appName)}") {\n');
+        // An id, so `mui.surface.Present.show(Primary)` can find the window
+        // again or open it if it was closed: "sui-primary" is
+        // `SuiPresenter.primaryId` in DynamicView.swift, spelt out.
+        appSwift.add('        WindowGroup("${esc(appName)}", id: "sui-primary") {\n');
         appSwift.add("            ContentView()\n");
         appSwift.add("        }\n");
         if (hasGlance) {

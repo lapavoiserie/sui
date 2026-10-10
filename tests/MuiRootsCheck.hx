@@ -48,6 +48,19 @@ class MuiRootsCheck {
 		var after:Dynamic = ViewNodeBridge.getRootFor("tray#label");
 		ok(after != null && after.count == 3, "after a write the label root carries the new count");
 
+		// Present: a request is queued for the host, named by kind and id, and
+		// only for what is a place to go and exists.
+		while (ViewNodeBridge.takePresentation() != "") {}
+		ok(sui.mui.Present.show(Primary), "Present.show(Primary) is accepted");
+		ok(ViewNodeBridge.takePresentation() == "primary\t", "…and queues the main window");
+		ok(sui.mui.Present.show(Preferences), "Present.show(Preferences) is accepted");
+		ok(ViewNodeBridge.takePresentation() == "preferences\tprefs", "…and names the declaration");
+		ok(sui.mui.Present.show(Auxiliary, "gauges"), "Present.show(Auxiliary, id) is accepted");
+		ok(ViewNodeBridge.takePresentation() == "window\tgauges", "…and names that window, not the first");
+		ok(!sui.mui.Present.show(Auxiliary, "nowhere"), "an id nothing declares is refused");
+		ok(!sui.mui.Present.show(Glance), "a Glance is not a place to go");
+		ok(ViewNodeBridge.takePresentation() == "", "and a refusal queues nothing");
+
 		if (failures == 0) {
 			Sys.println("");
 			Sys.println("all good");
