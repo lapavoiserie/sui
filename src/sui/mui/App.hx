@@ -19,11 +19,14 @@ package sui.mui;
 // backend installs a describer and *could* serve one. The networked corner
 // stays off until the build asks for it with -D mui_cafos.
 //
+// Status is a menu bar extra: its label in the menu bar, its panel a live
+// root under it.
+//
 // Preferences is the Settings scene (⌘,), Auxiliary the extra windows,
 // Commands the menu bar, Glance a WidgetKit widget — sampled, since the
 // widget is a separate binary the application cannot reach into; Companion
 // rides the describer installed below.
-@:hostedRoles(Preferences, Auxiliary, Commands, Glance, Companion)
+@:hostedRoles(Preferences, Auxiliary, Commands, Glance, Companion, Status)
 @:autoBuild(mui.macros.Surfaces.build())
 @:autoBuild(mui.macros.Intents.build())
 class App extends sui.App {
@@ -94,6 +97,19 @@ class App extends sui.App {
         for (window in mui.surface.SurfaceDecl.SurfaceDeclTools.treesOf(declared,
                 mui.surface.SurfaceRole.Auxiliary))
             out.push({id: window.id, content: window.content});
+        // The menu bar extra: its panel is a root like the others, and its
+        // label is one more, so a badge read from @:state is a read this
+        // root's rebuild tracks -- write the cell, and the menu bar changes.
+        var status = mui.surface.SurfaceDecl.SurfaceDeclTools.pickOneLabelled(declared,
+            mui.surface.SurfaceRole.Status, "status");
+        if (status != null) {
+            out.push({id: status.id, content: status.content});
+            final label = status.label;
+            out.push({id: status.id + sui.runtime.StatusLabelView.ROOT_SUFFIX, content: () -> {
+                var l = label();
+                return (new sui.runtime.StatusLabelView(l.title, l.icon, l.badge) : sui.View);
+            }});
+        }
         return out;
     }
 
