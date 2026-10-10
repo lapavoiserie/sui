@@ -37,14 +37,22 @@ class Picker extends View {
     /** The rows, as text. See the class doc. **/
     @:children("Text", "text") public var options:Array<String>;
 
+    /**
+        How to present it: `segmented` (`nui.Presentation.SEGMENTED`) for the
+        choices side by side, as a row of buttons. A hint: absent or unknown,
+        an ordinary picker.
+    **/
+    @:prop public var style:Null<String>;
+
     public function new(@:swiftLabel("_") label:String,
             @:swiftLabel("selection") @:swiftBinding selectionBinding:String,
-            options:Array<String>) {
+            options:Array<String>, ?style:String) {
         super();
         this.viewType = "Picker";
         this.label = label;
         this.selectionBinding = selectionBinding;
         this.options = options == null ? [] : options;
+        this.style = style;
         this.children = [for (option in this.options) new Text(option)];
         // The canon speaks positions; the renderer tags each row with its own.
         properties.set("selectionMode", "index");

@@ -2128,6 +2128,17 @@ struct SuiPicker: View {
     let node: ViewNode
 
     var body: some View {
+        // `segmented` is the canon's hint for a few short choices side by
+        // side; anything else is the platform's ordinary picker.
+        if node.property("style").lowercased() == "segmented" {
+            choices.pickerStyle(.segmented)
+        } else {
+            choices
+        }
+    }
+
+    @ViewBuilder
+    private var choices: some View {
         if node.property("selectionMode") == "index" {
             let bound = node.boundValue
             Picker(node.property("label"), selection: Binding<Int>(

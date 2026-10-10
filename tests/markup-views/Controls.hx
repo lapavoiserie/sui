@@ -24,6 +24,9 @@ class Controls {
 				<Divider/>
 				<Button label="Réassigner"/>
 			</Menu>
+			<Picker label="Période" selectedIndex={interval} style="segmented">
+				<Text text="4 sem."/><Text text="Semaine"/><Text text="Mois"/>
+			</Picker>
 			<Stepper label="Toutes les" value={interval} min={1} max={999}/>
 			<DateInput label="Première échéance" value={due} min="2026-01-01"/>
 			<Tabs selectedIndex={section} style="sidebar">
@@ -62,6 +65,9 @@ class Controls {
 			case "sui.ui.Menu":
 				var m:sui.ui.Menu = cast v;
 				'menu: ${m.label} items=${[for (c in m.children) Type.getClassName(Type.getClass(c))].join(",")}';
+			case "sui.ui.Picker":
+				var p:sui.ui.Picker = cast v;
+				'picker: ${p.label} style=${p.style} options=${p.options.join("|")}';
 			case "sui.ui.Stepper":
 				var st:sui.ui.Stepper = cast v;
 				'stepper: ${st.label} bound=${st.valueBinding} ${st.minValue}..${st.maxValue} step=${st.step}';

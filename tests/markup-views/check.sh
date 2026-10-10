@@ -66,6 +66,7 @@ expect "section: Récurrence children=1" "a Section carries its title and its ro
 expect "divider" "a Divider is built"
 expect "icon: mic label=Micro" "an Icon carries its name and its spoken label"
 expect "menu: Actions items=sui.ui.Button,sui.ui.Divider,sui.ui.Button" "a Menu's items are ordinary buttons and dividers"
+expect "picker: Période style=segmented options=4 sem.|Semaine|Mois" "a Picker carries the segmented hint"
 expect "stepper: Toutes les bound=interval 1..999 step=1" "a Stepper binds its cell by name, with its bounds and a default step"
 expect "date: Première échéance bound=due min=2026-01-01 max=null" "a DateInput binds a civil-day cell, with optional bounds"
 expect "tabs: style=sidebar bound=section pages=0,1,0" "only the selected tab carries its page"
