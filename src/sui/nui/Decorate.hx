@@ -36,9 +36,14 @@ class Decorate {
 			var f = m.floats;
 			switch (m.type) {
 				case nui.Modifiers.PADDING:
-					// One float is every edge; SwiftUI's edge insets are not
-					// exposed here, so the first is taken.
-					if (f != null && f.length > 0) view.padding(f[0]);
+					// One float is every edge; four are top, right, bottom,
+					// left. Taking the first of four was wrong twice over:
+					// `{top: 0, left: 14}` became no padding at all -- and the
+					// renderer then drew a zero as the platform's default.
+					if (f != null && f.length >= 4)
+						view.modifierChain.push(sui.modifiers.ViewModifier.PaddingInsets(f[0], f[1], f[2], f[3]));
+					else if (f != null && f.length > 0)
+						view.padding(f[0]);
 
 				case nui.Modifiers.OPACITY:
 					if (f != null && f.length > 0) view.opacity(f[0]);

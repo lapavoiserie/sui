@@ -63,6 +63,15 @@ else
 	echo "FAIL backgroundColor was not refused clearly:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# A padding by edges keeps every edge, and a zero stays a zero.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Paddings --interp 2>&1)
+if echo "$out" | grep -q "edges: PaddingInsets(0,4,0,14)" && echo "$out" | grep -q "round: Padding(8)"; then
+	echo "ok   a padding by edges keeps all four, and one value is every edge"
+else
+	echo "FAIL padding:"; echo "$out"; fails=$((fails + 1))
+fi
+
 echo ""
 [ "$fails" -eq 0 ] && echo "all good" || echo "$fails failed"
 exit "$fails"

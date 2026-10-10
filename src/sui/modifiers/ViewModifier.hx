@@ -11,6 +11,8 @@ enum ViewModifier {
     PaddingDefault;
     Padding(value:Float);
     PaddingEdges(edges:Edge, value:Float);
+    /** Each edge its own, in the canon's order: top, right, bottom, left. **/
+    PaddingInsets(top:Float, right:Float, bottom:Float, left:Float);
     Frame(width:Null<Float>, height:Null<Float>, alignment:Null<Alignment>);
     FillWidth;
     FillHeight;
