@@ -26,9 +26,11 @@ class Colors {
 	public static function say(colour:Null<ColorValue>):Null<Wire> {
 		if (colour == null) return null;
 		return switch (colour) {
-			case Primary | Accent: Wire.role(Role.Accent);
-			case Secondary: Wire.role(Role.Muted);
+			case Primary | Accent: Wire.role(nui.Role.Accent);
+			case Secondary: Wire.role(nui.Role.Muted);
 			case Custom(hex): Wire.hex(hex);
+			// A role written as one crosses as one.
+			case Role(name): Wire.role(cast name);
 
 			// Conventional components: a name resolves to nothing
 			// per-platform, so it cannot cross as one. Same call `cui` and

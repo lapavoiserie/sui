@@ -344,7 +344,7 @@ struct SuiIcon: View {
             Image(systemName: symbol).accessibilityLabel(spoken)
         } else if SuiImageLoader.symbolExists(name) {
             Image(systemName: name)
-                .foregroundStyle(Color(suiHex: String(cString: viewnode_theme_accent())) ?? .primary)
+                .foregroundStyle(suiAppAccent() ?? .primary)
                 .accessibilityLabel(spoken)
         } else {
             Text(spoken)
@@ -1017,6 +1017,20 @@ struct DynamicView: View {
 
             case "Background":
                 result = AnyView(result.background(suiColorValue(node.modifierString(at: i))))
+
+            // The canon's `backgroundColor` with its radius, and its `border`:
+            // drawn behind and over the view, clipping nothing.
+            case "Fill":
+                let fill = suiColorValue(node.modifierString(at: i, param: 0))
+                let radius = CGFloat(node.modifierFloat(at: i, param: 1))
+                result = AnyView(result.background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill)))
+
+            case "Stroke":
+                let stroke = suiColorValue(node.modifierString(at: i, param: 0))
+                let width = CGFloat(node.modifierFloat(at: i, param: 1))
+                let radius = CGFloat(node.modifierFloat(at: i, param: 2))
+                result = AnyView(result.overlay(RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(stroke, lineWidth: max(width, 0.5))))
 
             case "Opacity":
                 let value = node.modifierFloat(at: i)
@@ -1918,7 +1932,7 @@ struct HotReloadRootView: View {
         let _ = reloadCount
         let root = ViewNode(pointer: viewnode_get_root())
         // Tint native controls with the theme accent (surface primaryColor).
-        let accent = Color(suiHex: String(cString: viewnode_theme_accent()))
+        let accent = suiAppAccent()
         DynamicView(node: root)
             // Constant: there is one root, and it stays the root. Keying it on
             // the node meant a new tree replaced the whole hierarchy.
@@ -1968,7 +1982,7 @@ struct DynamicSurfaceView: View {
         // Read reloadCount so a reload re-evaluates body — not as identity;
         // the stable id below lets SwiftUI diff instead of tearing down.
         let _ = reloadCount
-        let accent = Color(suiHex: String(cString: viewnode_theme_accent()))
+        let accent = suiAppAccent()
         Group {
             if let root = viewnode_root_for(surfaceId) {
                 DynamicView(node: ViewNode(pointer: root))
@@ -2393,6 +2407,56 @@ extension Color {
     }
 }
 
+/// The application's accent (`ViewNodeBridge.setAccent`), light and dark, as
+/// one colour the system switches with the appearance -- or nil when the
+/// application set none, so the person's own accent applies.
+func suiAppAccent() -> Color? {
+    guard let light = Color(suiHex: String(cString: viewnode_theme_accent())) else { return nil }
+    guard let dark = Color(suiHex: String(cString: viewnode_theme_accent_dark())) else { return light }
+    #if canImport(AppKit)
+    return Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .vibrantDark, .accessibilityHighContrastDarkAqua]) != nil
+            ? NSColor(dark) : NSColor(light)
+    })
+    #else
+    return Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(dark) : UIColor(light)
+    })
+    #endif
+}
+
+/// A canon role (`nui.Role`) as Apple's own semantic colour.
+///
+/// Semantic rather than a number, so each one follows light and dark mode and
+/// increased contrast with nothing asked: `.red` is not `#FF0000` here, and the
+/// surface and border are the platform's own window and separator colours.
+/// `accent` is the application's accent when it set one
+/// (`ViewNodeBridge.setAccent`) -- a brand colour -- else the person's.
+func suiRoleColor(_ role: String) -> Color {
+    switch role.lowercased() {
+    case "accent":
+        return suiAppAccent() ?? .accentColor
+    case "danger": return .red
+    case "warning": return .orange
+    case "success": return .green
+    case "text": return .primary
+    case "muted": return .secondary
+    case "surface":
+        #if canImport(AppKit)
+        return Color(nsColor: .controlBackgroundColor)
+        #else
+        return Color(uiColor: .secondarySystemBackground)
+        #endif
+    case "border":
+        #if canImport(AppKit)
+        return Color(nsColor: .separatorColor)
+        #else
+        return Color(uiColor: .separator)
+        #endif
+    default: return .primary
+    }
+}
+
 /// A sui `ColorValue`, by the name `sui.nui.ViewSource` gives it.
 ///
 /// Constructors, not hex: `Red`, `Primary`, and `Custom(#7c3aed)` carrying its
@@ -2408,6 +2472,13 @@ func suiColorValue(_ raw: String) -> Color {
     if name.hasPrefix("Custom(") && name.hasSuffix(")") {
         let hex = String(name.dropFirst("Custom(".count).dropLast())
         return Color(suiHex: hex) ?? .primary
+    }
+    // A canon role (`ColorValue.Role`), also as the wire spells it.
+    if name.hasPrefix("Role(") && name.hasSuffix(")") {
+        return suiRoleColor(String(name.dropFirst("Role(".count).dropLast()))
+    }
+    if name.hasPrefix("role:") {
+        return suiRoleColor(String(name.dropFirst("role:".count)))
     }
     switch name {
     case "Primary":   return .primary

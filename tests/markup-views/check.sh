@@ -100,17 +100,32 @@ if echo "$out" | grep -q "frame: Frame 70,null,null"; then
 else
 	echo "FAIL width frame:"; echo "$out"; fails=$((fails + 1))
 fi
+# The colours: a role stays a role on the view and across the wire; a
+# background keeps its radius, a border its width and radius.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Colours --interp 2>&1)
+for want in "chain: ForegroundColor(Role(danger))" \
+		"Fill(Role(surface),10) | Stroke(Role(border),1,10)" \
+		"chain: ForegroundColor(Custom(#16319f))" \
+		"described: backgroundColor=role:surface/10 | border=role:border/1,10"; do
+	if echo "$out" | grep -qF "$want"; then
+		echo "ok   colour: $want"
+	else
+		echo "FAIL colour: expected $want"; echo "$out"; fails=$((fails + 1))
+	fi
+done
+
 
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.
 out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-cp tests/markup-views/refused -main BadDecoration --interp 2>&1)
-if echo "$out" | grep -q 'ne sait pas dessiner "backgroundColor"' \
+if echo "$out" | grep -q 'ne sait pas dessiner "flex"' \
 		&& echo "$out" | grep -q "honore"; then
 	echo "ok   a decoration it cannot draw is refused, and the message lists what it can"
 else
-	echo "FAIL backgroundColor was not refused clearly:"; echo "$out"; fails=$((fails + 1))
+	echo "FAIL flex was not refused clearly:"; echo "$out"; fails=$((fails + 1))
 fi
 
 echo ""
