@@ -123,6 +123,14 @@ if echo "$out" | grep -q "buttons: primary plain check/true null/false"; then
 	echo "ok   a Button carries its style hint, and a check whether it is ticked"
 else
 	echo "FAIL button styles:"; echo "$out"; fails=$((fails + 1))
+# A screen's commands are a Toolbar of ordinary controls.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Toolbars --interp 2>&1)
+if echo "$out" | grep -q "toolbar: Aujourd'hui sui.ui.Button,sui.ui.Button"; then
+	echo "ok   a Toolbar carries its title and ordinary controls"
+else
+	echo "FAIL toolbar:"; echo "$out"; fails=$((fails + 1))
+
 fi
 
 # A decoration this backend cannot draw is refused BY NAME while compiling.
