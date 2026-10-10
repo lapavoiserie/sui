@@ -506,15 +506,18 @@ struct DynamicView: View {
     @ViewBuilder
     private func renderContent() -> some View {
         switch node.viewType {
+        // `alignment` crosses as the enum's constructor (`Leading`) from a
+        // stack built by hand, and as the canonical word from markup or a
+        // received tree; both read the same here.
         case "VStack":
-            VStack(spacing: spacingFromProperties()) {
+            VStack(alignment: node.horizontalAlignment, spacing: spacingFromProperties()) {
                 ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
                     DynamicView(node: child).id(child.identity(at: index))
                 }
             }
 
         case "HStack":
-            HStack(spacing: spacingFromProperties()) {
+            HStack(alignment: node.verticalAlignment, spacing: spacingFromProperties()) {
                 ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
                     DynamicView(node: child).id(child.identity(at: index))
                 }
@@ -2290,6 +2293,30 @@ struct SuiCivilDatePicker: View {
         }
         .environment(\.timeZone, ViewNode.utc)
         .environment(\.calendar, ViewNode.civilCalendar)
+    }
+}
+
+extension ViewNode {
+    /// A stack's `alignment`, whichever way it was written: the canonical
+    /// word (`leading`, from markup or a wire) or the enum's constructor.
+    var horizontalAlignment: HorizontalAlignment {
+        let said = (property("align").isEmpty ? property("alignment") : property("align")).lowercased()
+        switch said {
+        case "leading": return .leading
+        case "trailing": return .trailing
+        default: return .center
+        }
+    }
+
+    var verticalAlignment: VerticalAlignment {
+        let said = (property("align").isEmpty ? property("alignment") : property("align")).lowercased()
+        switch said {
+        case "top": return .top
+        case "bottom": return .bottom
+        case "firsttextbaseline": return .firstTextBaseline
+        case "lasttextbaseline": return .lastTextBaseline
+        default: return .center
+        }
     }
 }
 

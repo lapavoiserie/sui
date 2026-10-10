@@ -74,6 +74,14 @@ expect "sheet: Nouvelle tâche bound=editing children=0" "a sheet not presented 
 expect "confirm: Archiver ? bound=archiving Archiver/Annuler destructive=true" "a ConfirmDialog carries both of the application's labels"
 expect "confirm ran: true" "and its act is the closure markup gave it"
 expect "structural: editing,section" "a selection and a presented flag are read as shape, so writing them rebuilds"
+# A stack's alignment is the parent's business: a property, not a modifier.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Stacks --interp 2>&1)
+if echo "$out" | grep -q "stacks: Leading Top Center"; then
+	echo "ok   a stack takes its canonical alignment from markup, centre by default"
+else
+	echo "FAIL stack alignment:"; echo "$out"; fails=$((fails + 1))
+fi
 
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
