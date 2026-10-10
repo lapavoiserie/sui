@@ -537,25 +537,7 @@ struct DynamicView: View {
             styledText(node)
 
         case "Button":
-            // An icon from the shared vocabulary beside the label, or alone --
-            // named by the icon for VoiceOver when the button has no text.
-            if let symbol = SuiIcons.symbols[node.property("icon")] {
-                let label = node.buttonLabel
-                Button {
-                    node.invokeAction()
-                } label: {
-                    if label.isEmpty {
-                        Image(systemName: symbol)
-                            .accessibilityLabel(node.property("icon").replacingOccurrences(of: "-", with: " "))
-                    } else {
-                        Label(label, systemImage: symbol)
-                    }
-                }
-            } else {
-                Button(node.buttonLabel) {
-                    node.invokeAction()
-                }
-            }
+            SuiButton(node: node)
 
         case "Spacer":
             Spacer()
@@ -1416,6 +1398,66 @@ struct SuiConfirmDialog: View {
                     Text(message)
                 }
             }
+    }
+}
+
+/// A Button, in the style the canon's hint asks for (`nui.Presentation`).
+///
+/// - `primary`: `.borderedProminent`, which macOS fills with the tint -- the
+///   application's accent -- and which is the only kind of button the platform
+///   draws in it; an ordinary one stays grey except while it has focus.
+/// - `plain`: `.borderless`, for a row's secondary acts.
+/// - `check`: a round mark, ticked when `checked`, its label spoken rather than
+///   shown. Coloured like text, so `foregroundColor` on it says what it is for
+///   (the accent, a late chore's danger).
+///
+/// An icon from the shared vocabulary sits beside the label, or alone, named
+/// by the icon for VoiceOver when the button has no text.
+struct SuiButton: View {
+    let node: ViewNode
+
+    var body: some View {
+        let style = node.property("style").lowercased()
+        if style == "check" {
+            let checked = node.property("checked") == "true"
+            Button {
+                node.invokeAction()
+            } label: {
+                Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .regular))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(node.buttonLabel)
+            .accessibilityAddTraits(checked ? .isSelected : [])
+        } else if style == "primary" {
+            content.buttonStyle(.borderedProminent)
+        } else if style == "plain" {
+            content.buttonStyle(.borderless)
+        } else {
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let symbol = SuiIcons.symbols[node.property("icon")] {
+            let label = node.buttonLabel
+            Button {
+                node.invokeAction()
+            } label: {
+                if label.isEmpty {
+                    Image(systemName: symbol)
+                        .accessibilityLabel(node.property("icon").replacingOccurrences(of: "-", with: " "))
+                } else {
+                    Label(label, systemImage: symbol)
+                }
+            }
+        } else {
+            Button(node.buttonLabel) {
+                node.invokeAction()
+            }
+        }
     }
 }
 

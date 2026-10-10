@@ -23,11 +23,24 @@ class Button extends View {
     /** The act itself: it crosses as a key, never as this closure. **/
     @:action("onClick") public var action:Null<() -> Void>;
 
-    public function new(label:String, ?action:() -> Void) {
+    /**
+        How much it stands out (`nui.Presentation`): `primary` -- the act the
+        screen is for, prominent in the accent; `plain` -- no chrome, for a
+        row's secondary acts; `check` -- a round tick-off mark whose label is
+        spoken, not shown. A hint: anything else is an ordinary button.
+    **/
+    @:prop public var style:Null<String>;
+
+    /** For `style="check"`: whether it is drawn ticked. The application's to say. **/
+    @:prop public var checked:Bool;
+
+    public function new(label:String, ?action:() -> Void, ?style:String, checked:Bool = false) {
         super();
         this.viewType = "Button";
         this.label = label;
         this.action = action;
+        this.style = style;
+        this.checked = checked;
     }
 
     /** Create a button with a custom view label. **/
