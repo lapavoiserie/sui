@@ -130,8 +130,9 @@ if app=$(emitted_app PathFixture); then
 	else
 		echo "  ok   no declaration, no menu bar"
 	fi
-	# grep for the id: marker, not 'Window(' — WindowGroup(" contains it.
-	if echo "$app" | grep -q 'id: "'; then
+	# grep for the id: marker, not 'Window(' — WindowGroup(" contains it; and
+	# leave out the main window's own id, which every app has.
+	if echo "$app" | grep -v '"sui-primary"' | grep -q 'id: "'; then
 		echo "  FAIL a window scene was emitted for an app declaring none"; failures=1
 	else
 		echo "  ok   no declaration, no extra window scene"

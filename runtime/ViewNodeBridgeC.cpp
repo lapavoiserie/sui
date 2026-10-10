@@ -249,6 +249,15 @@ void viewnode_set_data(const char* path, const char* value) {
 }
 
 // The theme accent (primaryColor hex) to tint native controls with.
+const char* viewnode_take_presentation(void) {
+    HaxeCall _call;
+    const char* result = "";
+    try {
+        result = keep(::sui::runtime::ViewNodeBridge_obj::takePresentation());
+    } catch (...) {}
+    return result;
+}
+
 const char* viewnode_theme_accent(void) {
     HaxeCall _call;
     const char* result = "";

@@ -42,6 +42,8 @@ class App extends sui.App {
         // fail for a capability it never used. An application that *does* ask is
         // refused at the field, by name.
         mui.state.Durable.install();
+        // For `sui.mui.Present`, which answers from what this app declared.
+        current = this;
         // The bridge is sui core and may not import mui, so the mui layer
         // installs the hooks that turn declarations into extra roots and
         // command sets. Every mui app sets the same statics — idempotent by
@@ -64,6 +66,9 @@ class App extends sui.App {
         // down with it. The host publishes when the application leaves the
         // foreground, and whenever the application asks.
     }
+
+    /** The running application, once constructed (`sui.mui.Present`). **/
+    public static var current(default, null):Null<App>;
 
     /** Set the application title. Maps to sui's appName. **/
     public var appTitle(get, set):String;

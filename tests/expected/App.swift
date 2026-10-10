@@ -9,7 +9,7 @@ struct TestSwiftGenApp: App {
 
 
     var body: some Scene {
-        WindowGroup("TestApp") {
+        WindowGroup("TestApp", id: "sui-primary") {
             ContentView()
         }
     }

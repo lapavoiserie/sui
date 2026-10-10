@@ -83,6 +83,7 @@ struct ViewNode {
     func invokeAction() {
         guard let ptr = pointer else { return }
         viewnode_invoke_action(ptr)
+        suiPresentRequested()
     }
 
     func property(_ key: String) -> String {
@@ -1994,6 +1995,7 @@ private func _suiRequestPump() {
         if viewnode_poll() != 0 {
             NotificationCenter.default.post(name: .viewTreeDidReload, object: nil)
         }
+        suiPresentRequested()
     }
 }
 
@@ -2030,11 +2032,13 @@ struct HotReloadRootView: View {
             // the node meant a new tree replaced the whole hierarchy.
             .id("sui-root")
             .tint(accent)
+            .background(SuiPresenterHost())
             .onReceive(pollTimer) { _ in
                 // Animate tree updates: with stable node identities, SwiftUI
                 // interpolates layout changes (a card moving lanes, a list
                 // reordering) instead of snapping.
                 if viewnode_poll() != 0 { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { reloadCount += 1 } }
+                suiPresentRequested()
             }
             .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
                 withAnimation { reloadCount += 1 }
@@ -2082,11 +2086,101 @@ struct DynamicSurfaceView: View {
                     .tint(accent)
             }
         }
+        .background(SuiPresenterHost())
         .onReceive(NotificationCenter.default.publisher(for: .viewTreeDidReload)) { _ in
             withAnimation { reloadCount += 1 }
         }
     }
 }
+
+// MARK: Bringing a surface forward (`mui.surface.Present`)
+
+/// What opens and raises windows, kept from whichever root last appeared.
+///
+/// `openWindow` and `openSettings` are environment values: only a view can
+/// read them, and the request comes from Haxe, which has no view. So every
+/// root carries a `SuiPresenterHost` that hands them here. Any root will do --
+/// they open scenes of the one app -- and a status panel's is the one alive
+/// when the main window has been closed, which is when this matters most.
+@MainActor
+enum SuiPresenter {
+    /// The main WindowGroup's id, as the generator writes it.
+    static let primaryId = "sui-primary"
+    static var openWindow: OpenWindowAction?
+    static var openSettings: OpenSettingsAction?
+}
+
+struct SuiPresenterHost: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                SuiPresenter.openWindow = openWindow
+                SuiPresenter.openSettings = openSettings
+            }
+    }
+}
+
+/// Act on what the application asked for, now that the closure that asked has
+/// returned. On the next turn of the main loop, so a menu bar panel that was
+/// pressed has finished handling its click before the app comes forward.
+///
+/// Not main-actor isolated: it is called from a node's action, which Swift
+/// does not know runs on the main thread. It does -- every entry into Haxe
+/// does -- and the acting half says so.
+func suiPresentRequested() {
+    var requests: [(kind: String, id: String)] = []
+    while true {
+        let item = String(cString: viewnode_take_presentation())
+        if item.isEmpty { break }
+        let parts = item.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+        requests.append((String(parts[0]), parts.count > 1 ? String(parts[1]) : ""))
+    }
+    if requests.isEmpty { return }
+    DispatchQueue.main.async { MainActor.assumeIsolated {
+        #if os(macOS)
+        // Forward with it: asked from a status panel, this app is not the
+        // active one, and a window raised behind another app's is a button
+        // that did nothing.
+        NSApp.activate()
+        for request in requests {
+            switch request.kind {
+            case "primary":
+                if !suiRaiseWindow(SuiPresenter.primaryId) {
+                    SuiPresenter.openWindow?(id: SuiPresenter.primaryId)
+                }
+            case "preferences":
+                SuiPresenter.openSettings?()
+            case "window":
+                if !suiRaiseWindow(request.id) {
+                    SuiPresenter.openWindow?(id: request.id)
+                }
+            default:
+                break
+            }
+        }
+        #endif
+    } }
+}
+
+#if os(macOS)
+/// Raise a scene's window that is still there -- on screen, or in the Dock --
+/// rather than open a second one. SwiftUI names a scene's windows after its
+/// id ("sui-primary-AppWindow-1"); a closed one is gone from the list, or no
+/// longer visible, and opening is then the answer.
+@MainActor
+private func suiRaiseWindow(_ sceneId: String) -> Bool {
+    guard let window = NSApp.windows.first(where: {
+        ($0.identifier?.rawValue.hasPrefix(sceneId) ?? false) && ($0.isVisible || $0.isMiniaturized)
+    }) else { return false }
+    if window.isMiniaturized { window.deminiaturize(nil) }
+    window.makeKeyAndOrderFront(nil)
+    return true
+}
+#endif
 
 /// The label of a menu bar extra (`@:surface(Status)`): its icon, and its
 /// count beside it when there is one, or its title when there is no icon.
@@ -2187,7 +2281,10 @@ struct DynamicAppCommands: Commands {
     static func commandButton(set: Int, index: Int) -> some View {
         let label = String(cString: viewnode_command_label(Int32(set), Int32(index)))
         let chord = String(cString: viewnode_command_shortcut(Int32(set), Int32(index)))
-        let button = Button(label) { viewnode_command_invoke(Int32(set), Int32(index)) }
+        let button = Button(label) {
+            viewnode_command_invoke(Int32(set), Int32(index))
+            suiPresentRequested()
+        }
         if let parsed = parseChord(chord) {
             button.keyboardShortcut(parsed.key, modifiers: parsed.modifiers)
         } else {

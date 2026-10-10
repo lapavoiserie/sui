@@ -50,6 +50,10 @@ void viewnode_set_data(const char* path, const char* value);
 const char* viewnode_theme_accent(void);
 const char* viewnode_theme_accent_dark(void);
 
+// The oldest surface the app asked to bring forward, removed: "kind\tid"
+// ("primary", "preferences", "window\t<id>"), or "" when none is waiting.
+const char* viewnode_take_presentation(void);
+
 // Fire a named action with a JSON extra-context (e.g. a Board drop's payload).
 void viewnode_fire_action(const char* name, const char* extraJson);
 

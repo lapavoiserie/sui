@@ -9,7 +9,7 @@ struct TestTypedExpressionsApp: App {
 
 
     var body: some Scene {
-        WindowGroup("TestTypedExpr") {
+        WindowGroup("TestTypedExpr", id: "sui-primary") {
             ContentView()
         }
     }

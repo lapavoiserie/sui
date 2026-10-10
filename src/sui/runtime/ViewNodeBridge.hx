@@ -643,6 +643,25 @@ class ViewNodeBridge {
         _accentDark = darkHex != null ? darkHex : "";
     }
 
+    /**
+        Surfaces the application asked to bring forward (`mui.surface.Present`),
+        oldest first, each `kind\tid`: `primary`, `preferences`, or `window`
+        with a declared Auxiliary id. A queue rather than a call into Swift:
+        the request is made inside a closure the host is still running, and the
+        host acts on it once that closure has returned -- so the window opens
+        on a tree that already has what the closure wrote.
+    **/
+    static var _presentations:Array<String> = [];
+
+    public static function requestPresentation(kind:String, id:String):Void {
+        _presentations.push(kind + "\t" + (id == null ? "" : id));
+    }
+
+    /** The oldest request, removed, or "" when there is none. **/
+    public static function takePresentation():String {
+        return _presentations.length == 0 ? "" : _presentations.shift();
+    }
+
     public static function getAccent():String {
         return _accent;
     }
