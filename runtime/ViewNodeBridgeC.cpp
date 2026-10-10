@@ -258,6 +258,16 @@ const char* viewnode_theme_accent(void) {
     return result;
 }
 
+// The accent's dark-mode variant, "" when the application gave none.
+const char* viewnode_theme_accent_dark(void) {
+    HaxeCall _call;
+    const char* result = "";
+    try {
+        result = keep(::sui::runtime::ViewNodeBridge_obj::getAccentDark());
+    } catch (...) {}
+    return result;
+}
+
 // Fire a named action with a JSON extra-context.
 void viewnode_fire_action(const char* name, const char* extraJson) {
     HaxeCall _call;

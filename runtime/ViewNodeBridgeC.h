@@ -47,6 +47,7 @@ void viewnode_set_data(const char* path, const char* value);
 
 // The theme accent (primaryColor hex) to tint native controls with ("" = default).
 const char* viewnode_theme_accent(void);
+const char* viewnode_theme_accent_dark(void);
 
 // Fire a named action with a JSON extra-context (e.g. a Board drop's payload).
 void viewnode_fire_action(const char* name, const char* extraJson);

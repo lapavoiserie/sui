@@ -619,13 +619,25 @@ class ViewNodeBridge {
     /** The theme accent (e.g. a surface's primaryColor, hex) that the native
         host tints controls with. "" means use the platform default. **/
     static var _accent:String = "";
+    static var _accentDark:String = "";
 
-    public static function setAccent(hex:String):Void {
+    /**
+        The application's accent -- a brand colour -- with the one to use in
+        dark mode. A single colour chosen for a light window is often
+        unreadable on a dark one (a navy on near-black), so the dark one is
+        asked for rather than guessed; without it the light one serves both.
+    **/
+    public static function setAccent(hex:String, ?darkHex:String):Void {
         _accent = hex != null ? hex : "";
+        _accentDark = darkHex != null ? darkHex : "";
     }
 
     public static function getAccent():String {
         return _accent;
+    }
+
+    public static function getAccentDark():String {
+        return _accentDark;
     }
 
     /** Optional sink for renderer-originated actions carrying an extra context

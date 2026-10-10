@@ -33,6 +33,13 @@ enum ViewModifier {
     BackgroundMaterial(style:sui.View.MaterialStyle);
     Opacity(value:Dynamic);
 
+    /** A fill behind the view, with the radius it is drawn with: the canon's
+        `backgroundColor`, which carries its own radius because a radius
+        belongs to the thing being rounded. Clips nothing. **/
+    Fill(color:ColorValue, radius:Float);
+    /** A stroke around the view: the canon's `border` -- colour, width, radius. **/
+    Stroke(color:ColorValue, width:Float, radius:Float);
+
     // Shape
     CornerRadius(radius:Float);
     ClipShape(shape:ShapeType);

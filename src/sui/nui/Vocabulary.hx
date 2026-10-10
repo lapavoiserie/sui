@@ -88,9 +88,9 @@ class Vocabulary {
 				var built = nui.macros.Construct.expr(DIALECT, tag, given, children, pos);
 				built == null ? null : sui.macros.LiveProps.deferMarkup(built);
 			},
-			// The canon's nine onto this backend's chain. What SwiftUI has no
-			// equivalent for -- the colours among them, and the reason is not
-			// obvious -- is said out loud. See `sui.nui.Decorate`.
+			// The canon's nine onto this backend's chain -- colours included,
+			// a role staying a role until SwiftUI resolves it. `flex` has no
+			// equivalent and is refused by name. See `sui.nui.Decorate`.
 			decorate: (view, modifiers, pos) -> macro sui.nui.Decorate.apply($view,
 				[for (__m in ($modifiers : Array<Null<nui.Modifier>>)) if (__m != null) __m]),
 			// What this backend can actually draw on a view. Markup refuses
@@ -101,6 +101,7 @@ class Vocabulary {
 			honoured: () -> [
 				nui.Modifiers.PADDING, nui.Modifiers.OPACITY, nui.Modifiers.CLIP,
 				nui.Modifiers.WIDTH, nui.Modifiers.HEIGHT,
+				nui.Modifiers.FOREGROUND_COLOR, nui.Modifiers.BACKGROUND_COLOR, nui.Modifiers.BORDER,
 			],
 			#end
 		});

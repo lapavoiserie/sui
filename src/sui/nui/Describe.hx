@@ -343,6 +343,14 @@ class Describe {
 					var said = Colors.say(c);
 					if (said != null)
 						out.modifier({type: nui.Modifiers.BACKGROUND_COLOR, strings: [said]});
+				case Fill(c, radius):
+					var said = Colors.say(c);
+					if (said != null)
+						out.modifier({type: nui.Modifiers.BACKGROUND_COLOR, strings: [said], floats: [radius]});
+				case Stroke(c, width, radius):
+					var said = Colors.say(c);
+					if (said != null)
+						out.modifier({type: nui.Modifiers.BORDER, strings: [said], floats: [width, radius]});
 				case Opacity(v):
 					out.modifier({type: nui.Modifiers.OPACITY, floats: [v]});
 				// A rectangle IS the canon's `clip`. The other shapes are

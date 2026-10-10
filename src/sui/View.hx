@@ -667,6 +667,13 @@ enum ColorValue {
     Gray;
     Clear;
     Custom(hex:String);
+    /**
+        A canon role (`nui.Role`: accent, danger, warning, success, surface,
+        text, muted, border), kept as a role until the renderer draws it, so
+        it resolves to Apple's semantic colour -- which follows dark mode and
+        increased contrast -- rather than to a number chosen here.
+    **/
+    Role(name:String);
 }
 
 enum Alignment {
