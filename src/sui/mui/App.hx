@@ -122,13 +122,14 @@ class App extends sui.App {
         has final fields, and building anonymous objects sidesteps the
         class-to-structure unification question entirely.
     **/
-    static function muiCommandSets(app:Dynamic):Array<{id:String, commands:() -> Array<sui.runtime.ViewNodeBridge.CommandEntry>}> {
+    static function muiCommandSets(app:Dynamic):Array<{id:String, commands:() -> Array<sui.runtime.ViewNodeBridge.CommandEntry>, ?title:() -> String}> {
         var mine:App = cast app;
-        var sets = [];
+        var sets:Array<{id:String, commands:() -> Array<sui.runtime.ViewNodeBridge.CommandEntry>, ?title:() -> String}> = [];
         for (d in mine.surfaces()) switch (d) {
             case CommandSet(id, commands):
                 sets.push({
                     id: id,
+                    title: mui.surface.SurfaceDecl.SurfaceDeclTools.commandTitleOf(mine.surfaces(), id),
                     commands: function() {
                         return [for (c in commands()) ({label: c.label, shortcut: c.shortcut, action: c.action} : sui.runtime.ViewNodeBridge.CommandEntry)];
                     },
