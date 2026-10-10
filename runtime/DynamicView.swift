@@ -2123,8 +2123,9 @@ func suiAppAccent() -> Color? {
 /// A canon role (`nui.Role`) as Apple's own semantic colour.
 ///
 /// Semantic rather than a number, so each one follows light and dark mode and
-/// increased contrast with nothing asked: `.red` is not `#FF0000` here, and the
-/// surface and border are the platform's own window and separator colours.
+/// increased contrast with nothing asked: `.red` is not `#FF0000` here, the
+/// border is the platform's separator colour, and the surface a faint veil of
+/// the text colour, so a card stands off the window in either mode.
 /// `accent` is the application's accent when it set one
 /// (`ViewNodeBridge.setAccent`) -- a brand colour -- else the person's.
 func suiRoleColor(_ role: String) -> Color {
@@ -2136,12 +2137,13 @@ func suiRoleColor(_ role: String) -> Color {
     case "success": return .green
     case "text": return .primary
     case "muted": return .secondary
+    // A raised area must differ from what it sits on, in both modes. The
+    // system's control background is white in light mode -- the very colour
+    // of a window's content -- so a card filled with it vanished (seen on
+    // screen). A faint veil of the text colour is the same answer the wire
+    // translation gives (`Colors.swift`), and it follows the appearance.
     case "surface":
-        #if canImport(AppKit)
-        return Color(nsColor: .controlBackgroundColor)
-        #else
-        return Color(uiColor: .secondarySystemBackground)
-        #endif
+        return Color.primary.opacity(0.06)
     case "border":
         #if canImport(AppKit)
         return Color(nsColor: .separatorColor)
