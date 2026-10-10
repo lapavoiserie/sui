@@ -1920,7 +1920,14 @@ struct DynamicAppCommands: Commands {
         return (key, modifiers)
     }
 
+    /// The menu's name: the one the application gave (`CommandMenu`), in its
+    /// own words; else the single set's id, capitalised; else "Commands".
     static func menuTitle() -> String {
+        let sets = Int(viewnode_command_set_count())
+        for set in 0..<max(sets, 0) {
+            let title = String(cString: viewnode_command_set_title(Int32(set)))
+            if !title.isEmpty { return title }
+        }
         if Int(viewnode_command_set_count()) == 1 {
             let id = String(cString: viewnode_command_set_id(0))
             if !id.isEmpty { return id.prefix(1).uppercased() + id.dropFirst() }

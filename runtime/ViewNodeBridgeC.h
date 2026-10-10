@@ -28,6 +28,7 @@ void* viewnode_root_for(const char* id);
 // across a rebuild may name an index the new sample no longer has.
 int32_t viewnode_command_set_count(void);
 const char* viewnode_command_set_id(int32_t set);
+const char* viewnode_command_set_title(int32_t set);
 int32_t viewnode_command_count(int32_t set);
 const char* viewnode_command_label(int32_t set, int32_t index);
 // "" when the command has no shortcut.

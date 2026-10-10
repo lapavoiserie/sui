@@ -38,7 +38,7 @@ class CommandSetCheck {
 						{label: "About", shortcut: null, action: function() app.abouted++},
 					];
 				}},
-				{id: "extra", commands: function():Array<sui.runtime.ViewNodeBridge.CommandEntry> {
+				{id: "extra", title: () -> "Tâches " + app.noun, commands: function():Array<sui.runtime.ViewNodeBridge.CommandEntry> {
 					return [{label: "Only", shortcut: "alt+shift+x", action: function() {}}];
 				}},
 			];
@@ -52,6 +52,8 @@ class CommandSetCheck {
 		ok(ViewNodeBridge.commandCount(0) == 2 && ViewNodeBridge.commandCount(1) == 1,
 			"command counts per set");
 		ok(ViewNodeBridge.commandLabel(0, 0) == "New todo", "labels come from the sample");
+		ok(ViewNodeBridge.commandSetTitle(1) == "Tâches todo", "a set's menu name comes from its title");
+		ok(ViewNodeBridge.commandSetTitle(0) == "", "a set without one answers the empty string");
 		ok(ViewNodeBridge.commandShortcut(0, 0) == "ctrl+n", "a chord crosses as its string");
 		ok(ViewNodeBridge.commandShortcut(0, 1) == "", "no shortcut answers the empty string");
 
@@ -71,6 +73,7 @@ class CommandSetCheck {
 		ViewNodeBridge.rebuild();
 		ok(app.sampled == sampledBefore + 1, "rebuild resamples the sets with the roots");
 		ok(ViewNodeBridge.commandLabel(0, 0) == "New note", "the menu's data follows the sample");
+		ok(ViewNodeBridge.commandSetTitle(1) == "Tâches note", "and so does its name");
 
 		if (failures == 0) {
 			Sys.println("");

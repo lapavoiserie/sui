@@ -337,7 +337,7 @@ class ViewNodeBridge {
         macOS menu bar (`DynamicAppCommands`) enumerates the result through
         the C entry points below.
     **/
-    public static var commandSetsOf:Dynamic -> Array<{id:String, commands:() -> Array<CommandEntry>}> = null;
+    public static var commandSetsOf:Dynamic -> Array<{id:String, commands:() -> Array<CommandEntry>, ?title:() -> String}> = null;
 
     /**
         sui's view of itself through the shared node model — the Primary's.
@@ -361,7 +361,7 @@ class ViewNodeBridge {
         _commandSets = [];
         if (commandSetsOf != null) {
             for (set in commandSetsOf(app))
-                _commandSets.push(new CommandSetRecord(set.id, set.commands));
+                _commandSets.push(new CommandSetRecord(set.id, set.commands, set.title));
         }
         rebuild();
     }
@@ -426,6 +426,10 @@ class ViewNodeBridge {
         for (set in _commandSets) {
             sui.runtime.ReadScope.begin();
             set.current = set.commands();
+            // The menu's name is read in the same scope: a language change
+            // that renames it is a write the menu has to follow.
+            var title = set.title;
+            set.currentTitle = title == null ? "" : title();
             set.structural = sui.runtime.ReadScope.end();
             if (set.current == null) set.current = [];
         }
@@ -485,6 +489,13 @@ class ViewNodeBridge {
     public static function commandSetId(set:Int):String {
         if (set < 0 || set >= _commandSets.length) return "";
         return _commandSets[set].id;
+    }
+
+    /** The menu name a set was declared with (`mui.surface.CommandMenu`), "" when none. **/
+    public static function commandSetTitle(set:Int):String {
+        if (set < 0 || set >= _commandSets.length) return "";
+        var t = _commandSets[set].currentTitle;
+        return t == null ? "" : t;
     }
 
     public static function commandCount(set:Int):Int {
@@ -978,12 +989,15 @@ typedef CommandEntry = {
 private class CommandSetRecord {
     public var id:String;
     public var commands:() -> Array<CommandEntry>;
+    public var title:Null<() -> String>;
     public var current:Array<CommandEntry> = [];
+    public var currentTitle:String = "";
     public var structural:Array<String> = [];
 
-    public function new(id:String, commands:() -> Array<CommandEntry>) {
+    public function new(id:String, commands:() -> Array<CommandEntry>, ?title:() -> String) {
         this.id = id;
         this.commands = commands;
+        this.title = title;
     }
 }
 

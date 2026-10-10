@@ -308,6 +308,15 @@ const char* viewnode_command_set_id(int32_t set) {
     return result;
 }
 
+const char* viewnode_command_set_title(int32_t set) {
+    HaxeCall _call;
+    const char* result = "";
+    try {
+        result = keep(::sui::runtime::ViewNodeBridge_obj::commandSetTitle(set));
+    } catch (...) {}
+    return result;
+}
+
 int32_t viewnode_command_count(int32_t set) {
     HaxeCall _call;
     int32_t result = 0;
