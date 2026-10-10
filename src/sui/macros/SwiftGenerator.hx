@@ -311,6 +311,13 @@ class SwiftGenerator {
                 case TInst(ref, params):
                     if (ref.get().name == "State" && ref.get().pack.join(".") == "sui.state" && params.length > 0) {
                         if (!isValidStateType(params[0])) {
+                            // The dynamic renderer reads every value through
+                            // the bridge and emits no AppState, so a cell may
+                            // hold anything -- an `ImmutableList` of records is
+                            // what mui tells an application to keep in one.
+                            // The limit is the static path's, whose AppState
+                            // needs a Swift type for each cell.
+                            if (dynamicMode) continue;
                             var st = haxeTypeToSwift(params[0]);
                             Context.error('[SwiftGen] State<${st}> is not supported. Use a basic type (Int, Float, Bool, String), an array of basic types, or a class extending Observable.', field.pos);
                         }
