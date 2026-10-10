@@ -642,6 +642,15 @@ class ViewSource implements NodeSource<View> {
 		GC root, so the closure sitting on the node stays reachable — hence the
 		direct call, with no id and no `Callbacks` indirection.
 	**/
+	/** Run a `ReorderList`'s `onMove`: the row at `from` should end up at `to`. **/
+	public function invokeMove(n:View, from:Int, to:Int):Void {
+		n = resolveWalked(n);
+		if (n == null) return;
+		var move:Dynamic = Reflect.field(n, "moveTo");
+		if (move == null) return;
+		rui.Signal.Scheduler.batch(() -> move(from, to));
+	}
+
 	public function invokeAction(n:View):Void {
 		n = resolveWalked(n);
 		if (n == null) return;

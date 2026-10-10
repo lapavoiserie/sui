@@ -79,6 +79,8 @@ const char* viewnode_get_button_label(void* node);
 int32_t viewnode_get_button_action_id(void* node);
 // Invoke a Button node's action closure directly (dynamic renderer path).
 void viewnode_invoke_action(void* node);
+// A ReorderList's move: the row at `from` should end up at `to`.
+void viewnode_invoke_move(void* node, int32_t from, int32_t to);
 
 // --- Tabs ---
 // A TabView's contents are children; its labels and icons are here.

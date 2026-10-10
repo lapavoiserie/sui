@@ -86,6 +86,12 @@ struct ViewNode {
         suiPresentRequested()
     }
 
+    /// A ReorderList's move: the row at `from` should end up at `to`.
+    func invokeMove(from: Int, to: Int) {
+        guard let ptr = pointer else { return }
+        viewnode_invoke_move(ptr, Int32(from), Int32(to))
+    }
+
     func property(_ key: String) -> String {
         guard let ptr = pointer else { return "" }
         return String(cString: viewnode_get_property(ptr, key))
@@ -836,6 +842,9 @@ struct DynamicView: View {
         case "Notice":
             SuiNoticeAnchor(node: node)
 
+        case "ReorderList":
+            SuiReorderList(node: node)
+
         case "Modal":
             DynamicModal(node: node)
 
@@ -1503,6 +1512,77 @@ struct SuiToast: View {
             if stays { return }
             try? await Task.sleep(for: .seconds(actionLabel.isEmpty ? 4 : 6))
             if !Task.isCancelled { bound.wrappedValue = "false" }
+        }
+    }
+}
+
+// MARK: ReorderList -- an order set by hand
+
+/// Rows with a handle, picked up and dropped where they should go. A row
+/// carries its own index as the drag's payload, and the row it is dropped on
+/// is where it ends up: `onMove(from, to)` reports that, and the application
+/// moves it in its data -- nothing here reorders a view. A line over the row
+/// under the pointer says where it will land.
+///
+/// Never only by dragging: with the application's two labels each row has
+/// "move up" and "move down" in its context menu and as accessibility
+/// actions, so a list can be reordered without a pointer.
+struct SuiReorderList: View {
+    let node: ViewNode
+    @State private var target: Int? = nil
+
+    var body: some View {
+        let rows = node.children
+        let up = node.property("moveUpLabel")
+        let down = node.property("moveDownLabel")
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, child in
+                HStack(spacing: 8) {
+                    Image(systemName: "line.3.horizontal")
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                    DynamicView(node: child)
+                }
+                .padding(.vertical, 3)
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+                .overlay(alignment: .top) {
+                    if target == index {
+                        Rectangle().fill(Color.accentColor).frame(height: 2)
+                    }
+                }
+                .draggable(String(index)) {
+                    DynamicView(node: child)
+                        .padding(6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .dropDestination(for: String.self) { items, _ in
+                    target = nil
+                    guard let from = items.first.flatMap({ Int($0) }), from != index,
+                          from >= 0, from < rows.count else { return false }
+                    node.invokeMove(from: from, to: index)
+                    return true
+                } isTargeted: { over in
+                    if over { target = index } else if target == index { target = nil }
+                }
+                .contextMenu {
+                    if !up.isEmpty && index > 0 {
+                        Button(up) { node.invokeMove(from: index, to: index - 1) }
+                    }
+                    if !down.isEmpty && index < rows.count - 1 {
+                        Button(down) { node.invokeMove(from: index, to: index + 1) }
+                    }
+                }
+                // `.contain`, not `.combine`: a row's own controls (a tick
+                // box) stay reachable, and the moves ride on the row.
+                .accessibilityElement(children: .contain)
+                .accessibilityAction(named: up.isEmpty ? "↑" : up) {
+                    if index > 0 { node.invokeMove(from: index, to: index - 1) }
+                }
+                .accessibilityAction(named: down.isEmpty ? "↓" : down) {
+                    if index < rows.count - 1 { node.invokeMove(from: index, to: index + 1) }
+                }
+            }
         }
     }
 }
