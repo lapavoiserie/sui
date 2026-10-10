@@ -94,7 +94,10 @@ class Received {
 	public static function modifierType(source:SelfSource, n:Node, index:Int):String {
 		var type = source.modifierType(n, index);
 		return switch (type) {
-			case "padding": source.modifierHasParam(n, index, 0) ? "Padding" : "PaddingDefault";
+			case "padding":
+				if (source.modifierHasParam(n, index, 3)) "PaddingInsets"
+				else if (source.modifierHasParam(n, index, 0)) "Padding"
+				else "PaddingDefault";
 			case "font": "Font";
 			case "bold": "Bold";
 			case "italic": "Italic";

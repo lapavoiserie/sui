@@ -974,9 +974,19 @@ struct DynamicView: View {
             let modType = node.modifierType(at: i)
 
             switch modType {
+            // A zero is a zero: the platform's default is `PaddingDefault`,
+            // asked for by name, never what an explicit 0 turns into.
             case "Padding":
                 let value = node.modifierFloat(at: i)
-                result = value > 0 ? AnyView(result.padding(CGFloat(value))) : AnyView(result.padding())
+                result = AnyView(result.padding(CGFloat(value)))
+
+            // The canon's four edges, top, right, bottom, left.
+            case "PaddingInsets":
+                result = AnyView(result.padding(EdgeInsets(
+                    top: CGFloat(node.modifierFloat(at: i, param: 0)),
+                    leading: CGFloat(node.modifierFloat(at: i, param: 3)),
+                    bottom: CGFloat(node.modifierFloat(at: i, param: 2)),
+                    trailing: CGFloat(node.modifierFloat(at: i, param: 1)))))
 
             case "PaddingDefault":
                 result = AnyView(result.padding())
