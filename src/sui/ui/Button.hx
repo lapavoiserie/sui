@@ -34,13 +34,23 @@ class Button extends View {
     /** For `style="check"`: whether it is drawn ticked. The application's to say. **/
     @:prop public var checked:Bool;
 
-    public function new(label:String, ?action:() -> Void, ?style:String, checked:Bool = false) {
+    /**
+        A name from `nui.Icons`, drawn beside the label -- or alone in a
+        toolbar, which shows the icon and keeps the label as the tooltip and
+        the spoken name. Markup could not give one: the canon has it and this
+        declaration did not.
+    **/
+    @:prop public var icon:Null<String>;
+
+    public function new(label:String, ?action:() -> Void, ?style:String, checked:Bool = false, ?icon:String) {
         super();
         this.viewType = "Button";
         this.label = label;
         this.action = action;
         this.style = style;
         this.checked = checked;
+        this.icon = icon;
+        if (icon != null && icon != "") properties.set("icon", icon);
     }
 
     /** Create a button with a custom view label. **/
