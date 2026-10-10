@@ -929,6 +929,14 @@ class ViewNodeBridge {
         to the hxcpp GC. The dynamic renderer has no such problem: it holds the
         live view trees (each root record, a GC root), so the closure sitting on the node
         stays reachable. So we just call it — no id, no Callbacks indirection. **/
+    /** A `ReorderList`'s move, from the renderer. A received tree's list is
+        drawn but not moved: its act would have to cross back as a string,
+        and nothing on that path carries one yet. **/
+    public static function invokeMove(node:Dynamic, from:Int, to:Int):Void {
+        if (received(node) != null) return;
+        reader().invokeMove(node, from, to);
+    }
+
     public static function invokeButtonAction(node:Dynamic):Void {
         var r = received(node);
         if (r != null) {

@@ -87,6 +87,15 @@ else
 	echo "FAIL backgroundColor was not refused clearly:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# An order set by hand: a ReorderList carries its rows, its labels and its move.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Reorders --interp 2>&1)
+if echo "$out" | grep -q "reorder: rows=2 up=Monter down=Descendre moved=1>0 0>1"; then
+	echo "ok   a ReorderList carries its rows, its one-step labels and its move"
+else
+	echo "FAIL reorder:"; echo "$out"; fails=$((fails + 1))
+fi
+
 echo ""
 [ "$fails" -eq 0 ] && echo "all good" || echo "$fails failed"
 exit "$fails"

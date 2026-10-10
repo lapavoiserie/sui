@@ -423,6 +423,13 @@ void viewnode_invoke_action(void* node) {
     } catch (...) {}
 }
 
+void viewnode_invoke_move(void* node, int32_t from, int32_t to) {
+    HaxeCall _call;
+    try {
+        ::sui::runtime::ViewNodeBridge_obj::invokeMove(_asView(node), from, to);
+    } catch (...) {}
+}
+
 // --- Modifiers ---
 
 int32_t viewnode_modifier_count(void* node) {
