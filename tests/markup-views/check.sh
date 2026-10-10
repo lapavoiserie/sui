@@ -51,6 +51,15 @@ else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# A screen's commands are a Toolbar of ordinary controls.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Toolbars --interp 2>&1)
+if echo "$out" | grep -q "toolbar: Aujourd'hui sui.ui.Button,sui.ui.Button"; then
+	echo "ok   a Toolbar carries its title and ordinary controls"
+else
+	echo "FAIL toolbar:"; echo "$out"; fails=$((fails + 1))
+fi
+
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.

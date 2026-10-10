@@ -812,6 +812,9 @@ struct DynamicView: View {
         case "Modal":
             DynamicModal(node: node)
 
+        case "Toolbar":
+            SuiToolbar(node: node)
+
         case "Icon":
             SuiIcon(node: node)
 
@@ -1248,6 +1251,36 @@ struct DynamicTabs: View {
                 .tabItem { Text(tab.property("label")) }
                 .tag(idx)
             }
+        }
+    }
+}
+
+/// `Toolbar`: a screen's commands in the window's unified toolbar, and its
+/// title as the window's.
+///
+/// Drawn as an empty anchor where it stands: SwiftUI gathers `.toolbar` items
+/// from anywhere in a window's hierarchy, so the commands reach the bar from
+/// whichever page declares them, and leave it with that page. Each child is an
+/// ordinary control drawn by `DynamicView` -- a Picker becomes the toolbar's
+/// pop-up, a primary Button its prominent one.
+struct SuiToolbar: View {
+    let node: ViewNode
+
+    var body: some View {
+        let title = node.property("title")
+        let anchor = Color.clear
+            .frame(width: 0, height: 0)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    ForEach(Array(node.children.enumerated()), id: \.offset) { index, child in
+                        DynamicView(node: child).id(child.identity(at: index))
+                    }
+                }
+            }
+        if title.isEmpty {
+            anchor
+        } else {
+            anchor.navigationTitle(title)
         }
     }
 }
