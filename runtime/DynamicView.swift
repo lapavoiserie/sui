@@ -833,6 +833,9 @@ struct DynamicView: View {
         case "ConfirmDialog":
             SuiConfirmDialog(node: node)
 
+        case "Notice":
+            SuiNoticeAnchor(node: node)
+
         case "Modal":
             DynamicModal(node: node)
 
@@ -1399,6 +1402,108 @@ struct SuiSheet: View {
                 .frame(minWidth: 420, idealWidth: 600, alignment: .topLeading)
                 .fixedSize(horizontal: false, vertical: true)
             }
+    }
+}
+
+// MARK: Notice -- a toast over the bottom of the window
+
+/// The notice a tree is presenting, carried up to the window's root.
+///
+/// The node sits wherever the application put it -- inside a scroll view, a
+/// tab's page -- and the toast belongs at the bottom of the window. A
+/// preference carries it up through whatever is in between, recomputed from
+/// the live tree on every pass, so the node the toast acts on is always the
+/// current one and never a pointer a rebuild has freed.
+struct SuiNoticeKey: PreferenceKey {
+    static let defaultValue: ViewNode? = nil
+    static func reduce(value: inout ViewNode?, nextValue: () -> ViewNode?) {
+        if let next = nextValue() { value = next }
+    }
+}
+
+/// Where the node stands: nothing, and the preference while presented.
+struct SuiNoticeAnchor: View {
+    let node: ViewNode
+
+    var body: some View {
+        let presented = node.boundValue.wrappedValue == "true" && !node.property("message").isEmpty
+        Color.clear
+            .frame(width: 0, height: 0)
+            .preference(key: SuiNoticeKey.self, value: presented ? node : nil)
+    }
+}
+
+/// On a root: draws the presented notice over its bottom edge.
+struct SuiNoticeHost: ViewModifier {
+    func body(content: Content) -> some View {
+        content.overlayPreferenceValue(SuiNoticeKey.self, alignment: .bottom) { node in
+            ZStack {
+                if let node {
+                    SuiToast(node: node)
+                        .padding(.bottom, 24)
+                        .padding(.horizontal, 24)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeOut(duration: 0.2), value: node?.property("message"))
+        }
+    }
+}
+
+/// A dark capsule of news: what happened, the act it makes possible, and --
+/// for a warning or an error, which stays -- a way to close it. News leaves
+/// on its own; the timer starts again when the message changes.
+struct SuiToast: View {
+    let node: ViewNode
+
+    var body: some View {
+        let kind = node.property("kind").lowercased()
+        let stays = kind == "warning" || kind == "error"
+        let message = node.property("message")
+        let actionLabel = node.property("actionLabel")
+        let bound = node.boundValue
+        HStack(spacing: 14) {
+            if stays {
+                Image(systemName: kind == "error" ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(kind == "error" ? Color.red : Color.yellow)
+                    .accessibilityHidden(true)
+            }
+            Text(message)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !actionLabel.isEmpty {
+                Button(actionLabel) {
+                    bound.wrappedValue = "false"
+                    node.invokeAction()
+                }
+                .buttonStyle(.plain)
+                .fontWeight(.semibold)
+                .foregroundStyle(.tint)
+            }
+            if stays {
+                Button {
+                    bound.wrappedValue = "false"
+                } label: {
+                    Image(systemName: "xmark").font(.caption.weight(.bold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel(node.property("dismissLabel"))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(white: 0.15)))
+        .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+        // Dark in either appearance, so the accent resolves to its dark half.
+        .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.updatesFrequently)
+        .task(id: message) {
+            if stays { return }
+            try? await Task.sleep(for: .seconds(actionLabel.isEmpty ? 4 : 6))
+            if !Task.isCancelled { bound.wrappedValue = "false" }
+        }
     }
 }
 
@@ -2041,6 +2146,8 @@ struct HotReloadRootView: View {
             // Constant: there is one root, and it stays the root. Keying it on
             // the node meant a new tree replaced the whole hierarchy.
             .id("sui-root")
+            // Inside the tint, so the toast's act is drawn in the accent.
+            .modifier(SuiNoticeHost())
             .tint(accent)
             .background(SuiPresenterHost())
             .onReceive(pollTimer) { _ in
