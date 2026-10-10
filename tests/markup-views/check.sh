@@ -87,6 +87,15 @@ else
 	echo "FAIL backgroundColor was not refused clearly:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# News: a Notice carries its words, its kind and its one act.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Notices --interp 2>&1)
+if echo "$out" | grep -q "notice: Vaisselle faite kind=success act=Annuler close=Fermer bound=shown undone=true"; then
+	echo "ok   a Notice carries its message, kind, act and close label"
+else
+	echo "FAIL notice:"; echo "$out"; fails=$((fails + 1))
+fi
+
 echo ""
 [ "$fails" -eq 0 ] && echo "all good" || echo "$fails failed"
 exit "$fails"
