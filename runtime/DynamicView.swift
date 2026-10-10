@@ -1381,7 +1381,12 @@ struct SuiSheet: View {
                     }
                 }
                 .padding(20)
-                .frame(minWidth: 420, idealWidth: 480, alignment: .topLeading)
+                // A sheet is as tall as what it holds -- a form cut off at
+                // the bottom hides its Save button -- and wide enough for a
+                // form's two columns, whose labels are the application's
+                // and in some languages long.
+                .frame(minWidth: 420, idealWidth: 600, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
             }
     }
 }
