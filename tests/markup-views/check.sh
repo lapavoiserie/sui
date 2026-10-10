@@ -151,6 +151,16 @@ else
 	echo "FAIL flex was not refused clearly:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# A form's rows: a Field carries its label and its controls, and a Toggle
+# can ask to be drawn as a button.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Forms --interp 2>&1)
+if echo "$out" | grep -q "form: sections=2 field=Jours children=2 toggle=button bound=sa"; then
+	echo "ok   a Form holds Fields, and a Toggle carries its style"
+else
+	echo "FAIL form:"; echo "$out"; fails=$((fails + 1))
+fi
+
 echo ""
 [ "$fails" -eq 0 ] && echo "all good" || echo "$fails failed"
 exit "$fails"

@@ -554,8 +554,20 @@ struct DynamicView: View {
         // comes from -- three of these keep it outside `children`, and
         // `sui.nui.ViewSource` is where that is corrected, not here.
 
+        // Columns, said rather than left to `.automatic`: a form is where a
+        // label stands beside what it names, right-aligned against the
+        // controls, and that is the reason to write one.
         case "Form":
             Form { childViews() }
+                .formStyle(.columns)
+
+        // A row whose control has no label of its own, or several controls
+        // answering one question. `LabeledContent` is what a Form puts in its
+        // label column; anywhere else it is the label, then the controls.
+        case "Field":
+            LabeledContent(node.property("label")) {
+                HStack(spacing: 6) { childViews() }
+            }
 
         case "Section":
             let header = node.property("header")
@@ -2257,10 +2269,17 @@ struct SuiToggle: View {
 
     var body: some View {
         let bound = node.boundValue
-        Toggle(node.property("label"), isOn: Binding(
+        let toggle = Toggle(node.property("label"), isOn: Binding(
             get: { bound.wrappedValue == "true" },
             set: { bound.wrappedValue = $0 ? "true" : "false" }
         ))
+        // `button` is the canon's hint for a toggle drawn as a button that
+        // stays pressed: a weekday in a row of seven.
+        if node.property("style").lowercased() == "button" {
+            toggle.toggleStyle(.button)
+        } else {
+            toggle
+        }
     }
 }
 
@@ -2289,15 +2308,17 @@ struct SuiStepper: View {
         let value = min(max(Int(bound.wrappedValue) ?? lo, lo), max(hi, lo))
         // SwiftUI's Stepper draws its label and two arrows, and never the
         // value: pressing an arrow changed the cell and nothing on screen
-        // said so. The value is shown beside the label, as the control's own.
-        Stepper(value: Binding(
-            get: { value },
-            set: { bound.wrappedValue = String($0) }
-        ), in: lo...max(hi, lo), step: step) {
-            HStack {
-                Text(node.property("label"))
-                Spacer(minLength: 8)
+        // said so. The value is shown beside the arrows, as the control's own,
+        // and the label is a `LabeledContent`'s -- so in a Form it goes to the
+        // label column, and the number stays with the arrows it answers to.
+        LabeledContent(node.property("label")) {
+            HStack(spacing: 4) {
                 Text(String(value)).monospacedDigit()
+                Stepper("", value: Binding(
+                    get: { value },
+                    set: { bound.wrappedValue = String($0) }
+                ), in: lo...max(hi, lo), step: step)
+                .labelsHidden()
             }
         }
     }

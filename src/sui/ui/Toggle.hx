@@ -16,10 +16,18 @@ class Toggle extends View {
     // through a registry, so the type says String and the kind is said here.
     @:cell("isOn", "onToggle", "Bool") public var isOnBinding:String;
 
-    public function new(@:swiftLabel("_") label:String, @:swiftLabel("isOn") @:swiftBinding isOnBinding:String) {
+    /**
+        How it is drawn: `button` -- a button that stays pressed while on, for
+        a weekday in a row of seven. A hint: anything else is the platform's
+        ordinary toggle.
+    **/
+    @:prop public var style:Null<String>;
+
+    public function new(@:swiftLabel("_") label:String, @:swiftLabel("isOn") @:swiftBinding isOnBinding:String, ?style:String) {
         super();
         this.viewType = "Toggle";
         this.label = label;
         this.isOnBinding = isOnBinding;
+        this.style = style;
     }
 }
