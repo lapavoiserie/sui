@@ -51,6 +51,15 @@ else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# A button says how much it stands out; a check carries whether it is ticked.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Buttons --interp 2>&1)
+if echo "$out" | grep -q "buttons: primary plain check/true null/false"; then
+	echo "ok   a Button carries its style hint, and a check whether it is ticked"
+else
+	echo "FAIL button styles:"; echo "$out"; fails=$((fails + 1))
+fi
+
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.
