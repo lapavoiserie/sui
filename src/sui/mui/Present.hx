@@ -40,4 +40,11 @@ class Present {
                 return false;
         }
     }
+
+    /** End the application: asked, then done once the closure has returned,
+        like `show`. On macOS the application menu's Quit already says it; this
+        is for the application's own "Quit" -- a status item's menu, elsewhere. **/
+    public static function quit():Void {
+        sui.runtime.ViewNodeBridge.requestPresentation("quit", "");
+    }
 }
