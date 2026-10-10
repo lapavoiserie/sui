@@ -9,12 +9,12 @@ package sui.mui;
 	new Icon(Mic)
 	new Icon(SpeakerOff, "Monitor muted")
 	```
+
+	The declared `sui.ui.Icon` does the work, so markup's `<Icon name="mic"/>`
+	and this typed door build the same view.
 **/
-class Icon extends sui.View {
+class Icon extends sui.ui.Icon {
 	public function new(name:mui.ui.IconName, ?label:String) {
-		super();
-		viewType = "Icon";
-		properties.set("name", (name : String));
-		if (label != null && label != "") properties.set("label", label);
+		super((name : String), label);
 	}
 }

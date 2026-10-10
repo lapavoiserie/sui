@@ -202,6 +202,26 @@ class State<T> extends rui.state.State<T> {
         return cell.peek();
     }
 
+    /**
+        The current value of a named state, read as a view DECLARING a
+        dependency on it -- `get`, not `peek` -- or null when no such state
+        exists.
+
+        For a control whose *shape* depends on its own cell: a `Tabs` that
+        carries only the selected tab's page, a `Sheet` that carries its
+        content only while presented. Read while the tree is built, the cell
+        joins this root's structural reads, so a write -- a click in the
+        sidebar, a sheet dismissed -- rebuilds the tree instead of merely
+        redrawing a control whose new page was never built.
+    **/
+    public static function readByName(stateName:String):Null<Dynamic> {
+        if (stateName == null) return null;
+        var state:Dynamic = _registry.get(stateName);
+        if (state == null) return null;
+        var cell:State<Dynamic> = state;
+        return cell.get();
+    }
+
     /** Whether a name resolves to a state at all — absent is not `false`. **/
     public static function existsByName(stateName:String):Bool {
         return stateName != null && _registry.exists(stateName);

@@ -19,10 +19,16 @@ import sui.View;
     ```
 
     `Menu`s can be nested for sub-menus.
+
+    Canon: `Menu` carries `label` and its items as children -- `Button`s,
+    `Divider`s, nested `Menu`s. An item is an ordinary `Button`, so its act is
+    the button's own `onClick` and nothing new crosses a wire.
 **/
+@:node("Menu")
+@:content("content")
 @:swiftView("Menu")
 class Menu extends View {
-    public var label:String;
+    @:prop public var label:String;
 
     public function new(@:swiftLabel("_") label:String, content:Array<View>) {
         super();

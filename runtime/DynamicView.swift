@@ -135,7 +135,7 @@ struct ViewNode {
     /// has to know the whole list; there is nowhere else it is written down.
     var bindingName: String? {
         for key in ["textBinding", "isOnBinding", "valueBinding",
-                    "selectionBinding", "isoStateName"] {
+                    "selectionBinding", "isoStateName", "presentedBinding"] {
             let name = property(key)
             if !name.isEmpty { return key }
         }
@@ -710,6 +710,9 @@ struct DynamicView: View {
         case "DatePicker", "IsoDatePicker", "IsoTimePicker":
             SuiDatePicker(node: node, timeOnly: node.viewType == "IsoTimePicker")
 
+        case "DateInput":
+            SuiCivilDatePicker(node: node)
+
         // Read-only: a Gauge shows a value, it does not take one.
         case "Gauge":
             let lo = node.number("minValue") ?? 0
@@ -807,7 +810,17 @@ struct DynamicView: View {
             DynamicPicker(node: node)
 
         case "Tabs":
-            DynamicTabs(node: node)
+            if node.property("style").lowercased() == "sidebar" {
+                SuiSidebarTabs(node: node)
+            } else {
+                DynamicTabs(node: node)
+            }
+
+        case "Sheet":
+            SuiSheet(node: node)
+
+        case "ConfirmDialog":
+            SuiConfirmDialog(node: node)
 
         case "Modal":
             DynamicModal(node: node)
@@ -1249,6 +1262,105 @@ struct DynamicTabs: View {
                 .tag(idx)
             }
         }
+    }
+}
+
+/// `Tabs` with `style: sidebar`: the tabs as the rows of a navigation sidebar,
+/// the selected tab's page as the detail.
+///
+/// The selection is the application's cell, as for every `Tabs`. A row clicked
+/// writes its index; the page arrives with the rebuild that write causes (see
+/// `sui.ui.Tabs`), which is why the detail reads whatever child the selected
+/// tab carries now rather than keeping one.
+struct SuiSidebarTabs: View {
+    let node: ViewNode
+
+    var body: some View {
+        let tabs = node.children
+        let bound = node.boundValue
+        let selected = Int(bound.wrappedValue) ?? 0
+        return NavigationSplitView {
+            List(selection: Binding<Int?>(
+                get: { selected },
+                set: { if let row = $0 { bound.wrappedValue = String(row) } }
+            )) {
+                ForEach(Array(tabs.enumerated()), id: \.offset) { idx, tab in
+                    if let symbol = SuiIcons.symbols[tab.property("icon")] {
+                        Label(tab.property("label"), systemImage: symbol).tag(idx)
+                    } else {
+                        Text(tab.property("label")).tag(idx)
+                    }
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 160, ideal: 200)
+        } detail: {
+            if selected >= 0 && selected < tabs.count, let page = tabs[selected].children.first {
+                DynamicView(node: page)
+            } else {
+                Color.clear
+            }
+        }
+    }
+}
+
+/// `Sheet`: presented while its cell is true, its content as the panel.
+///
+/// Drawn as an empty anchor where it stands -- the sheet hangs off the window,
+/// not off the stack. Closing it (Escape, a click outside) writes `false` back;
+/// opening is the application's, by writing `true`.
+struct SuiSheet: View {
+    let node: ViewNode
+
+    var body: some View {
+        let bound = node.boundValue
+        let title = node.property("title")
+        Color.clear
+            .frame(width: 0, height: 0)
+            .sheet(isPresented: Binding(
+                get: { bound.wrappedValue == "true" },
+                set: { if !$0 { bound.wrappedValue = "false" } }
+            )) {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !title.isEmpty {
+                        Text(title).font(.headline)
+                    }
+                    ForEach(Array(node.children.enumerated()), id: \.offset) { _, child in
+                        DynamicView(node: child)
+                    }
+                }
+                .padding(20)
+                .frame(minWidth: 420, idealWidth: 480, alignment: .topLeading)
+            }
+    }
+}
+
+/// `ConfirmDialog`: the question, the act, and the way out -- both labels the
+/// application's. Answering either way closes it.
+struct SuiConfirmDialog: View {
+    let node: ViewNode
+
+    var body: some View {
+        let bound = node.boundValue
+        let message = node.property("message")
+        let destructive = node.property("destructive") == "true"
+        Color.clear
+            .frame(width: 0, height: 0)
+            .confirmationDialog(node.property("title"), isPresented: Binding(
+                get: { bound.wrappedValue == "true" },
+                set: { if !$0 { bound.wrappedValue = "false" } }
+            ), titleVisibility: .visible) {
+                Button(node.property("confirmLabel"), role: destructive ? .destructive : nil) {
+                    bound.wrappedValue = "false"
+                    node.invokeAction()
+                }
+                Button(node.property("cancelLabel"), role: .cancel) {
+                    bound.wrappedValue = "false"
+                }
+            } message: {
+                if !message.isEmpty {
+                    Text(message)
+                }
+            }
     }
 }
 
@@ -1994,10 +2106,11 @@ struct SuiStepper: View {
         let bound = node.boundValue
         let lo = Int(node.number("minValue") ?? 0)
         let hi = Int(node.number("maxValue") ?? 100)
+        let step = max(1, Int(node.number("step") ?? 1))
         Stepper(node.property("label"), value: Binding(
             get: { Int(bound.wrappedValue) ?? lo },
             set: { bound.wrappedValue = String($0) }
-        ), in: lo...max(hi, lo))
+        ), in: lo...max(hi, lo), step: step)
     }
 }
 
@@ -2066,7 +2179,71 @@ struct SuiDatePicker: View {
     }
 }
 
+/// A calendar day as `YYYY-MM-DD`, with no time and no zone (`sui.ui.DateInput`).
+///
+/// The picker runs on a Gregorian calendar pinned to UTC, and the day is read
+/// and written as text on that same calendar: a day and its UTC midnight are
+/// then the same thing, so the 12th is the 12th on every screen. A
+/// `DatePicker` left on the local zone would turn a household's "the 12th"
+/// into the 11th for anyone west of Greenwich.
+///
+/// An empty value shows today without writing it: filling in a date nobody
+/// picked would be an edit nobody made.
+struct SuiCivilDatePicker: View {
+    let node: ViewNode
+
+    var body: some View {
+        let bound = node.boundValue
+        let lo = ViewNode.civilFormatter.date(from: node.property("min"))
+        let hi = ViewNode.civilFormatter.date(from: node.property("max"))
+        let selection = Binding<Date>(
+            get: { ViewNode.civilFormatter.date(from: bound.wrappedValue) ?? ViewNode.todayAsCivil() },
+            set: { bound.wrappedValue = ViewNode.civilFormatter.string(from: $0) }
+        )
+        Group {
+            switch (lo, hi) {
+            case let (lo?, hi?) where lo <= hi:
+                DatePicker(node.property("label"), selection: selection, in: lo...hi, displayedComponents: [.date])
+            case let (lo?, _):
+                DatePicker(node.property("label"), selection: selection, in: lo..., displayedComponents: [.date])
+            case let (_, hi?):
+                DatePicker(node.property("label"), selection: selection, in: ...hi, displayedComponents: [.date])
+            default:
+                DatePicker(node.property("label"), selection: selection, displayedComponents: [.date])
+            }
+        }
+        .environment(\.timeZone, ViewNode.utc)
+        .environment(\.calendar, ViewNode.civilCalendar)
+    }
+}
+
 extension ViewNode {
+    static let utc = TimeZone(identifier: "UTC")!
+
+    static let civilCalendar: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = utc
+        return c
+    }()
+
+    static let civilFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = civilCalendar
+        f.timeZone = utc
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        f.isLenient = false
+        return f
+    }()
+
+    /// Today as the person sees it, as that day's UTC midnight.
+    static func todayAsCivil() -> Date {
+        var local = Calendar.current
+        local.timeZone = .current
+        let parts = local.dateComponents([.year, .month, .day], from: Date())
+        return civilCalendar.date(from: parts) ?? Date()
+    }
+
     static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]

@@ -51,6 +51,29 @@ else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# The controls declared for the desktop chores client: each one built by
+# markup as sui's own class, carrying what the canon says it carries.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Controls --interp 2>&1)
+expect() {
+	if echo "$out" | grep -qF "$1"; then
+		echo "ok   $2"
+	else
+		echo "FAIL $2 -- expected: $1"; echo "$out"; fails=$((fails + 1))
+	fi
+}
+expect "section: Récurrence children=1" "a Section carries its title and its rows"
+expect "divider" "a Divider is built"
+expect "icon: mic label=Micro" "an Icon carries its name and its spoken label"
+expect "menu: Actions items=sui.ui.Button,sui.ui.Divider,sui.ui.Button" "a Menu's items are ordinary buttons and dividers"
+expect "stepper: Toutes les bound=interval 1..999 step=1" "a Stepper binds its cell by name, with its bounds and a default step"
+expect "date: Première échéance bound=due min=2026-01-01 max=null" "a DateInput binds a civil-day cell, with optional bounds"
+expect "tabs: style=sidebar bound=section pages=0,1,0" "only the selected tab carries its page"
+expect "sheet: Nouvelle tâche bound=editing children=0" "a sheet not presented carries no content"
+expect "confirm: Archiver ? bound=archiving Archiver/Annuler destructive=true" "a ConfirmDialog carries both of the application's labels"
+expect "confirm ran: true" "and its act is the closure markup gave it"
+expect "structural: editing,section" "a selection and a presented flag are read as shape, so writing them rebuilds"
+
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.
