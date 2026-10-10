@@ -993,6 +993,31 @@ struct DynamicView: View {
                 let value = node.modifierFloat(at: i)
                 result = AnyView(result.opacity(value))
 
+            // `width` and `height` from markup (`sui.nui.Decorate`), and
+            // `View.frame` written by hand. Listed as honoured by
+            // `Vocabulary.honoured` and refused nowhere, yet nothing drew it:
+            // a column of `width={70.0}` cells came out as wide as each text,
+            // and a table's columns did not line up. An absent side crosses
+            // as "null" and stays the view's own.
+            case "Frame":
+                let w = node.modifierString(at: i, param: 0)
+                let h = node.modifierString(at: i, param: 1)
+                let width: CGFloat? = (w.isEmpty || w == "null") ? nil : CGFloat(node.modifierFloat(at: i, param: 0))
+                let height: CGFloat? = (h.isEmpty || h == "null") ? nil : CGFloat(node.modifierFloat(at: i, param: 1))
+                let alignment: Alignment
+                switch node.modifierString(at: i, param: 2).lowercased() {
+                case "leading": alignment = .leading
+                case "trailing": alignment = .trailing
+                case "top": alignment = .top
+                case "bottom": alignment = .bottom
+                case "topleading": alignment = .topLeading
+                case "toptrailing": alignment = .topTrailing
+                case "bottomleading": alignment = .bottomLeading
+                case "bottomtrailing": alignment = .bottomTrailing
+                default: alignment = .center
+                }
+                result = AnyView(result.frame(width: width, height: height, alignment: alignment))
+
             case "CornerRadius":
                 let value = node.modifierFloat(at: i)
                 result = AnyView(result.cornerRadius(CGFloat(value)))

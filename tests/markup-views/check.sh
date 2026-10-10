@@ -51,6 +51,15 @@ else
 	echo "FAIL the flag made no difference:"; echo "$out"; fails=$((fails + 1))
 fi
 
+# `width` is honoured, so it must reach the renderer as a Frame it draws.
+out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
+	-main Frames --interp 2>&1)
+if echo "$out" | grep -q "frame: Frame 70,null,null"; then
+	echo "ok   a width from markup is a Frame with that width and no height"
+else
+	echo "FAIL width frame:"; echo "$out"; fails=$((fails + 1))
+fi
+
 # A decoration this backend cannot draw is refused BY NAME while compiling.
 # Skipping quietly is the canon's rule for a tree that arrived, not for markup
 # somebody is writing against a backend they chose.
