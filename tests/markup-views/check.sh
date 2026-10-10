@@ -81,6 +81,8 @@ if echo "$out" | grep -q "stacks: Leading Top Center"; then
 	echo "ok   a stack takes its canonical alignment from markup, centre by default"
 else
 	echo "FAIL stack alignment:"; echo "$out"; fails=$((fails + 1))
+fi
+
 # A value makes a bar; a ProgressView without one is a spinner.
 out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-main Progress --interp 2>&1)
