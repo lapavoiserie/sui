@@ -816,6 +816,14 @@ struct DynamicView: View {
                 DynamicTabs(node: node)
             }
 
+        // A `Tab` is drawn by the `Tabs` it belongs to, which reads its label
+        // and its page. Met on its own -- a tree that sent one loose -- it is
+        // its page, or nothing when it is not the selected one.
+        case "Tab":
+            if let page = node.children.first {
+                DynamicView(node: page)
+            }
+
         case "Sheet":
             SuiSheet(node: node)
 
@@ -2107,10 +2115,20 @@ struct SuiStepper: View {
         let lo = Int(node.number("minValue") ?? 0)
         let hi = Int(node.number("maxValue") ?? 100)
         let step = max(1, Int(node.number("step") ?? 1))
-        Stepper(node.property("label"), value: Binding(
-            get: { Int(bound.wrappedValue) ?? lo },
+        let value = min(max(Int(bound.wrappedValue) ?? lo, lo), max(hi, lo))
+        // SwiftUI's Stepper draws its label and two arrows, and never the
+        // value: pressing an arrow changed the cell and nothing on screen
+        // said so. The value is shown beside the label, as the control's own.
+        Stepper(value: Binding(
+            get: { value },
             set: { bound.wrappedValue = String($0) }
-        ), in: lo...max(hi, lo), step: step)
+        ), in: lo...max(hi, lo), step: step) {
+            HStack {
+                Text(node.property("label"))
+                Spacer(minLength: 8)
+                Text(String(value)).monospacedDigit()
+            }
+        }
     }
 }
 
