@@ -2109,10 +2109,24 @@ struct SuiToggle: View {
         ))
         // `button` is the canon's hint for a toggle drawn as a button that
         // stays pressed: a weekday in a row of seven.
+        let spoken = node.property("spokenLabel")
         if node.property("style").lowercased() == "button" {
-            toggle.toggleStyle(.button)
+            toggle.toggleStyle(.button).suiSpoken(spoken)
         } else {
-            toggle
+            toggle.suiSpoken(spoken)
+        }
+    }
+}
+
+extension View {
+    /// The canon's `spokenLabel`: what VoiceOver says in place of a label cut
+    /// short (`lun.` for `lundi`), and the tooltip. Empty leaves the label.
+    @ViewBuilder
+    func suiSpoken(_ spoken: String) -> some View {
+        if spoken.isEmpty {
+            self
+        } else {
+            self.accessibilityLabel(spoken).help(spoken)
         }
     }
 }

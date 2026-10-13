@@ -23,11 +23,18 @@ class Toggle extends View {
     **/
     @:prop public var style:Null<String>;
 
-    public function new(@:swiftLabel("_") label:String, @:swiftLabel("isOn") @:swiftBinding isOnBinding:String, ?style:String) {
+    /**
+        What a screen reader says in place of `label`, and the tooltip, when
+        the label is cut short: `lundi` for `lun.`. Empty or absent: the label.
+    **/
+    @:prop public var spokenLabel:Null<String>;
+
+    public function new(@:swiftLabel("_") label:String, @:swiftLabel("isOn") @:swiftBinding isOnBinding:String, ?style:String, ?spokenLabel:String) {
         super();
         this.viewType = "Toggle";
         this.label = label;
         this.isOnBinding = isOnBinding;
         this.style = style;
+        this.spokenLabel = spokenLabel;
     }
 }

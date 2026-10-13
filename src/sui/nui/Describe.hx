@@ -266,6 +266,8 @@ class Describe {
 				.prop("label", PString(t.label != null ? t.label : ""))
 				.prop("isOn", PBool(current == true))
 				.prop("onToggle", PCallbackBool(on -> cellWrite(name, on ? "true" : "false")));
+			if (t.style != null && t.style != "") out.prop("style", PString(t.style));
+			if (t.spokenLabel != null && t.spokenLabel != "") out.prop("spokenLabel", PString(t.spokenLabel));
 
 		} else if (Std.isOfType(v, sui.ui.TextField)) {
 			var f:sui.ui.TextField = cast v;
