@@ -228,13 +228,21 @@ class LiveProps {
 		which is how `nui.macros.Construct` hands a cell to a control that holds
 		a name -- is never deferred.
 	**/
-	public static function deferMarkup(e:Expr):Expr {
-		if (RenderPath.isStatic()) return e;
+	public static function deferMarkup(e:Expr, ?assigns:Array<nui.macros.Construct.Assign>):Expr {
+		// The whole control: the constructor, then every property the markup
+		// wrote that the constructor does not take (`Construct.parts`). It is
+		// what `liveBuild` returns, because the renderer reads a deferred
+		// node's values from what the thunk builds (`Describe.resolved`), never
+		// from the placeholder -- so the placeholder needs none of them.
+		var whole = assigns == null || assigns.length == 0
+			? e
+			: nui.macros.Construct.assemble({made: e, assigns: assigns}, e.pos);
+		if (RenderPath.isStatic()) return whole;
 		return switch (e.expr) {
 			case ENew(tp, args) if (args.length > 0):
-				var deferred = deferNew(tp, args, e, isBindingName);
-				deferred != null ? deferred : e;
-			case _: e;
+				var deferred = deferNew(tp, args, whole, isBindingName);
+				deferred != null ? deferred : whole;
+			case _: whole;
 		};
 	}
 
