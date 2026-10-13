@@ -10,11 +10,11 @@ class Forms {
 				<Field label="Quoi"><TextInput text={title} placeholder="Passer l'aspirateur"/></Field>
 			</Section>
 			<Section>
-				<Field label="Jours"><Toggle label="S" isOn={sa} style="button"/><Text text="samedi"/></Field>
+				<Field label="Jours"><Toggle label="S" isOn={sa} style="button" spokenLabel="samedi"/><Text text="samedi"/></Field>
 			</Section>
 		</Form>);
 		var days:sui.ui.Field = cast form.children[1].children[0];
 		var toggle:sui.ui.Toggle = cast days.children[0];
-		Sys.println('form: sections=${form.children.length} field=${days.label} children=${days.children.length} toggle=${toggle.style} bound=${toggle.isOnBinding}');
+		Sys.println('form: sections=${form.children.length} field=${days.label} children=${days.children.length} toggle=${toggle.style} spoken=${toggle.spokenLabel} bound=${toggle.isOnBinding}');
 	}
 }

@@ -155,8 +155,8 @@ fi
 # can ask to be drawn as a button.
 out=$(haxe $common --macro "sui.nui.Vocabulary.registerWithMui()" \
 	-main Forms --interp 2>&1)
-if echo "$out" | grep -q "form: sections=2 field=Jours children=2 toggle=button bound=sa"; then
-	echo "ok   a Form holds Fields, and a Toggle carries its style"
+if echo "$out" | grep -q "form: sections=2 field=Jours children=2 toggle=button spoken=samedi bound=sa"; then
+	echo "ok   a Form holds Fields, and a Toggle carries its style and spoken label"
 else
 	echo "FAIL form:"; echo "$out"; fails=$((fails + 1))
 fi
