@@ -929,8 +929,13 @@ struct DynamicView: View {
         let family = node.property("family")
         let weight = node.property("weight")
         let text = Text(node.textContent)
+        // A scale with no family is Apple's own text style. It used to be
+        // left to a Font modifier the transpiled path added -- a path that is
+        // decommissioned, so on this one a title written in markup came out
+        // as body text. No scale and no family: the text is left alone, as
+        // before.
         let sized: Text = family.isEmpty
-            ? text
+            ? (scale.isEmpty ? text : text.font(.system(Self.textStyle(scale))))
             : text.font(.custom(family, size: Self.pointSize(scale), relativeTo: Self.textStyle(scale)))
         let weighted: Text = weight.isEmpty ? sized : sized.fontWeight(Self.fontWeight(Int(weight) ?? 400))
         let slanted: Text = node.property("italic") == "true" ? weighted.italic() : weighted
