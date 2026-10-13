@@ -85,8 +85,11 @@ class Vocabulary {
 				said == null ? null : {type: said.type, prop: said.prop, field: said.field};
 			},
 			viewOf: (tag, given, children, pos) -> {
-				var built = nui.macros.Construct.expr(DIALECT, tag, given, children, pos);
-				built == null ? null : sui.macros.LiveProps.deferMarkup(built);
+				// In two parts: the constructor is what gets deferred, and the
+				// properties it does not take are assigned where the deferred
+				// control is really built. See `LiveProps.deferMarkup`.
+				var built = nui.macros.Construct.parts(DIALECT, tag, given, children, pos);
+				built == null ? null : sui.macros.LiveProps.deferMarkup(built.made, built.assigns);
 			},
 			// The canon's nine onto this backend's chain -- colours included,
 			// a role staying a role until SwiftUI resolves it. `flex` has no
